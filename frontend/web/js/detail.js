@@ -185,7 +185,7 @@ async function detail(id, options = {}) {
     try {
       const playingVideo = $("#player video");
       if (current === selected && selected === id && playingVideo && Number.isFinite(playingVideo.currentTime)) {
-        item.UserData = {...item.UserData, PlaybackPositionTicks: Math.floor(playingVideo.currentTime * 1e7)};
+        item.UserData = {...item.UserData, PlaybackPositionTicks: Math.floor(featurePlaybackPosition(playingVideo) * 1e7)};
       }
       await stop();
       const playback = await api.getPlaybackInfo(selected);
@@ -209,10 +209,12 @@ async function detail(id, options = {}) {
       });
       d.querySelector("#player").replaceChildren(video);
       const progress = () => {
-        if (selected === id) item.UserData = {...item.UserData, PlaybackPositionTicks:Math.floor(video.currentTime * 1e7)};
+        if (selected === id) item.UserData = {...item.UserData, PlaybackPositionTicks:Math.floor(featurePlaybackPosition(video) * 1e7)};
         return api("/Sessions/Playing/Progress", "POST", {
           ItemId: selected,
-          PositionTicks: Math.floor(video.currentTime * 1e7),
+          PositionTicks: Math.floor(featurePlaybackPosition(video) * 1e7),
+          IsPaused:video.paused,
+          PlaybackRate:video.playbackRate,
           RunTimeTicks: Number.isFinite(video.duration)
             ? Math.floor(video.duration * 1e7)
             : 0,
@@ -231,16 +233,18 @@ async function detail(id, options = {}) {
       video.onerror = () =>
         toast("浏览器无法解码此格式或视频源不可达，请使用外部 Emby 客户端。");
       const resume = fromBeginning ? 0 : (item.UserData?.PlaybackPositionTicks || 0);
+      video.dataset.resume=String(resume/1e7);
       if (resume > 0 && selected === id)
         video.addEventListener(
           "loadedmetadata",
           () => {
-            video.currentTime = resume / 1e7;
+            video.currentTime = Math.max(0,resume/1e7-Number(video.dataset.offset||0));
           },
           { once: true },
         );
       // Register resume metadata handlers BEFORE assigning the media source.
       video.src = source.DirectStreamUrl;
+      featurePlayer(selected,video,source).catch(e=>toast(e.message,{type:'error'}));
       heartbeat = setInterval(
         () =>
           progress().catch((e) => {
@@ -263,6 +267,8 @@ async function detail(id, options = {}) {
   }
   if (!isSeries) d.querySelector("#play").onclick = run(() => startPlayback(false));
   d.querySelector("#restart").onclick = run(() => startPlayback(true));
+  d.querySelector('.detail-actions').append(UI.el('button',{class:'secondary',type:'button',onclick:run(()=>Features.share(id))},'分享'));
+  if(user?.Policy?.IsAdministrator){const actions=UI.el('div',{class:'feature-actions detail-maintenance'});actions.append(UI.el('button',{class:'secondary',onclick:run(()=>Features.metadata(id))},'编辑资料'),UI.el('button',{class:'secondary',onclick:run(()=>Features.artwork(id))},'管理图片'));if(['Movie','Series'].includes(item.Type))actions.append(UI.el('button',{class:'secondary',onclick:run(()=>Features.identify(id))},'重新识别'));d.querySelector('.detail-overview').after(actions)}
   d.querySelector("#versions")?.addEventListener("click", () => {
     const list = d.querySelector("#version-list");
     list.hidden = !list.hidden;
@@ -311,8 +317,9 @@ async function detail(id, options = {}) {
 async function stop() {
   clearInterval(heartbeat);
   const video = $("#player video");
-  const position = Math.floor((video?.currentTime || 0) * 1e7);
+  const position = Math.floor(featurePlaybackPosition(video) * 1e7);
   if (video) {
+    video.dataset.stopping='true';
     video.pause();
     video.removeAttribute("src");
     video.load();

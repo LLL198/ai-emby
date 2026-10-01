@@ -68,8 +68,12 @@ func (a *App) tmdbIdentity(item Item) (key, endpoint string) {
 		item = series
 	case "Episode":
 		seasonItem, err := a.item(item.Parent)
-		if err != nil || seasonItem.Kind != "Season" {
+		if err != nil || (seasonItem.Kind != "Season" && seasonItem.Kind != "Series") {
 			return "", ""
+		}
+		if seasonItem.Kind == "Series" {
+			item = seasonItem
+			break
 		}
 		if season == 0 {
 			season = seasonItem.Season

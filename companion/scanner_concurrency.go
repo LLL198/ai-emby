@@ -113,7 +113,9 @@ func parseScanFile(cache *scanCache, lib, kind string, work scanWork) scanResult
 			}
 		}
 	}
-	if work.ReuseURL {
+	if !strings.EqualFold(filepath.Ext(file.Path), ".strm") {
+		item.URL = file.Path
+	} else if work.ReuseURL {
 		item.URL = work.URL
 	} else {
 		reader, err := os.Open(file.Path)
@@ -152,7 +154,12 @@ func (a *App) runConcurrentScan(lib string, incremental, allowEmpty bool, scopes
 	}
 	job := a.newActivity(category, lib, "扫描媒体库")
 	var scanErr error
-	defer func() { a.finishActivity(job, scanErr) }()
+	defer func() {
+		a.finishActivity(job, scanErr)
+		if scanErr == nil && a.features.ctx != nil {
+			a.featureAfterScan(lib)
+		}
+	}()
 	release := a.acquireLibraryJob(lib, incremental || len(scopes) > 0)
 	defer release()
 	ctx, cancel := context.WithCancel(a.scanner.ctx)

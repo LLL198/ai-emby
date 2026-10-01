@@ -14,13 +14,23 @@ const Panel = (() => {
     10: ['chapters','播放增强','PLAYBACK'],
     11: ['proxy','外部服务','CONNECTIONS'],
     12: ['overview','控制台','OVERVIEW'],
-    13: ['system','系统与更新','SYSTEM']
+    13: ['system','系统与更新','SYSTEM'],
+    14: ['tasks','任务中心','PROCESSING'],
+    15: ['schedule','定时任务','PROCESSING'],
+    16: ['library-policy','媒体库设置','CONTENT'],
+    17: ['playback','播放与记录','PLAYBACK'],
+    18: ['cache','缓存管理','PLAYBACK'],
+    19: ['devices','登录设备','SYSTEM'],
+    20: ['import','资料导入','CONTENT'],
+    21: ['access','访问与网络','SYSTEM'],
+    22: ['covers','封面展示','CONTENT']
   };
   const groups = [
     ['工作空间', [['控制台','dashboard',12]]],
-    ['内容管理', [['媒体库','media',0,[0,2]],['文件管理','files','files']]],
-    ['处理任务', [['元数据刮削','scraper',8],['媒体信息','info',3],['实时日志','sort','logs']]],
-    ['系统设置', [['基础设置','settings',4],['播放增强','chapter',9,[9,10]],['外部服务','network',6,[6,7,11]],['用户与权限','users',1],['API 密钥','api',5],['系统与更新','refresh',13]]]
+    ['内容管理', [['媒体库','media',0,[0,2]],['每库设置','settings',16],['封面展示','media',22],['资料导入','refresh',20],['文件管理','files','files']]],
+    ['处理任务', [['任务中心','sort',14],['定时任务','refresh',15],['元数据刮削','scraper',8],['媒体信息','info',3],['实时日志','info','logs']]],
+    ['播放管理', [['播放与记录','chapter',17],['缓存管理','files',18],['播放增强','chapter',9,[9,10]]]],
+    ['系统设置', [['基础设置','settings',4],['外部服务','network',6,[6,7,11]],['用户与权限','users',1],['登录设备','users',19],['访问与网络','network',21],['API 密钥','api',5],['系统与更新','refresh',13]]]
   ];
   let current = 12;
   function sectionFromHash() {

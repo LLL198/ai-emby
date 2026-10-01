@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -51,13 +53,22 @@ func (a *App) newActivity(category, item, name string) string {
 }
 func (a *App) changeActivity(key string, change func(*activityEntry)) {
 	a.activity.mu.Lock()
-	defer a.activity.mu.Unlock()
+	var saved *activityEntry
 	for _, v := range a.activity.entries {
 		if v.ID == key {
+			previous := v.State
 			change(v)
 			v.Updated = time.Now()
-			return
+			if a.features.ctx != nil && previous != v.State && featureTaskCategory(v.Category) {
+				copy := *v
+				saved = &copy
+			}
+			break
 		}
+	}
+	a.activity.mu.Unlock()
+	if saved != nil {
+		_ = a.featureSaveActivity(*saved, "worker")
 	}
 }
 func (a *App) finishActivity(key string, err error) {
@@ -65,6 +76,9 @@ func (a *App) finishActivity(key string, err error) {
 		v.State = "complete"
 		if err != nil {
 			v.State = "error"
+			if errors.Is(err, context.Canceled) {
+				v.State = "cancelled"
+			}
 			v.Error = err.Error()
 		}
 	})

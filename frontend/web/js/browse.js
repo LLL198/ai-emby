@@ -135,6 +135,7 @@ async function openCollection(
   page = 0;
   term = "";
   if (kind === "CollectionFolder") librarySort = {key:"DateCreated", order:"Descending", seed:""};
+  if(kind==="CollectionFolder"&&id){try{const c=await api('/features/library-settings?ID='+encodeURIComponent(id));if(parent===id)librarySort={key:c.SortBy,order:c.SortOrder,seed:''}}catch{}}
   await loadWall();
 }
 function openSearch() {

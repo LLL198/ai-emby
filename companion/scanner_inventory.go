@@ -74,7 +74,7 @@ func (a *App) inventoryForScan(ctx context.Context, job string, roots, scopes []
 				stamp := fileStamp{Size: info.Size(), Mtime: info.ModTime().UnixNano()}
 				inventory.Snapshot[path] = stamp
 				inventory.Regular[path] = info.Mode().IsRegular() && info.Size() > 0
-				if info.Mode().IsRegular() && strings.EqualFold(filepath.Ext(path), ".strm") {
+				if info.Mode().IsRegular() && featureMediaExtension(path) {
 					inventory.Files = append(inventory.Files, scanFile{Path: path, Root: root, Stamp: stamp})
 				}
 				return nil

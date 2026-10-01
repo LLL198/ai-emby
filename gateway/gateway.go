@@ -91,6 +91,9 @@ func get(r *http.Request, base, path string) (*http.Response, error) {
 		return nil, err
 	}
 	request.Header = r.Header.Clone()
+	if request.Header.Get("X-Emby-Token") == "" {
+		request.Header.Set("X-Emby-Token", featureGatewayToken(r))
+	}
 	return (&http.Client{Timeout: 15 * time.Second}).Do(request)
 }
 
@@ -117,13 +120,18 @@ func main() {
 	coreTarget, _ := url.Parse(coreURL)
 	scraperTarget, _ := url.Parse(scraperURL)
 	coreProxy := httputil.NewSingleHostReverseProxy(coreTarget)
+	coreProxy.ModifyResponse = func(response *http.Response) error { return featureFilterResponse(sessionDB, response) }
 	scraperProxy := httputil.NewSingleHostReverseProxy(scraperTarget)
 	listen := os.Getenv("LISTEN")
 	if listen == "" {
 		listen = ":8097"
 	}
 	server := &http.Server{Addr: listen, ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w = &featureNetworkResponse{ResponseWriter: w}
 		path := r.URL.Path
+		if featureNetworkGate(sessionDB, w, r) {
+			return
+		}
 		if serveReleaseUpdates(sessionDB, w, r) {
 			return
 		}
@@ -132,6 +140,18 @@ func main() {
 			return
 		}
 		if serveFrontend(w, r) {
+			return
+		}
+		if serveFeatureRoutes(sessionDB, w, r, scraperProxy) {
+			return
+		}
+		if featureEnforceAccess(sessionDB, w, r) {
+			return
+		}
+		if serveFeatureImage(sessionDB, w, r) || serveFeatureLocalStream(sessionDB, w, r) {
+			return
+		}
+		if serveFeaturePlaybackEvent(w, r, coreProxy) {
 			return
 		}
 		if serveScanRoutes(w, r, scraperProxy) {

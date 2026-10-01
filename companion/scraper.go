@@ -25,7 +25,7 @@ func scraperAllowedTarget(target scraperTarget, item Item) bool {
 		return false
 	}
 	if (item.Kind == "Movie" || item.Kind == "Episode") &&
-		!strings.EqualFold(filepath.Ext(item.Path), ".strm") {
+		!featureMediaExtension(item.Path) {
 		return false
 	}
 	for _, content := range scraperCategoryContents[item.Kind] {

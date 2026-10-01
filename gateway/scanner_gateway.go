@@ -15,6 +15,9 @@ func scanRequest(r *http.Request, base, path, method string, data []byte) (*http
 		return nil, err
 	}
 	request.Header = r.Header.Clone()
+	if request.Header.Get("X-Emby-Token") == "" {
+		request.Header.Set("X-Emby-Token", featureGatewayToken(r))
+	}
 	if data != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -134,6 +137,27 @@ func serveScanRoutes(w http.ResponseWriter, r *http.Request, companion *httputil
 		if err != nil {
 			http.Error(w, "保存媒体库设置响应无效", 502)
 			return true
+		}
+		if schedule, exists := submitted["Schedule"]; exists {
+			var requested struct{ Enabled bool }
+			if json.Unmarshal(schedule, &requested) == nil && requested.Enabled {
+				var current map[string]any
+				if !scanReadJSON(w, r, scraperURL, "/admin/features/schedule", &current) {
+					return true
+				}
+				current["Enabled"] = false
+				payload, _ := json.Marshal(current)
+				disabled, e := scanRequest(r, scraperURL, "/admin/features/schedule", http.MethodPut, payload)
+				if e != nil {
+					http.Error(w, "关闭另一组定时任务失败", 502)
+					return true
+				}
+				if disabled.StatusCode != 200 {
+					relay(w, disabled)
+					return true
+				}
+				disabled.Body.Close()
+			}
 		}
 		data, _ = json.Marshal(local)
 		response, err = scanRequest(r, scraperURL, "/admin/scan-settings", http.MethodPut, data)

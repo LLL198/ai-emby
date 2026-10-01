@@ -87,7 +87,13 @@ func (a *App) reserveConcurrentScan(lib string) (string, bool) {
 	if _, exists := a.scanner.active[lib]; exists {
 		return "", false
 	}
-	a.scanner.active[lib] = concurrentScanStatus{ID: lib, Status: "queued", Concurrency: a.scanFileConcurrency()}
+	n := a.scanFileConcurrency()
+	if a.features.ctx != nil {
+		if p := a.featurePolicy(lib); p.FileConcurrency > 0 {
+			n = p.FileConcurrency
+		}
+	}
+	a.scanner.active[lib] = concurrentScanStatus{ID: lib, Status: "queued", Concurrency: n}
 	a.scanner.wg.Add(1)
 	return lib, true
 }

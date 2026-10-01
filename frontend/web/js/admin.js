@@ -6,6 +6,7 @@ function stopConsolePolling() {
   consoleController = null;
 }
 function adminSection(n, route = true) {
+  if(typeof Features!=="undefined")Features.ensureSections();
   stopConsolePolling();
   mediaGeneration++;
   mediaQueueRequest++;
@@ -35,6 +36,7 @@ function adminSection(n, route = true) {
   const loaders={3:loadMediaSettings,4:loadEnhancements,5:loadKeys,6:loadTMDBSettings,7:loadTelegramSettings,8:loadScraperSettings,9:loadSubtitleSettings,10:loadIntroSettings,11:loadProxySettings};
   if(loaders[n])Panel.loadModule(n,loaders[n]);
   if (n === 12) run(loadConsole)();
+  if(n>=14 && typeof Features!=="undefined")run(()=>Features.load(n))();
 }
 async function folderPicker(id, path = "/media", after = "") {
   let dialog = $("#folder-picker");
@@ -1261,6 +1263,9 @@ async function posterMenu(el, extraActions = []) {
   const close = action => async () => { sheet.close(); await action(); };
   // Settings and favorite details may fail or be slow; they must not block the menu.
   if (user?.Policy?.IsAdministrator) {
+    actions.push({label:"编辑媒体资料",action:close(()=>Features.metadata(id))});
+    actions.push({label:"管理图片",action:close(()=>Features.artwork(id))});
+    if(["Movie","Series"].includes(el.dataset.type))actions.push({label:"重新识别",action:close(()=>Features.identify(id))});
     actions.push({label:"重命名", action:close(() => {
       fmDialog("重命名显示名称", `<label>显示名称<input name="name" required maxlength="256" value="${esc(name)}"></label>`, async f => {
         await api("/admin/media-item", "PUT", {ID:id, Name:f.get("name")});
@@ -1270,6 +1275,7 @@ async function posterMenu(el, extraActions = []) {
     if (["Movie", "Series"].includes(el.dataset.type))
       actions.push({label:"刮削元数据", action:close(() => openPosterScraper(id))});
   }
+  actions.push({label:"加入合集",action:close(()=>Features.addToCollection(id))});
   if (favorite !== null) actions.push({label:favorite ? "取消收藏" : "收藏", icon:"star", action:close(async () => {
     await api(`/emby/Users/${encodeURIComponent(user.Id)}/FavoriteItems/${encodeURIComponent(id)}`, favorite ? "DELETE" : "POST");
     el.dataset.favorite = String(!favorite);

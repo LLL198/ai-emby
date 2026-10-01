@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -13,6 +14,7 @@ import (
 // Serve scraper and scan requests on the internal port after gateway authorization.
 func (a *App) runScraperService() {
 	must(a.initConcurrentScanner())
+	must(a.initFeatures())
 	listen := os.Getenv("LISTEN")
 	if listen == "" {
 		listen = "127.0.0.1:18098"
@@ -37,7 +39,13 @@ func (a *App) runScraperService() {
 			return
 		}
 		if !user.Admin {
+			if strings.HasPrefix(r.URL.Path, "/features/") && a.featureRoute(w, r, user) {
+				return
+			}
 			fail(w, 403, "administrator required")
+			return
+		}
+		if a.featureRoute(w, r, user) {
 			return
 		}
 		switch r.URL.Path {
@@ -73,9 +81,17 @@ func (a *App) runScraperService() {
 	a.scraper.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	a.stopFeatures()
 	server.Shutdown(ctx)
 	if err := a.stopConcurrentScanner(ctx); err != nil {
 		log.Print(err)
+	}
+	done := make(chan struct{})
+	go func() { a.features.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		log.Print("feature tasks stopped by shutdown deadline")
 	}
 	a.db.Close()
 }

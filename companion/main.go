@@ -57,6 +57,7 @@ type App struct {
 	activity     activityState
 	probes       probeState
 	jobs         libraryJobQueue
+	features     featureState
 
 	scanControlMu sync.Mutex
 	scanResume    chan struct{}

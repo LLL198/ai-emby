@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -55,7 +56,20 @@ func (a *App) extractMedia(ctx context.Context, x Item, t, ua string) (M, error)
 	if ua == "" {
 		ua = "GoEmby-MediaInfo/1.0"
 	}
-	cmd := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-rw_timeout", "20000000", "-user_agent", ua, "-probesize", "5000000", "-analyzeduration", "5000000", "-protocol_whitelist", "http,https,tcp,tls,crypto", "-show_entries", "format=duration,format_name,size,bit_rate:stream=index,codec_name,codec_type,width,height,channels,channel_layout,sample_rate,bit_rate,avg_frame_rate,r_frame_rate,profile,level,display_aspect_ratio,field_order,bits_per_raw_sample,pix_fmt,color_transfer,color_primaries:stream_tags=language,title:stream_disposition=default,forced", "-of", "json", base+a.playURL(x, t)+"&GoEmbyProbe=true")
+	input := base + a.playURL(x, t) + "&GoEmbyProbe=true"
+	if t == "" || !strings.EqualFold(filepath.Ext(x.Path), ".strm") {
+		var err error
+		input, err = a.featureMediaInput(x)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args := append([]string{"-v", "error"}, featureInputArgs(input)...)
+	if strings.HasPrefix(input, "http") {
+		args = append(args, "-user_agent", ua)
+	}
+	args = append(args, "-show_entries", "format=duration,format_name,size,bit_rate:stream=index,codec_name,codec_type,width,height,channels,channel_layout,sample_rate,bit_rate,avg_frame_rate,r_frame_rate,profile,level,display_aspect_ratio,field_order,bits_per_raw_sample,pix_fmt,color_transfer,color_primaries:stream_tags=language,title:stream_disposition=default,forced", "-of", "json", input)
+	cmd := exec.CommandContext(ctx, "ffprobe", args...)
 	data, e := cmd.Output()
 	if e != nil {
 		return nil, probeFailure(ctx, e)
@@ -184,7 +198,11 @@ func (a *App) extractMedia(ctx context.Context, x Item, t, ua string) (M, error)
 	duration, _ := strconv.ParseFloat(b.Format.Duration, 64)
 	size, _ := strconv.ParseInt(b.Format.Size, 10, 64)
 	if size <= 0 {
-		size = remoteMediaSize(ctx, base+a.playURL(x, t)+"&GoEmbyProbe=true", ua)
+		if strings.HasPrefix(input, "http") {
+			size = remoteMediaSize(ctx, input, ua)
+		} else if info, err := os.Stat(input); err == nil {
+			size = info.Size()
+		}
 	}
 	if size > 0 {
 		m["Size"] = size

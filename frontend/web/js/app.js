@@ -159,6 +159,7 @@ function openUserMenu(event) {
  const profileUserId=user?.Id;
  const isAdmin=user?.Policy?.IsAdministrator === true;
  const entries=[
+  {label:'播放偏好',action:()=>Features.preferences(),icon:'chapter'},
   {label:'修改密码',action:password,icon:'lock'},
   {label:'退出登录',action:logout,icon:'logout',danger:true}
  ];
@@ -177,6 +178,7 @@ function nav(){
  document.body.classList.toggle("media-view",view==="browse");document.body.classList.toggle("admin-view",view==="admin");toggleDrawer(false);const n=$("#nav");if(!n)return;
  n.innerHTML=`${token&&user?.Policy?.IsAdministrator?`<div class="workspace-switch" aria-label="切换工作空间"><button type="button" aria-pressed="${view!=="admin"&&view!=="files"}" onclick="browseRoot()">影库</button><button type="button" aria-pressed="${view==="admin"||view==="files"}" onclick="navigateAdminSection(12)">管理面板</button></div>`:""}${token&&view==="admin"?'<button class="secondary icon-button" title="实时日志" aria-label="实时日志" onclick="showLogs()"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/></svg></button>':""}${token?`${view!=="admin"&&view!=="files"?`<button class="secondary icon-button" aria-label="搜索" title="搜索" onclick="openSearch()">${UI.icons.search}</button>`:""}<details class="user-menu"><summary class="icon-button user-menu-trigger" onclick="openUserMenu(event)" title="${esc(user?.Name||"用户")}" aria-label="用户菜单"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></summary></details>`:""}<button class="secondary icon-button" title="切换明暗模式" aria-label="切换明暗模式" onclick="toggleTheme()">${themeIcon()}</button>`;
  paintTopAvatar(avatarForUser().objectURL);
+ if(token&&view==='browse'){const links=UI.el('div',{class:'feature-actions',style:'margin:0'},[UI.el('button',{class:'secondary',onclick:run(()=>Features.discover())},'发现'),UI.el('button',{class:'secondary',onclick:run(()=>Features.collections())},'合集')]);n.prepend(links)}
  loadAvatar().catch(()=>{});
  $("#hamburger")?.remove();$("#drawer")?.remove();$("#drawer-backdrop")?.remove();
  if((view==="admin"||view==="files")&&user?.Policy?.IsAdministrator){document.querySelector("header").insertAdjacentHTML("afterbegin",'<button id="hamburger" aria-label="展开功能菜单" aria-expanded="false"><span></span><span></span><span></span></button>');const drawer=renderAdminDrawer(view);document.body.insertAdjacentHTML("beforeend",drawer);$("#drawer").addEventListener("click",e=>{if(e.target.closest("button")){toggleDrawer(false)}});$("#hamburger").onclick=()=>{toggleDrawer($("#hamburger").getAttribute("aria-expanded")!=="true")}}
@@ -211,7 +213,7 @@ function login(){
    token=b.AccessToken;user=b.User;rememberedLogin=false;
    saveCurrentSession();
    try{await rememberCurrentDevice()}catch(error){if(token===b.AccessToken)toast(error.message,{type:"error"})}
-   if(token===b.AccessToken&&epoch===sessionEpoch){nav();browseRoot()}
+   if(token===b.AccessToken&&epoch===sessionEpoch){nav();routeFromLocation()}
   }finally{button.disabled=false}
  });
 }
@@ -223,6 +225,10 @@ async function logout(){
 function password(){view="password";nav();$("#app").innerHTML=`<div class="panel login"><h2>修改密码</h2><form id="pw" style="display:grid;gap:15px"><input name="old" type="password" placeholder="当前密码"><input name="new" type="password" placeholder="新密码（普通用户可留空，管理员至少 12 字节）"><button>保存并重新登录</button></form></div>`;$("#pw").onsubmit=run(async(e)=>{e.preventDefault();const f=new FormData(e.target);await api(`/Users/${user.Id}/Password`,"POST",{CurrentPw:f.get("old"),NewPw:f.get("new")});await logout();toast("密码已修改")})}
 function routeFromLocation(){
  if(!token||!user)return;
+ Features.applyAppearance().catch(()=>{});
+ if(location.hash.startsWith('#item/')){const id=decodeURIComponent(location.hash.slice(6));browseRoot().then(()=>detail(id)).catch(e=>toast(e.message,{type:'error'}));return}
+ if(location.hash.startsWith("#discover")){Features.discover();return}
+ if(location.hash.startsWith("#collections")){Features.collections(location.hash.split('/')[1]||'');return}
  if(location.hash.startsWith("#files")&&user.Policy?.IsAdministrator){filesPage();return}
  if(location.hash.startsWith("#admin")&&user.Policy?.IsAdministrator){navigateAdminSection(Panel.sectionFromHash(),Panel.folderFromHash());return}
  browseRoot();
