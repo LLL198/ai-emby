@@ -1,0 +1,7 @@
+{
+  "Origin": "https://github.com/sd87671067/go-emby",
+  "OriginalVersion": "2026.09.28-124350",
+  "Architecture": "linux/amd64",
+  "SHA256": "cef7fa19b454891d3addb776545a7a162a839737382023ffc17fcc323f96b2be",
+  "Description": "Current deployed original executable, retaining local scan-deadline and mounted-filesystem atomic-write fixes. Full original source has not been recovered."
+}

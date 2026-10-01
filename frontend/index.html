@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>Go Emby · 影库</title>
+    <link rel="stylesheet" href="/web/css/tokens.css" />
+    <link rel="stylesheet" href="/web/css/base.css" />
+    <link rel="stylesheet" href="/web/css/components.css" />
+    <link rel="stylesheet" href="/web/css/browse.css" />
+    <link rel="stylesheet" href="/web/css/detail.css" />
+    <link rel="stylesheet" href="/web/css/admin.css" />
+    <link rel="stylesheet" href="/web/css/tmdb.css" />
+    <link rel="stylesheet" href="/web/css/scraper.css" />
+    <link rel="stylesheet" href="/web/css/files.css" />
+    <link rel="stylesheet" href="/web/css/panel.css" />
+    <link rel="stylesheet" href="/web/css/azure.css" />
+    <script defer src="/web/js/api.js"></script>
+    <script defer src="/web/js/components.js"></script>
+    <script defer src="/web/js/session.js"></script>
+    <script defer src="/web/js/app.js"></script>
+    <script defer src="/web/js/browse.js"></script>
+    <script defer src="/web/js/detail.js"></script>
+    <script defer src="/web/js/admin.js"></script>
+    <script defer src="/web/js/admin-entry.js"></script>
+    <script defer src="/web/js/tmdb-admin.js"></script>
+    <script defer src="/web/js/scraper-admin.js"></script>
+    <script defer src="/web/js/files.js"></script>
+    <script defer src="/web/js/panel.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#app" onclick="event.preventDefault();document.getElementById('app').focus()">跳到主内容</a>
+    <header>
+      <button class="logo" title="返回主页" onclick="token?browseRoot():login()">MACA</button>
+      <nav id="nav"></nav>
+    </header>
+    <main id="app" tabindex="-1"></main>
+    <dialog id="modal"></dialog>
+    <dialog id="logs" aria-label="实时日志">
+      <div class="log-toolbar">
+        <div class="log-title"><p class="eyebrow">ACTIVITY LOG</p><h2>实时日志</h2></div>
+        <div class="log-actions">
+          <button id="scraper-pause" class="secondary icon-button scraper-pause" hidden disabled type="button" aria-label="暂停刮削" title="暂停刮削"></button>
+          <button class="secondary icon-button" title="清空日志" aria-label="清空日志" onclick="run(clearLogs)()">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg>
+          </button>
+          <button class="secondary icon-button" title="关闭" aria-label="关闭" onclick="closeLogs()">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+      </div>
+      <div class="log-filters"><select id="log-category" aria-label="日志分类"></select><input id="log-search" type="search" placeholder="搜索片名、目录或错误" aria-label="搜索日志"><label><input id="log-errors" type="checkbox">只看失败</label><span id="log-count"></span></div>
+      <p id="log-status"></p>
+      <div id="log-content"></div>
+    </dialog>
+  </body>
+</html>

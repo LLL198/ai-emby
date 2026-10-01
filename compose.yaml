@@ -1,0 +1,57 @@
+name: go-emby
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: emby
+      POSTGRES_USER: emby
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置数据库密码}
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U emby -d emby]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  go-emby:
+    image: ghcr.io/lll198/ai-emby:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      args:
+        VERSION: ${IMAGE_TAG:-development}
+    restart: unless-stopped
+    user: ${PUID:-0}:${PGID:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - ${HTTP_PORT:-8097}:8097
+    environment:
+      DATABASE_URL: postgres://emby:${POSTGRES_PASSWORD:?请设置数据库密码}@postgres:5432/emby?sslmode=disable
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请设置管理员初始密码}
+      LICENSE_KEY: ${LICENSE_KEY:-}
+      LICENSE_SERVER_URL: ${LICENSE_SERVER_URL:-https://tl.macacaaca.top}
+      LICENSE_CA_FILE: ${LICENSE_CA_FILE:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
+      MEDIA_INFO_ROOT: /app/data
+      FILE_MANAGER_ROOT: /media
+      MEDIA_ROOTS: ${MEDIA_ROOTS:-/media}
+    volumes:
+      - ./app-data:/app/data
+      - ./app-backups:/app/backups
+      - ./update-control:/app/update-control
+      - ${MEDIA_PATH:-./media}:/media:rw
+      - ./secrets:/run/secrets:ro
+      - /etc/machine-id:/run/license-machine-id:ro
+    stop_grace_period: 45s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

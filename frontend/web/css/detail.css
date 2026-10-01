@@ -1,0 +1,57 @@
+dialog.detail-dialog {
+  width: min(1000px, calc(100vw - 32px));
+  padding: 0;
+  overflow: auto;
+  background: var(--media-surface);
+  color: var(--media-text);
+  border: 0;
+  border-radius: 12px;
+  box-shadow: var(--media-shadow);
+}
+dialog.detail-dialog[open] { animation: detail-enter var(--media-motion-normal); }
+@keyframes detail-enter {
+  from { opacity: 0; transform: translateY(16px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes backdrop-enter { from { opacity: 0; } to { opacity: 1; } }
+.detail-hero { position: relative; isolation: isolate; overflow: hidden; min-height: clamp(300px, 42vw, 520px); display: flex; align-items: end; }
+.detail-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; animation: backdrop-enter var(--media-motion-normal); }
+.detail-hero:after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(0deg, var(--media-surface), transparent 90%), linear-gradient(90deg, var(--media-overlay), transparent);
+}
+.detail-shell { padding: 80px 40px 20px; width: 100%; }
+.detail-title { font-size: clamp(28px, 4vw, 48px); margin: 0; max-width: 85%; text-wrap: balance; overflow-wrap: anywhere; }
+.detail-dialog .detail-close { position: sticky; float: right; top: 16px; margin: 16px 16px -60px 0; z-index: 5; border-radius: 50%; background: var(--media-overlay); color: var(--media-text); }
+.detail-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0 24px; }
+.detail-actions > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.detail-body { padding: 0 40px 36px; }
+.episode-picker { margin: 0 0 24px; }
+.episode-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 16px; }
+.episode-choice { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.detail-overview { color: var(--media-text); max-width: 75ch; line-height: 1.8; }
+.actors { gap: 16px; }
+.actor { flex: 0 0 100px; margin: 0; scroll-snap-align: start; }
+.actor img, .actor-placeholder { display: block; width: 100px; height: 138px; object-fit: cover; background: var(--media-bg); border-radius: var(--media-card-radius); }
+.actor figcaption { margin-top: 8px; font-size: 14px; }
+.actor small { display: block; color: var(--media-muted); }
+.media-info { margin: 32px 0 0; border-top: 1px solid var(--border); padding-top: 20px; color: var(--media-muted); }
+.media-info summary { cursor: pointer; padding: 8px 0; }
+.media-info dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.media-info dt { font-size: 13px; color: var(--media-muted); }
+.media-info dd { margin: 4px 0; overflow-wrap: anywhere; }
+.media-info article { padding: 16px; margin: 12px 0; background: var(--media-bg); border-radius: var(--media-card-radius); }
+.related .card { flex-basis: 150px; }
+video { width: 100%; max-height: 65dvh; background: var(--media-bg); margin-top: 20px; }
+.detail-meta { font-size: 14px; color: var(--media-muted); }
+@media (max-width: 600px) {
+  dialog.detail-dialog { width: calc(100vw - 16px); max-height: 94dvh; border-radius: 8px; }
+  .detail-shell { padding: 70px 20px 16px; }
+  .detail-title { max-width: 100%; }
+  .detail-body { padding: 0 20px 24px; }
+  .detail-actions { gap: 8px; }
+  .media-info dl { gap: 12px; }
+}

@@ -1,0 +1,20 @@
+ARG RUNTIME_BASE=postgres:17-bookworm
+FROM ${RUNTIME_BASE}
+USER root
+RUN if ! command -v ffmpeg >/dev/null || ! command -v wget >/dev/null; then \
+      apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg \
+      && rm -rf /var/lib/apt/lists/*; fi \
+    && mkdir -p /app/data /app/backups /app/update-control /media /run/secrets \
+    && rm -rf /app/frontend
+COPY bin/ /usr/local/bin/
+COPY frontend/ /app/frontend/
+COPY VERSION /app/VERSION
+RUN chmod 755 /usr/local/bin/go-emby /usr/local/bin/go-emby-scraper /usr/local/bin/scraper-gateway
+LABEL org.opencontainers.image.title="ai-emby" \
+      org.opencontainers.image.source="https://github.com/LLL198/ai-emby" \
+      org.opencontainers.image.description="Go Emby with parallel library scanning and scraping"
+WORKDIR /app
+ENV LISTEN=:8097 MEDIA_INFO_ROOT=/app/data FILE_MANAGER_ROOT=/media
+EXPOSE 8097
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 CMD wget -q -O /dev/null http://127.0.0.1:8097/health || exit 1
+ENTRYPOINT ["/usr/local/bin/scraper-gateway"]
