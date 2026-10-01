@@ -3,8 +3,7 @@ const FileNaming = (() => {
   const labels = {ready:"可改名", unchanged:"已规范", review:"待确认", conflict:"有冲突"};
   const presets = {
     tv:"{title} - S{season:2}E{episode:2}",
-    movie:"{title} ({year})",
-    tmdb:"{title} ({year}) {tmdb-{tmdbid}}"
+    movie:"{title} ({year})"
   };
   function field(label,input,wide=false) {
     return UI.el("label",{class:"naming-field"+(wide?" naming-wide":"")},[UI.el("span",{},label),input]);
@@ -49,7 +48,7 @@ const FileNaming = (() => {
     ]);
     const variableHelp = UI.el("details",{class:"naming-variable-help"},[
       UI.el("summary",{},"模板变量与示例"),
-      UI.el("p",{},"{title} 标题 · {year} 年份 · {season:2} 季号 · {episode:2} 集号 · {quality} 清晰度 · {tmdbid} TMDB 编号。扩展名会自动保留。"),
+      UI.el("p",{},"{title} 标题 · {title_original} TMDB 原名 · {year} 年份 · {season:2} 季号 · {episode:2} 集号 · {episode_name} 原文件分集标题 · {quality} 清晰度 · {tmdbid} TMDB 编号。扩展名会自动保留。"),
       UI.el("code",{},"{title} ({year}) - S{season:2}E{episode:2} {tmdb-{tmdbid}}"),
       UI.el("p",{},"正则使用 RE2 语法，替换分组写 ${1} 或 $1，不支持环视。顺序编号按文件名自然排序：1、2、10。")
     ]);

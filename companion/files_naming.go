@@ -29,20 +29,21 @@ type namingState struct {
 	plans map[string]*namingPlan
 }
 type namingRequest struct {
-	Path        string   `json:"path"`
-	Paths       []string `json:"paths"`
-	Mode        string   `json:"mode"`
-	Kind        string   `json:"kind"`
-	Title       string   `json:"title"`
-	Year        int      `json:"year"`
-	TMDB        string   `json:"tmdb"`
-	Season      *int     `json:"season"`
-	Bare        bool     `json:"bare"`
-	Template    string   `json:"template"`
-	Pattern     string   `json:"pattern"`
-	Replacement string   `json:"replacement"`
-	Start       int      `json:"start"`
-	Width       int      `json:"width"`
+	Path          string   `json:"path"`
+	Paths         []string `json:"paths"`
+	Mode          string   `json:"mode"`
+	Kind          string   `json:"kind"`
+	Title         string   `json:"title"`
+	Year          int      `json:"year"`
+	TMDB          string   `json:"tmdb"`
+	OriginalTitle string   `json:"-"`
+	Season        *int     `json:"season"`
+	Bare          bool     `json:"bare"`
+	Template      string   `json:"template"`
+	Pattern       string   `json:"pattern"`
+	Replacement   string   `json:"replacement"`
+	Start         int      `json:"start"`
+	Width         int      `json:"width"`
 }
 type namingMove struct {
 	Old  string      `json:"old"`
@@ -178,8 +179,10 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 		}
 		date := data.ReleaseDate
 		b.Title = data.Title
+		b.OriginalTitle = data.OriginalTitle
 		if b.Kind == "tv" {
 			b.Title = data.Name
+			b.OriginalTitle = data.OriginalName
 			date = data.FirstAirDate
 		}
 		if b.Title == "" {
@@ -283,6 +286,13 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 		if row.New == path {
 			row.Status = "unchanged"
 			row.Reason = "名称已符合当前规则"
+			if !fi.IsDir() {
+				associated := append([]namingMove{{Old: path, New: path, Info: fi}}, namingSidecars(root, entries, path, path)...)
+				if reason := namingNFOConflict(root, associated); reason != "" {
+					row.Status = "review"
+					row.Reason = reason
+				}
+			}
 			plan.Rows = append(plan.Rows, row)
 			continue
 		}
@@ -440,11 +450,22 @@ func namingDestination(path string, directory bool, b namingRequest, re *regexp.
 	if !hasEpisode && identity.Year == 0 {
 		return "", "", errors.New("电影缺少年份，请指定年份或选择 TMDB 结果")
 	}
+	if b.Mode == "auto" && hasEpisode && b.Title == "" && b.Year == 0 && b.TMDB == "" && b.Template == "" && namingCanonicalSE.MatchString(stem) {
+		return name, "名称已经包含规范季集编号", nil
+	}
 	quality := ""
 	if m := namingQuality.FindStringSubmatch(stem); len(m) == 2 {
 		quality = m[1]
 	}
-	values := map[string]string{"title": namingClean(identity.Title), "year": "", "season": "", "episode": "", "quality": quality, "tmdbid": identity.TMDBID, "ext": strings.TrimPrefix(ext, ".")}
+	episodeName := ""
+	if hasEpisode && b.Mode != "sequence" {
+		episodeName = strings.Trim(scraperTMDBTagRE.ReplaceAllString(stem[ep.End:], ""), " ._-")
+		if cutoff := scraperReleaseTokenRE.FindStringIndex(episodeName); len(cutoff) == 2 {
+			episodeName = episodeName[:cutoff[0]]
+		}
+		episodeName = namingClean(strings.Trim(episodeName, " ._-[]()"))
+	}
+	values := map[string]string{"title": namingClean(identity.Title), "title_original": namingClean(b.OriginalTitle), "year": "", "season": "", "episode": "", "episode_name": episodeName, "quality": quality, "tmdbid": identity.TMDBID, "ext": strings.TrimPrefix(ext, ".")}
 	if identity.Year > 0 {
 		values["year"] = strconv.Itoa(identity.Year)
 	}
@@ -464,6 +485,9 @@ func namingDestination(path string, directory bool, b namingRequest, re *regexp.
 				width = b.Width
 			}
 			template += fmt.Sprintf(" - S{season:2}E{episode:%d}", width)
+			if episodeName != "" {
+				template += " - {episode_name}"
+			}
 		}
 		if identity.TMDBID != "" {
 			template += " {tmdb-" + identity.TMDBID + "}"
