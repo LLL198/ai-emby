@@ -58,6 +58,7 @@ type App struct {
 	probes       probeState
 	jobs         libraryJobQueue
 	features     featureState
+	naming       namingState
 
 	scanControlMu sync.Mutex
 	scanResume    chan struct{}

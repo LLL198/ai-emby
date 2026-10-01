@@ -177,7 +177,7 @@ func init() {
 
 func recognizeEpisodeName(input MediaRecognitionInput) MediaRecognition {
 	result := scraperSearchIdentity(input.Name)
-	if result.Season == 0 || result.Episode == 0 {
+	if result.Episode == 0 || !scraperSeasonEpisodeRE.MatchString(input.Name) {
 		return result
 	}
 	result.Kind = "Episode"

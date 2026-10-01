@@ -120,6 +120,31 @@ func serveFeatureRoutes(db *sql.DB, w http.ResponseWriter, r *http.Request, work
 		return true
 	}
 	authorized.Body.Close()
+	if path == "/admin/features/naming/apply" {
+		response, err := get(r, coreURL, "/admin/scraper")
+		if err != nil {
+			sessionError(w, 502, "无法检查刮削状态")
+			return true
+		}
+		if response.StatusCode != 200 {
+			relay(w, response)
+			return true
+		}
+		var state struct {
+			Running, Planning bool
+			Settings          struct{ MonitorEnabled bool }
+		}
+		err = json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(&state)
+		response.Body.Close()
+		if err != nil {
+			sessionError(w, 502, "刮削状态无效")
+			return true
+		}
+		if state.Running || state.Planning || state.Settings.MonitorEnabled {
+			sessionError(w, 409, "请结束刮削并关闭实时刮削监控后，再执行改名")
+			return true
+		}
+	}
 	if path == "/admin/features/tasks" {
 		response, err := get(r, coreURL, "/admin/logs")
 		if err == nil {

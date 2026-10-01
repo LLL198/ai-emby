@@ -136,6 +136,8 @@ func (a *App) featureRoute(w http.ResponseWriter, r *http.Request, user User) bo
 		return true
 	}
 	switch {
+	case strings.HasPrefix(path, "/admin/features/naming/"):
+		a.namingAPI(w, r, user)
 	case strings.HasPrefix(path, "/admin/features/cloud"):
 		a.cloudAdmin(w, r)
 	case path == "/admin/features/tasks":

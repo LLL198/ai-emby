@@ -146,7 +146,27 @@ func (a *App) filesAvailable(ctx context.Context,paths []string) error {
  if e=json.NewDecoder(conn).Decode(&b);e!=nil{return errors.New("占用检查失败")};if !b.OK {if b.Error==""{b.Error="占用检查失败"};return errors.New(b.Error)};return nil
 }
 func (a *App) filesChanged(paths []string) {
- if a.db==nil{return}
- // Use the existing targeted scanner, even if filesystem watching is disabled.
- for _,lib:=range a.libraries(){for _,loc:=range lib["Locations"].([]string){for _,p:=range paths{full:=filepath.Join(fileRoot(),p);if pathsOverlap(loc,full){key:=lib["Id"].(string);go a.scanLibrary(key);break}}}}
+	if a.db == nil {
+		return
+	}
+	// Queue one refresh per affected library, even when several locations match.
+	for _, lib := range a.libraries() {
+		changed := false
+		for _, loc := range lib["Locations"].([]string) {
+			for _, p := range paths {
+				full := filepath.Join(fileRoot(), p)
+				if pathsOverlap(loc, full) {
+					changed = true
+					break
+				}
+			}
+			if changed {
+				break
+			}
+		}
+		if changed {
+			key := lib["Id"].(string)
+			go a.scanLibrary(key)
+		}
+	}
 }

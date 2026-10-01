@@ -27,7 +27,7 @@ type featureTask struct {
 var featureFailureCount = regexp.MustCompile(`失败\s+(\d+)`)
 
 func featureTaskCategory(category string) bool {
-	return category == "scan" || category == "update" || category == "probe" || category == "scraper" || strings.HasPrefix(category, "library-") || category == "import" || category == "cover" || category == "cloud-strm"
+	return category == "scan" || category == "update" || category == "probe" || category == "scraper" || strings.HasPrefix(category, "library-") || category == "import" || category == "cover" || category == "cloud-strm" || category == "rename"
 }
 
 func (a *App) featurePersistActivities() {

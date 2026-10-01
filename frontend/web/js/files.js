@@ -20,7 +20,19 @@ const FilesPage = (() => {
     bar.append(trail,search,sort,order);return bar;
   }
   function row(item){const checked=state.selected.has(item.path);const checkbox=UI.el("input",{type:"checkbox","aria-label":`选择 ${item.name}`});checkbox.checked=checked;checkbox.onchange=()=>{checkbox.checked?state.selected.add(item.path):state.selected.delete(item.path);renderActions()};const name=UI.el("button",{class:"files-name",onclick:run(()=>item.isDir?load(item.path,true):download(item))});name.innerHTML=`<span class="file-icon">${icon(item.isDir)}</span><span><strong>${esc(item.name)}</strong><small>${item.isDir?"文件夹":size(item.size)}</small></span>`;const time=UI.el("time",{},new Date(item.modified).toLocaleString());const more=actions(item);return UI.el("div",{class:"files-row"+(checked?" selected":"")},[checkbox,name,time,more])}
-  function renderActions(){const n=document.querySelector("#files-actions");if(!n)return;const count=state.selected.size;n.replaceChildren(UI.el("button",{class:"secondary",onclick:()=>pickUpload()},"上传"),UI.el("button",{class:"secondary",onclick:run(mkdir)},"新建文件夹"),...(count?[UI.el("button",{class:"secondary",onclick:run(moveSelected)},`移动 (${count})`),UI.el("button",{class:"danger",onclick:run(deleteSelected)},`删除 (${count})`)]:[]))}
+  function renderActions() {
+    const actions=document.querySelector("#files-actions");if(!actions)return;
+    const count=state.selected.size;
+    actions.replaceChildren(
+      UI.el("button",{class:"secondary",onclick:()=>pickUpload()},"上传"),
+      UI.el("button",{class:"secondary",onclick:run(mkdir)},"新建文件夹"),
+      UI.el("button",{class:"secondary",onclick:()=>FileNaming.open(state.path,[...state.selected],()=>load(state.path))},count?`规范命名 (${count})`:"规范命名"),
+      ...(count?[
+        UI.el("button",{class:"secondary",onclick:run(moveSelected)},`移动 (${count})`),
+        UI.el("button",{class:"danger",onclick:run(deleteSelected)},`删除 (${count})`)
+      ]:[])
+    );
+  }
   function render(){if(view!=="files")return;const app=$("#app");if(!app)return;const list=UI.el("section",{class:"files-list","aria-busy":state.busy});if(state.busy)list.append(UI.el("p",{class:"empty"},"正在读取…"));else if(state.error)list.append(UI.el("p",{class:"empty",role:"alert"},"目录读取失败："+state.error));else if(!state.entries.length)list.append(UI.el("p",{class:"empty"},state.search?"没有匹配的文件":"这个文件夹是空的"));else state.entries.forEach(x=>list.append(row(x)));app.replaceChildren(UI.el("section",{class:"files-page"},[UI.el("div",{class:"section-heading files-heading"},[UI.el("div",{},[UI.el("p",{class:"eyebrow"},"CONTENT / AI EMBY"),UI.el("h1",{},"文件管理")]),UI.el("div",{id:"files-actions",class:"files-actions"})]),toolbar(),list]));renderActions()}
   function promptDialog(title,label,value=""){return new Promise(resolve=>{const input=UI.el("input",{value,placeholder:label,autocomplete:"off"});const form=UI.el("form",{class:"files-dialog-form"},[input,UI.el("div",{class:"files-dialog-buttons"},[UI.el("button",{type:"button",class:"secondary"},"取消"),UI.el("button",{type:"submit"},"确定")])]);const d=UI.Modal(title,form);const buttons=form.querySelectorAll("button");buttons[0].onclick=()=>{d.close();resolve(null)};form.onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v){d.close();resolve(v)}};input.focus()})}
   async function mkdir(){const name=await promptDialog("新建文件夹","文件夹名称");if(!name)return;await api("/api/files/mkdir","POST",{path:state.path,name});toast("文件夹已创建");await load()}
@@ -51,6 +63,7 @@ const FilesPage = (() => {
     };
     if (!item.isDir) add("下载", "download", ()=>download(item));
     if (item.isDir) add("重命名", "rename", ()=>rename(item));
+    if (item.isDir || /\.(strm|mkv|mp4|avi|ts|m4v|mov|webm|m2ts|iso)$/i.test(item.name)) add("规范命名", "rename", ()=>FileNaming.open(parentPath(item.path).replace(/^\//,""),[item.path],()=>load(state.path)));
     add("复制目录路径", "copy", ()=>copyDirectory(item));
     if (item.scrape) add("刮削", "scan", ()=>openFileScraper(item));
     add("移动", "folder", ()=>move([item.path]));
