@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
-FROM debian:bookworm-slim AS cloud-engine
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget \
-    && rm -rf /var/lib/apt/lists/*
+FROM postgres:17-bookworm AS runtime-base
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app/data /app/backups /app/update-control /media /run/secrets
+
+FROM runtime-base AS cloud-engine
 WORKDIR /out
 RUN wget -q --timeout=60 --tries=4 -O openlist.tar.gz https://github.com/OpenListTeam/OpenList/releases/download/v4.2.6/openlist-linux-amd64-lite.tar.gz \
     && echo 'a3bf640adae8b72b9b63deb76111eae21222f964c184193f80a18924b8037437  openlist.tar.gz' | sha256sum -c - \
@@ -21,11 +25,7 @@ COPY gateway/ ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -buildvcs=false -trimpath -ldflags="-s -w -X main.releaseVersion=$VERSION" -o /out/ai-emby-gateway .
 RUN printf '%s\n' "$VERSION" > /out/VERSION
 
-FROM postgres:17-bookworm
-USER root
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /app/data /app/backups /app/update-control /media /run/secrets
+FROM runtime-base
 COPY runtime/ai-emby-core-linux-amd64 /usr/local/bin/ai-emby-core
 COPY --from=build /out/ai-emby-worker /out/ai-emby-gateway /usr/local/bin/
 COPY --from=cloud-engine /out/ai-emby-cloud-engine /usr/local/bin/

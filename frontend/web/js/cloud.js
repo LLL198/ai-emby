@@ -27,7 +27,7 @@ const CloudMounts = (() => {
   const sensitive = name => /token|cookie|password|authorization|verify_code|sms_code|device_sign|verification_id|username|phone_number/i.test(name);
   const states = {waiting:'等待中',running:'生成中',complete:'已完成',error:'失败',cancelled:'已取消',interrupted:'已中断'};
   const active = task => ['waiting','running','counting'].includes(task.State);
-  let host, still, data, selected, currentPath='/', page=1, listing, browseSerial=0, pollTimer;
+  let host, still, data, selected, currentPath='/', page=1, listing, browseSerial=0, loadSerial=0, pollTimer;
   const icon = (name) => typeof fmIcon==='function' ? fmIcon(name) : '';
   const size = n => n>=1073741824 ? (n/1073741824).toFixed(1)+' GB' : n>=1048576 ? (n/1048576).toFixed(0)+' MB' : '—';
   const join = (parent,name) => (parent==='/'?'':parent)+'/'+name;
@@ -35,8 +35,9 @@ const CloudMounts = (() => {
   const field = (name,title,value='',type='text',extra='') => `<label>${esc(title)}<input name="${esc(name)}" type="${type}" value="${esc(value)}" ${extra}></label>`;
 
   async function load(target,isCurrent) {
+    const serial=++loadSerial;
     clearTimeout(pollTimer);host=target;still=isCurrent;
-    const result = await api(base);if(!still())return;data=result;
+    const result = await api(base);if(serial!==loadSerial||!isCurrent())return;data=result;
     selected=data.Mounts.find(m=>m.ID===selected?.ID) || data.Mounts.find(m=>m.Enabled) || data.Mounts[0];
     render();if(selected?.Enabled) await browse(currentPath,page);
     schedule();
@@ -95,11 +96,13 @@ const CloudMounts = (() => {
   }
   async function browse(p='/',n=1,refresh=false) {
     const ticket=++browseSerial,mount=selected;const target=host.querySelector('[data-browser]');if(!mount||!target)return;
+    host.querySelector('[data-generate]').disabled=true;
     target.innerHTML='<p class="cloud-empty-small" role="status">读取目录…</p>';
     try {
       const b=await api(base+'/list?'+new URLSearchParams({ID:mount.ID,Path:p,Page:n,Refresh:refresh}));
       if(!still()||ticket!==browseSerial||selected?.ID!==mount.ID)return;
       listing=b;currentPath=b.Path;page=b.Page;
+      host.querySelector('[data-generate]').disabled=false;
       const parts=currentPath.split('/').filter(Boolean),crumbs=[`<button type="button" data-path="/">${esc(mount.Name)}</button>`];
       parts.forEach((part,i)=>crumbs.push(`<span aria-hidden="true">/</span><button type="button" data-path="${esc('/'+parts.slice(0,i+1).join('/'))}">${esc(part)}</button>`));
       target.innerHTML=`<div class="cloud-pathbar"><nav aria-label="网盘目录">${crumbs.join('')}</nav><button type="button" class="secondary" data-reload>刷新目录</button></div><div class="cloud-file-table"><table><thead><tr><th>名称</th><th>大小</th><th>类型</th></tr></thead><tbody>${b.Items.length?b.Items.map((f,i)=>`<tr><td>${f.is_dir?`<button type="button" class="cloud-file-name" data-directory="${i}">${icon('folder')}<span>${esc(f.name)}</span><span class="cloud-arrow">›</span></button>`:`<span class="cloud-file-name">${icon('file')}<span>${esc(f.name)}</span></span>`}</td><td>${f.is_dir?'—':size(f.size)}</td><td>${f.is_dir?'文件夹':esc(f.name.split('.').pop().toUpperCase())}</td></tr>`).join(''):'<tr><td colspan="3" class="cloud-empty-small">目录为空</td></tr>'}</tbody></table></div><div class="cloud-pagination"><span>共 ${b.Total} 项 · 第 ${b.Page} 页</span><div><button type="button" class="secondary" data-up ${currentPath==='/'?'disabled':''}>上一级</button><button type="button" class="secondary" data-prev ${page===1?'disabled':''}>上一页</button><button type="button" class="secondary" data-next ${page*b.PerPage>=b.Total?'disabled':''}>下一页</button></div></div>`;
