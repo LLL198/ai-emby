@@ -148,6 +148,9 @@ func main() {
 		if featureEnforceAccess(sessionDB, w, r) {
 			return
 		}
+		if serveSTRMHead(sessionDB, w, r) {
+			return
+		}
 		if serveFeatureImage(sessionDB, w, r) || serveFeatureLocalStream(sessionDB, w, r) {
 			return
 		}
