@@ -17,4 +17,98 @@
 .cloud-empty{text-align:center;padding:50px 15px}.cloud-empty>svg{width:42px;height:42px;color:#7a9fc3}.cloud-empty h3{font-size:18px}.cloud-empty p{color:var(--muted);font-size:14px;margin-bottom:22px}.cloud-empty-small{text-align:center;padding:24px!important;color:var(--muted);font-size:14px}
 .cloud-task-section{margin-top:30px;padding-top:24px;border-top:1px solid var(--border)}.cloud-task-section>h3{margin-bottom:16px}.cloud-task{padding:16px;margin-bottom:12px;border:1px solid var(--border);border-radius:12px}.cloud-task-title{justify-content:flex-start;gap:10px;flex-wrap:wrap}.cloud-task-title strong{font-size:14px}.cloud-task-title button{margin-left:auto;font-size:12px;padding:5px 10px}.cloud-task p{font-size:13px;color:var(--muted);line-height:1.65;overflow-wrap:anywhere;margin:10px 0}.cloud-task-footer{font-size:12px;color:var(--muted)}.cloud-task progress{width:100%;height:5px;margin-top:12px;accent-color:#5b93cc}.cloud-error{color:#ba4e48!important}
 .cloud-notice{padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface-alt,#f6f9fc);font-size:14px;display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap}.cloud-account-fields{margin-top:8px}.cloud-account-tip{font-size:13px!important;line-height:1.7!important;color:var(--muted);margin:8px 0 18px!important}.cloud-advanced{margin-top:20px;border-top:1px solid var(--border);padding-top:16px}.cloud-advanced>summary{font-size:14px;cursor:pointer;margin-bottom:18px}.cloud-account-fields input,.cloud-account-fields select{width:100%;min-width:0}.cloud-span{grid-column:1/-1}
-@media(max-width:640px){.cloud-toolbar,.cloud-pathbar,.cloud-pagination{align-items:flex-start;flex-wrap:wrap}.cloud-mount-grid{grid-template-columns:1fr}.cloud-file-table td,.cloud-file-table th{padding:10px}.cloud-file-table th:first-child{width:auto}.cloud-task-footer{align-items:flex-start;flex-wrap:wrap}.cloud-span{grid-column:auto}.cloud-account-fields .feature-grid{grid-template-columns:1fr}}
+dialog.settings-sheet.cloud-sheet {
+  width: min(1160px, calc(100vw - 64px));
+  max-width: none;
+  min-height: min(680px, calc(100dvh - 64px));
+  max-height: calc(100dvh - 64px);
+  margin: auto;
+  padding: 32px;
+  overflow: auto;
+  background: var(--surface);
+}
+body.panel-view dialog.cloud-sheet > h2 {
+  margin: 0 0 28px;
+  font-size: 24px;
+  line-height: 1.4;
+}
+.cloud-sheet .fm-form {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  min-width: 0;
+  min-height: min(548px, calc(100dvh - 196px));
+}
+.cloud-sheet .fm-form > * { min-width: 0; }
+.cloud-sheet-block { margin: 0; }
+.cloud-sheet-block > h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.cloud-sheet .feature-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px 28px;
+  width: 100%;
+}
+.cloud-sheet .feature-grid > label:not(.feature-check) {
+  display: grid;
+  gap: 9px;
+  align-content: start;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.cloud-sheet input:not([type="checkbox"]), .cloud-sheet select {
+  min-width: 0;
+  min-height: 46px;
+  font-size: 15px;
+}
+.cloud-sheet .cloud-account-tip {
+  max-width: 900px;
+  margin: -4px 0 20px !important;
+  line-height: 1.8 !important;
+}
+.cloud-sheet .cloud-option {
+  justify-content: space-between;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.cloud-option > span { flex: 1; min-width: 0; }
+.cloud-sheet .cloud-advanced { margin-top: 24px; padding-top: 20px; }
+.cloud-sheet .form-actions {
+  position: sticky;
+  bottom: -32px;
+  z-index: 1;
+  margin: auto -32px -32px;
+  padding: 20px 32px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex: none;
+}
+.cloud-sheet .form-actions > button { min-width: 112px; min-height: 44px; }
+.settings-sheet.cloud-sheet .form-actions > button[type="submit"] { background: var(--accent, #347bc1); color: #fff; }
+@media(max-width:640px){
+  .cloud-toolbar,.cloud-pathbar,.cloud-pagination{align-items:flex-start;flex-wrap:wrap}
+  .cloud-mount-grid{grid-template-columns:1fr}
+  .cloud-file-table td,.cloud-file-table th{padding:10px}
+  .cloud-file-table th:first-child{width:auto}
+  .cloud-task-footer{align-items:flex-start;flex-wrap:wrap}
+  .cloud-span{grid-column:auto}
+  .cloud-account-fields .feature-grid,.cloud-sheet .feature-grid{grid-template-columns:1fr}
+  dialog.settings-sheet.cloud-sheet {
+    width: calc(100vw - 24px);
+    min-height: min(640px, calc(100dvh - 24px));
+    max-height: calc(100dvh - 24px);
+    margin: auto;
+    padding: 22px;
+    border-radius: 20px;
+  }
+  body.panel-view dialog.cloud-sheet > h2 { font-size: 22px; margin-bottom: 24px; }
+  .cloud-sheet .fm-form { min-height: 0; gap: 24px; }
+  .cloud-sheet .feature-grid { gap: 18px; }
+  .cloud-sheet .form-actions { bottom: -22px; margin: 8px -22px -22px; padding: 16px 22px; }
+}

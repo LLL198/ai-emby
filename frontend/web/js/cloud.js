@@ -64,13 +64,14 @@ const CloudMounts = (() => {
   async function edit(m) {
     const drivers=Object.entries(data.Drivers);
     let schema,driver=m?.Driver||'139Yun',serial=0;
-    fmDialog(m?'编辑网盘':'添加网盘',`<div class="feature-grid">${field('Name','挂载名称',m?.Name||'','text','required maxlength="256"')}<label>网盘类型<select name="Driver" ${m?'disabled':''}>${drivers.map(([id,title])=>`<option value="${esc(id)}" ${id===driver?'selected':''}>${esc(title)}</option>`).join('')}</select></label></div><div class="cloud-account-fields" data-fields></div>`,async form=>{
+    fmDialog(m?'编辑网盘':'添加网盘',`<section class="cloud-sheet-block"><h3>基本信息</h3><div class="feature-grid">${field('Name','挂载名称',m?.Name||'','text','required maxlength="256"')}<label>网盘类型<select name="Driver" ${m?'disabled':''}>${drivers.map(([id,title])=>`<option value="${esc(id)}" ${id===driver?'selected':''}>${esc(title)}</option>`).join('')}</select></label></div></section><section class="cloud-sheet-block cloud-account-fields" data-fields></section>`,async form=>{
       if(!schema) return false;
       const addition={};for(const f of schema.Fields){if(f.name==='verification_id')continue;const v=form.get('account:'+f.name);if(sensitive(f.name)&&!v)continue;addition[f.name]=f.type==='bool'?form.has('account:'+f.name):['number','float'].includes(f.type)?Number(v):String(v??'');}
       const saved=await api(base+'/save','POST',{ID:m?.ID||'',Name:form.get('Name'),Driver:driver,Addition:addition});
       toast(saved.Message,{type:saved.Connected?'success':'info'});selected={ID:saved.ID};currentPath='/';page=1;await load(host,still);
     },'保存挂载');
     const dialog=document.getElementById('modal'), fields=dialog.querySelector('[data-fields]');
+    dialog.classList.add('cloud-sheet','cloud-account-sheet');
     const draw=async()=>{
       const ticket=++serial;schema=null;fields.innerHTML='<p role="status">读取账号配置…</p>';
       const s=await api(base+'/fields?'+new URLSearchParams({Driver:driver,ID:m?.ID||''}));if(ticket!==serial||!dialog.open)return;schema=s;
@@ -80,7 +81,7 @@ const CloudMounts = (() => {
         let value=s.Values[f.name] ?? (sensitive(f.name)?'':f.default);
         if(!m&&driver==='Quark'&&f.name==='use_transcoding_address')value=true;
         const required=f.required&&!saved?'required':'', placeholder=saved?'placeholder="已保存，留空保留"':'';
-        if(f.type==='bool')return `<label class="feature-check"><input name="${esc(name)}" type="checkbox" ${value===true||value==='true'?'checked':''}>${esc(title)}</label>`;
+        if(f.type==='bool')return `<label class="feature-check cloud-option cloud-span"><span>${esc(title)}</span><input name="${esc(name)}" type="checkbox" ${value===true||value==='true'?'checked':''}></label>`;
         if(f.type==='select'){
           const options=f.options.split(',');if(value&&!options.includes(String(value)))options.unshift(String(value));
           const names={personal_new:'个人空间（新版）',personal:'个人空间',family:'家庭空间',group:'群空间',share:'分享空间',asc:'升序',desc:'降序'};
@@ -89,7 +90,7 @@ const CloudMounts = (() => {
         return field(name,title,value??'',sensitive(f.name)?'password':['number','float'].includes(f.type)?'number':'text',`${required} ${placeholder} autocomplete="off" ${['number','float'].includes(f.type)?'min="0" step="any"':''}`);
       };
       const common=items.filter(f=>primary[driver]?.includes(f.name)), advanced=items.filter(f=>!primary[driver]?.includes(f.name));
-      fields.innerHTML=`<p class="cloud-account-tip">${esc(tips[driver])}</p><div class="feature-grid">${common.map(html).join('')}</div>${advanced.length?`<details class="cloud-advanced"><summary>高级配置</summary><div class="feature-grid">${advanced.map(html).join('')}</div></details>`:''}`;
+      fields.innerHTML=`<h3>账号与目录</h3><p class="cloud-account-tip">${esc(tips[driver])}</p><div class="feature-grid">${common.map(html).join('')}</div>${advanced.length?`<details class="cloud-advanced"><summary>高级配置</summary><div class="feature-grid">${advanced.map(html).join('')}</div></details>`:''}`;
       fields.addEventListener('invalid',e=>{const details=e.target.closest('details');if(details)details.open=true},true);
     };
     dialog.querySelector('[name="Driver"]').onchange=run(async e=>{driver=e.target.value;await draw()});await draw();
@@ -121,7 +122,7 @@ const CloudMounts = (() => {
       await api(base+'/generate','POST',{ID:m.ID,Source:f.get('Source'),Output:f.get('Output'),PublicURL:f.get('PublicURL'),Library:f.get('Library'),Limit:Number(f.get('Limit')),Concurrency:Number(f.get('Concurrency')),Recursive:f.has('Recursive'),Overwrite:f.has('Overwrite')});
       toast('生成任务已启动');await poll();schedule();
     },'开始生成');
-    const dialog=document.getElementById('modal');dialog.querySelector('[data-local-picker]').onclick=run(()=>pickDirectory(p=>{dialog.querySelector('[name="Output"]').value=p}));
+    const dialog=document.getElementById('modal');dialog.classList.add('cloud-sheet','cloud-generate-sheet');dialog.querySelector('[data-local-picker]').onclick=run(()=>pickDirectory(p=>{dialog.querySelector('[name="Output"]').value=p}));
   }
   function renderTasks(tasks) {
     const target=host?.querySelector('[data-tasks]');if(!target)return;
