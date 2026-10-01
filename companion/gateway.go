@@ -67,6 +67,12 @@ func isVideoRequest(path string) bool {
 	return strings.HasPrefix(p, "/videos/")
 }
 
+// 0x7a58e0.
+func isStreamRoute(route string) bool {
+	route = strings.ToLower(route)
+	return route == "stream" || strings.HasPrefix(route, "stream.") || route == "original" || strings.HasPrefix(route, "original.")
+}
+
 // Resolve once through NanShare; only redirects may leave this endpoint.
 func (a *App) resolveNanShare(w http.ResponseWriter, r *http.Request) {
 	target, e := url.Parse(os.Getenv("NANSHARE_URL"))

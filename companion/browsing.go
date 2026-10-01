@@ -478,7 +478,7 @@ func (a *App) browseRoute(w http.ResponseWriter, r *http.Request, u User, p stri
 		return true
 	}
 	if l == "/shows/nextup" {
-		respond(w, M{"Items": []M{}, "TotalRecordCount": 0, "StartIndex": 0, "HasMore": false})
+		a.nextUp(w, r, u)
 		return true
 	}
 	if len(parts) == 3 && strings.EqualFold(parts[0], "shows") && (strings.EqualFold(parts[2], "seasons") || strings.EqualFold(parts[2], "episodes")) {

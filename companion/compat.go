@@ -139,6 +139,7 @@ func (a *App) enrich(x Item, m M) {
 		}
 	}
 	m["ProviderIds"] = ids
+	a.applyDisplayName(x, m, n, a.cachedTMDB(x))
 	if n.Plot != "" {
 		m["Overview"] = n.Plot
 	}

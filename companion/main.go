@@ -554,6 +554,11 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			switch strings.ToLower(s[3]) {
+			case "images":
+				if len(s) == 5 && strings.EqualFold(s[4], "primary") {
+					a.userAvatar(w, r, u, uid)
+					return
+				}
 			case "password":
 				a.password(w, r, u, uid)
 				return
@@ -1394,7 +1399,8 @@ func main() {
 	}()
 	listen := os.Getenv("LISTEN")
 	if listen == "" {
-		listen = ":8097"
+		listen, e = serverListenAddress()
+		must(e)
 	}
 	srv := &http.Server{Addr: listen, Handler: licenseClient.Middleware(http.HandlerFunc(a.serve)), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10}
 	go func() {

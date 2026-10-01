@@ -332,10 +332,29 @@ func readTMDB(key, directory string) (tmdbRecord, bool) {
 	if err != nil || json.Unmarshal(data, &record) != nil {
 		return tmdbRecord{}, false
 	}
-	if record.Key != key || record.Until <= time.Now().Unix() {
+	if record.Key != key || (record.Until > 0 && record.Until <= time.Now().Unix()) {
 		return tmdbRecord{}, false
 	}
 	return record, true
+}
+
+// 0x85aa80. DTOs use permanent metadata records (Until == 0); expiring
+// request records remain usable by the scraper but are not display metadata.
+func (a *App) cachedTMDB(item Item) tmdbData {
+	settings := a.tmdbSettings()
+	if !settings.Enabled {
+		return tmdbData{}
+	}
+	key, _ := a.tmdbIdentity(item)
+	if record, ok := readTMDB(key, settings.Directory); ok && record.Until == 0 {
+		return record.Data
+	}
+	if item.Kind == "Movie" || item.Kind == "Series" {
+		if record, ok := readTMDB(key+"|primary", settings.Directory); ok && record.Until == 0 {
+			return record.Data
+		}
+	}
+	return tmdbData{}
 }
 
 func writeTMDB(directory string, record tmdbRecord) error {

@@ -9,6 +9,25 @@ import (
 	"time"
 )
 
+// 0x792be0. Detect direct-play endpoints even below an additional path prefix.
+func embyVideoLocation(path string) bool {
+	if _, ok := fastPlaybackItem(path); ok {
+		return true
+	}
+	parts := strings.Split(strings.ToLower(path), "/")
+	for i := 0; i+2 < len(parts); i++ {
+		if parts[i] != "videos" {
+			continue
+		}
+		for _, route := range []string{"stream", "original", "master", "live"} {
+			if parts[i+2] == route || strings.HasPrefix(parts[i+2], route+".") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Only recognized local STRM resolvers are contacted. Viewer authentication and
 // device reservation happen in stream before this function is called.
 func strmResolver(raw string) string {

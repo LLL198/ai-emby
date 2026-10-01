@@ -306,6 +306,7 @@ func (a *App) listDTOs(items []Item, r *http.Request, u User) []M {
 			}
 		}
 	}
+	a.fillEpisodeCounts(items, out, u)
 	return out
 }
 
