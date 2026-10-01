@@ -232,7 +232,8 @@ func serveReleaseUpdates(db *sql.DB, w http.ResponseWriter, r *http.Request) boo
 		sessionError(w, 409, "更新任务正在进行")
 		return true
 	}
-	requestData, _ := json.Marshal(updateRequest{release.Tag, updateRepository, manifestURL, proxy, time.Now().UTC()})
+	requestedAt := time.Now().UTC()
+	requestData, _ := json.Marshal(updateRequest{release.Tag, updateRepository, manifestURL, proxy, requestedAt})
 	tmp, err := os.CreateTemp(root, ".request-")
 	if err != nil {
 		sessionError(w, 503, "无法创建更新任务")
@@ -253,6 +254,6 @@ func serveReleaseUpdates(db *sql.DB, w http.ResponseWriter, r *http.Request) boo
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusAccepted)
-	scanRespond(w, map[string]any{"State": "queued", "TargetVersion": release.Tag, "Repository": updateRepository})
+	scanRespond(w, map[string]any{"State": "queued", "TargetVersion": release.Tag, "Repository": updateRepository, "RequestedAt": requestedAt})
 	return true
 }

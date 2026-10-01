@@ -260,7 +260,7 @@ async function checkUpdates(){
    dialog.querySelectorAll("button").forEach(b=>b.disabled=true);
    try{
     const task=await api("/System/Updates","POST",undefined,{signal:AbortSignal.timeout(30000)});
-    await waitForReleaseUpdate(task.TargetVersion,status=>{if(dialog.isConnected)dialog.querySelector("h2").textContent=status.Message||"正在更新…"});
+    await waitForReleaseUpdate(task.TargetVersion,status=>{if(dialog.isConnected)dialog.querySelector("h2").textContent=status.Message||"正在更新…"},task.RequestedAt);
     updating=false;
     show("更新成功",`<p>当前版本：${esc(task.TargetVersion)}</p>`);
     dialog.querySelector("[data-cancel]").onclick=()=>location.reload();
@@ -273,7 +273,7 @@ async function checkUpdates(){
  }catch(e){if(dialog.isConnected)show("检测更新失败",`<p>${esc(e.name==="TimeoutError"?"请求超时，请稍后重试":e.message)}</p>`)}
 }
 
-async function waitForReleaseUpdate(target,onProgress){
+async function waitForReleaseUpdate(target,onProgress,requestedAt){
  const deadline=Date.now()+900000;
  while(Date.now()<deadline){
   const remaining=deadline-Date.now();
@@ -282,8 +282,9 @@ async function waitForReleaseUpdate(target,onProgress){
    const health=await fetch("/health",{cache:"no-store",signal:AbortSignal.timeout(Math.min(5000,remaining))});
    if(health.ok)status=await api("/System/Updates/Status","GET",undefined,{signal:AbortSignal.timeout(Math.max(1,Math.min(5000,deadline-Date.now())))});
   }catch(e){if(e.status===401||e.status===403)throw new Error("登录已失效，请重新登录确认更新结果")}
-  if(status?.State==="failed")throw new Error(status.Message||"宿主机更新任务失败");
-  if(status)onProgress?.(status);
+  const currentTask=status?.TargetVersion===target&&Date.parse(status.Updated)>=Date.parse(requestedAt);
+  if(status?.State==="failed"&&currentTask)throw new Error(status.Message||"宿主机更新任务失败");
+  if(currentTask)onProgress?.(status);
   // Health alone can still belong to the old container. Require the target version.
   if(status?.CurrentVersion===target)return;
   await new Promise(resolve=>setTimeout(resolve,Math.max(0,Math.min(2000,deadline-Date.now()))));
