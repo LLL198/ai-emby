@@ -24,6 +24,7 @@ type featureState struct {
 }
 
 const featureSchema = `
+CREATE TABLE IF NOT EXISTS feature_cloud_mounts(id TEXT PRIMARY KEY, name TEXT NOT NULL, driver TEXT NOT NULL, storage_id BIGINT NOT NULL DEFAULT 0, secret TEXT NOT NULL, enabled BIGINT NOT NULL DEFAULT 1, created BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS feature_tasks(id TEXT PRIMARY KEY, category TEXT NOT NULL, item TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, data TEXT NOT NULL, started BIGINT NOT NULL, updated BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS feature_tasks_updated ON feature_tasks(updated DESC);
 CREATE TABLE IF NOT EXISTS feature_library_policy(lib TEXT PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE, data TEXT NOT NULL);
@@ -135,6 +136,8 @@ func (a *App) featureRoute(w http.ResponseWriter, r *http.Request, user User) bo
 		return true
 	}
 	switch {
+	case strings.HasPrefix(path, "/admin/features/cloud"):
+		a.cloudAdmin(w, r)
 	case path == "/admin/features/tasks":
 		a.featureTasksAPI(w, r)
 	case path == "/admin/features/task-action":

@@ -9,6 +9,7 @@ const Features = (() => {
     20: "资料导入",
     21: "访问与网络",
     22: "封面展示",
+    23: "网盘挂载",
   };
   let timer,
     sequence = 0,
@@ -97,6 +98,10 @@ const Features = (() => {
       view === "admin" &&
       !host.hidden;
     try {
+      if (index === 23) {
+        await CloudMounts.load(host, still);
+        return;
+      }
       if (index === 14) {
         await tasks(host, still);
         return;
@@ -357,7 +362,7 @@ const Features = (() => {
       .join("")}</div><div class="feature-task-list">${
       b.Items.map((x) => {
         const e = x.Entry;
-        return `<article class="feature-task"><div><strong>${esc(e.Name)}</strong><span class="feature-badge ${["error", "interrupted"].includes(e.State) ? "problem" : ""}">${esc(states[e.State] || e.State)}</span></div><p>${esc(e.Current)}</p><progress max="${Math.max(e.Total || 0, 1)}" value="${e.Done || 0}"></progress><small>${e.Done || 0} / ${e.Total || 0} · ${seconds(x.Duration)} · ${date(e.Started)}</small>${e.Error ? `<p class="feature-error">${esc(e.Error)}</p>` : ""}<details><summary>阶段记录</summary>${(e.Phases || []).map((p) => `<div class="feature-phase"><span>${esc(states[p.Name] || p.Name)}</span><span>${p.Done || 0}/${p.Total || 0}</span><small>${date(p.Started)}</small></div>`).join("")}</details><div class="feature-actions">${(e.Source === "worker" && ["scan", "update"].includes(e.Category)) || (e.Source === "worker" && e.Category.startsWith("library-")) ? (!x.Active ? `<button class="secondary" data-task="${x.ID}" data-action="retry">重新执行</button>` : e.Category.startsWith("library-") ? `<button class="secondary" data-task="${x.ID}" data-action="cancel">取消</button>` : "") : ""}</div></article>`;
+        return `<article class="feature-task"><div><strong>${esc(e.Name)}</strong><span class="feature-badge ${["error", "interrupted"].includes(e.State) ? "problem" : ""}">${esc(states[e.State] || e.State)}</span></div><p>${esc(e.Current)}</p><progress max="${Math.max(e.Total || 0, 1)}" value="${e.Done || 0}"></progress><small>${e.Done || 0} / ${e.Total || 0} · ${seconds(x.Duration)} · ${date(e.Started)}</small>${e.Error ? `<p class="feature-error">${esc(e.Error)}</p>` : ""}<details><summary>阶段记录</summary>${(e.Phases || []).map((p) => `<div class="feature-phase"><span>${esc(states[p.Name] || p.Name)}</span><span>${p.Done || 0}/${p.Total || 0}</span><small>${date(p.Started)}</small></div>`).join("")}</details><div class="feature-actions">${e.Source === 'worker' && e.Category === 'cloud-strm' && x.Active ? `<button class="secondary" data-task="${x.ID}" data-action="cancel">取消</button>` : ''}${(e.Source === "worker" && ["scan", "update"].includes(e.Category)) || (e.Source === "worker" && e.Category.startsWith("library-")) ? (!x.Active ? `<button class="secondary" data-task="${x.ID}" data-action="retry">重新执行</button>` : e.Category.startsWith("library-") ? `<button class="secondary" data-task="${x.ID}" data-action="cancel">取消</button>` : "") : ""}</div></article>`;
       }).join("") || '<p class="empty">暂无任务</p>'
     }</div>`;
     host.querySelectorAll("[data-task-filter]").forEach(

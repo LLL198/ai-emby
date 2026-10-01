@@ -27,7 +27,7 @@ type featureTask struct {
 var featureFailureCount = regexp.MustCompile(`失败\s+(\d+)`)
 
 func featureTaskCategory(category string) bool {
-	return category == "scan" || category == "update" || category == "probe" || category == "scraper" || strings.HasPrefix(category, "library-") || category == "import" || category == "cover"
+	return category == "scan" || category == "update" || category == "probe" || category == "scraper" || strings.HasPrefix(category, "library-") || category == "import" || category == "cover" || category == "cloud-strm"
 }
 
 func (a *App) featurePersistActivities() {
@@ -211,6 +211,9 @@ func (a *App) featureTaskAction(w http.ResponseWriter, r *http.Request) {
 		key := task.ItemID + ":" + strings.TrimPrefix(task.Category, "library-")
 		if task.Category == "import" {
 			key = "import:" + task.ID
+		}
+		if task.Category == "cloud-strm" {
+			key = "cloud:" + task.ItemID
 		}
 		a.features.mu.Lock()
 		cancel := a.features.jobs[key]

@@ -33,6 +33,10 @@ func (a *App) runScraperService() {
 			a.webAssetRoute(w, r)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/cloud/resolve/") {
+			a.cloudResolve(w, r)
+			return
+		}
 		user, err := a.auth(r)
 		if err != nil {
 			fail(w, 401, "unauthorized")

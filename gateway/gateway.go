@@ -116,6 +116,11 @@ func main() {
 		defer sessionDB.Close()
 	}
 	core := start("/usr/local/bin/ai-emby-core", "127.0.0.1:18097", false)
+	cloud, err := startCloudEngine()
+	if err != nil {
+		core.Process.Signal(syscall.SIGTERM)
+		log.Fatal(err)
+	}
 	companion := start("/usr/local/bin/ai-emby-worker", "127.0.0.1:18098", true)
 	coreTarget, _ := url.Parse(coreURL)
 	scraperTarget, _ := url.Parse(scraperURL)
@@ -143,6 +148,10 @@ func main() {
 			return
 		}
 		if serveFeatureRoutes(sessionDB, w, r, scraperProxy) {
+			return
+		}
+		if strings.HasPrefix(path, "/cloud/resolve/") {
+			scraperProxy.ServeHTTP(w, r)
 			return
 		}
 		if featureEnforceAccess(sessionDB, w, r) {
@@ -257,30 +266,36 @@ func main() {
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(responses[0])
 	})}
-	exited := make(chan error, 2)
+	exited := make(chan error, 3)
+	serverFailed := make(chan error, 1)
 	go func() { exited <- core.Wait() }()
 	go func() { exited <- companion.Wait() }()
+	go func() { exited <- cloud.Wait() }()
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			exited <- err
+			serverFailed <- err
 		}
 	}()
 	stopping := make(chan os.Signal, 1)
 	signal.Notify(stopping, syscall.SIGTERM, syscall.SIGINT)
+	pending := 3
 	select {
 	case <-stopping:
 	case err := <-exited:
+		pending--
 		log.Printf("child service exited: %v", err)
+	case err := <-serverFailed:
+		log.Printf("gateway exited: %v", err)
 	}
 	server.Close()
-	for _, command := range []*exec.Cmd{core, companion} {
+	for _, command := range []*exec.Cmd{core, companion, cloud} {
 		command.Process.Signal(syscall.SIGTERM)
 	}
-	for i := 0; i < 2; i++ {
+	for i := 0; i < pending; i++ {
 		select {
 		case <-exited:
 		case <-time.After(35 * time.Second):
-			for _, command := range []*exec.Cmd{core, companion} {
+			for _, command := range []*exec.Cmd{core, companion, cloud} {
 				command.Process.Kill()
 			}
 			fmt.Fprintln(os.Stderr, "forced child shutdown")
