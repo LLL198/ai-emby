@@ -77,9 +77,7 @@ func cloudCall(ctx context.Context, method, endpoint string, payload any, result
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", token)
-	if ua != "" {
-		req.Header.Set("User-Agent", ua)
-	}
+	req.Header.Set("User-Agent", ua)
 	resp, err := cloudHTTP.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

@@ -138,7 +138,10 @@ func (a *App) cloudGenerateAPI(w http.ResponseWriter, r *http.Request) {
 		a.finishActivity(job, err)
 		if err == nil && ctx.Err() == nil && b.Library != "" {
 			if _, ok := a.reserveConcurrentScan(b.Library); ok {
-				a.runConcurrentScan(b.Library, true, false, nil)
+				go a.runConcurrentScan(b.Library, true, false, nil)
+				a.changeActivity(job, func(e *activityEntry) { e.Current += " · 已提交媒体库扫描" })
+			} else {
+				a.changeActivity(job, func(e *activityEntry) { e.Current += " · 媒体库正在扫描，完成后请手动刷新" })
 			}
 		}
 	}()
