@@ -6,10 +6,10 @@
 
 | 目录 | 内容 |
 | --- | --- |
-| `companion/` | 上游公开源码及本地重建模块；实际运行时只启用手动刮削和扫库服务 |
+| `companion/` | 可编辑的服务源码及重建模块；实际运行时只启用手动刮削和扫库服务 |
 | `gateway/` | 请求分流、登录保持、扫描状态汇总、新仓库更新接口 |
 | `frontend/` | 当前线上前端 |
-| `runtime/` | 尚未全部还原的原程序运行文件及来源、版本、SHA256 |
+| `runtime/` | 尚未全部还原的原程序运行文件、版本和 SHA256 |
 | `scripts/` | 更新包构建、宿主机更新服务 |
 | `docs/` | 架构与源码恢复状态 |
 
@@ -17,7 +17,7 @@
 
 ## 部署
 
-当前支持 Linux amd64、Docker Compose、PostgreSQL 17。保留上游的授权机制。
+当前支持 Linux amd64、Docker Compose、PostgreSQL 17。
 
 ```bash
 git clone https://github.com/LLL198/ai-emby.git
@@ -38,7 +38,7 @@ docker compose up -d --build
 
 ## 系统更新
 
-面板「系统设置 → 检测更新」读取本仓库的最新正式 Release，不再检测旧仓库。更新包含原程序运行文件、重建服务、网关和前端。下载后校验 SHA256，备份数据库和 Compose，切换镜像；启动失败时恢复旧镜像。
+面板「系统设置 → 检测更新」读取本仓库的最新正式 Release。更新包含原程序运行文件、重建服务、网关和前端。下载后校验 SHA256，备份数据库和 Compose，切换镜像；启动失败时恢复旧镜像。
 
 宿主机更新服务需要 Linux systemd、Python 3.11+、curl 和 Docker Compose。在部署目录执行：
 
@@ -64,10 +64,8 @@ python3 scripts/package.py 2026.10.01-165649
 
 输出位于 `dist/<版本>/`。同一个 Release 必须同时包含 `ai-emby-linux-amd64.tar.gz`、`update-linux-amd64.json` 和 `SHA256SUMS`；只上传源码不会被面板识别为可安装更新。
 
-本仓库保留继承的测试文件；当前上传和发布流程只进行编译，不自动运行测试或扫描真实媒体。
+当前上传和发布流程只进行编译，不自动运行测试或扫描真实媒体。
 
-## 来源
-
-基础公开源码来自 https://github.com/sd87671067/go-emby ，参考提交 `29d949067931ba2d3ffec178f06ed1d00466ce41`。本地补充了缺失模块并修改了前端和并发功能。原程序运行文件的来源与指纹详见 `runtime/provenance.json`；这些上游来源记录不是系统更新地址。
+## 恢复状态
 
 恢复清单是工作记录，部分条目尚未随最新重建进度逐项复核，不代表所有源码与原二进制等价。
