@@ -3,7 +3,7 @@ async function api(path, method = "GET", data, options = {}) {
   const requestToken = options.authToken ?? token;
   const headers = {
     "X-Emby-Token": requestToken,
-    "X-Emby-Authorization": `Emby Client="Go Emby Web", Device="Browser", DeviceId="${device}", Version="1.0"`,
+    "X-Emby-Authorization": `Emby Client="AI Emby Web", Device="Browser", DeviceId="${device}", Version="1.0"`,
   };
   if (!options.raw) headers["Content-Type"] = "application/json";
   const res = await fetch(path, {

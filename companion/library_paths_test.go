@@ -79,7 +79,7 @@ func TestFolderAdditionValidationAndScan(t *testing.T) {
 	if e := os.MkdirAll("/media", 0755); e != nil {
 		t.Skip(e)
 	}
-	base, e := os.MkdirTemp("/media", "go-emby-folders-test-")
+	base, e := os.MkdirTemp("/media", "ai-emby-folders-test-")
 	if e != nil {
 		t.Skip(e)
 	}

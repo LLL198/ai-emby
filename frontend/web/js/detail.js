@@ -227,7 +227,7 @@ async function detail(id, options = {}) {
           }),
         { once: true },
       );
-      // The source is the authenticated go-emby redirect URL. The browser follows its 302 to the CDN.
+      // The source is the authenticated redirect URL. The browser follows its 302 to the CDN.
       video.onerror = () =>
         toast("浏览器无法解码此格式或视频源不可达，请使用外部 Emby 客户端。");
       const resume = fromBeginning ? 0 : (item.UserData?.PlaybackPositionTicks || 0);

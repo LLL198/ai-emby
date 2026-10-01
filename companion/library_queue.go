@@ -34,7 +34,7 @@ func (a *App) displayName() string {
 	var v string
 	a.db.QueryRow("SELECT v FROM settings WHERE k='server_name'").Scan(&v)
 	if v == "" {
-		return "go-emby"
+		return "AI Emby"
 	}
 	return v
 }

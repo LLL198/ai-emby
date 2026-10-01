@@ -61,5 +61,5 @@ jobs:
         if: steps.version.outputs.exists != 'true'
         run: |
           gh release create "$VERSION" --target "$GITHUB_SHA" --title "AI Emby $VERSION" \
-            --notes 'Linux amd64 release: gateway, parallel scanning and scraping, frontend and original runtime.' \
+            --notes 'Linux amd64 release: gateway, parallel scanning and scraping, frontend and core runtime.' \
             "dist/$VERSION/ai-emby-linux-amd64.tar.gz" "dist/$VERSION/update-linux-amd64.json" "dist/$VERSION/SHA256SUMS"

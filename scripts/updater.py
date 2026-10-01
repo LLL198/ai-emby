@@ -109,6 +109,21 @@ def wait_healthy(project, service):
     raise RuntimeError("新容器未恢复健康状态")
 
 
+def application_service(project):
+    configuration = json.loads(subprocess.check_output(
+        ["docker", "compose", "config", "--format", "json"],
+        cwd=project, text=True, timeout=30))
+    repository = "ghcr.io/lll198/ai-emby"
+    candidates = []
+    for name, settings in configuration.get("services", {}).items():
+        image = settings.get("image", "")
+        if image == repository or image.startswith((repository + ":", repository + "@")):
+            candidates.append(name)
+    if len(candidates) != 1:
+        raise ValueError("无法识别应用服务，请使用 --service 指定 Compose 服务名")
+    return candidates[0]
+
+
 def perform_update(options, request):
     control = options.project / "update-control"
     version = request.get("Version", "")
@@ -198,10 +213,15 @@ def perform_update(options, request):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=Path, required=True)
-    parser.add_argument("--service", default="go-emby")
+    parser.add_argument("--service", help="Compose application service; detected from the image by default")
     parser.add_argument("--mirror-compose", type=Path)
     options = parser.parse_args()
     options.project = options.project.resolve()
+    if not options.service:
+        try:
+            options.service = application_service(options.project)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            parser.error("无法识别应用服务，请使用 --service 指定 Compose 服务名")
     control = options.project / "update-control"
     control.mkdir(mode=0o700, exist_ok=True)
     with (control / "worker.lock").open("a") as lock:

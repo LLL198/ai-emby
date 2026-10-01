@@ -1,4 +1,4 @@
-module go-emby-local-gateway
+module github.com/LLL198/ai-emby/gateway
 
 go 1.26
 

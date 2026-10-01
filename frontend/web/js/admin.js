@@ -1133,10 +1133,10 @@ document.addEventListener("click", (e) =>
 let serverNameRequest=0;
 async function loadServerName() {
   const request=++serverNameRequest;
-  let name="MACA";
+  let name="AI Emby";
   try {
     const c = await api("/System/Info/Public");
-    name = typeof c.ServerName === "string" && c.ServerName.trim() ? c.ServerName : "MACA";
+    name = serverDisplayName(c.ServerName);
   } catch {}
   if(request!==serverNameRequest)return;
   serverName=name;

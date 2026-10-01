@@ -10,8 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go-emby/internal/licensesdk"
-	"golang.org/x/crypto/bcrypt"
 	"log"
 	"net/http"
 	"net/url"
@@ -25,6 +23,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/LLL198/ai-emby/companion/internal/licensesdk"
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:embed web/*
@@ -294,7 +295,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	respond(w, M{"User": a.userDTO(u), "AccessToken": t, "ServerId": a.serverID, "SessionInfo": a.loginSession(r, u, d)})
 }
 func (a *App) serverInfo() M {
-	return M{"Id": a.serverID, "ServerName": a.displayName(), "Version": "4.8.0.80", "OperatingSystem": "Linux", "ProductName": "Go Emby STRM", "LocalAddress": os.Getenv("PUBLIC_URL"), "WanAddress": os.Getenv("PUBLIC_URL"), "LocalAddresses": []string{os.Getenv("PUBLIC_URL")}, "RemoteAddresses": []string{os.Getenv("PUBLIC_URL")}, "StartupWizardCompleted": true, "SupportsLibraryMonitor": false, "HasUpdateAvailable": false}
+	return M{"Id": a.serverID, "ServerName": a.displayName(), "Version": "4.8.0.80", "OperatingSystem": "Linux", "ProductName": "AI Emby", "LocalAddress": os.Getenv("PUBLIC_URL"), "WanAddress": os.Getenv("PUBLIC_URL"), "LocalAddresses": []string{os.Getenv("PUBLIC_URL")}, "RemoteAddresses": []string{os.Getenv("PUBLIC_URL")}, "StartupWizardCompleted": true, "SupportsLibraryMonitor": false, "HasUpdateAvailable": false}
 }
 func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 	if done := a.beginProxyDebug(&w, r); done != nil {
@@ -1376,8 +1377,7 @@ func main() {
 	must(e)
 	a := &App{db: db, attempts: make(map[string][]time.Time)}
 	if os.Getenv("SCRAPER_SERVICE_ONLY") == "1" {
-		// Deployment companion: use the original service's existing schema and
-		// credentials. The local gateway checks original authorization/license.
+		// Use the shared schema and credentials after gateway authorization.
 		a.loadProxySettings()
 		a.runScraperService()
 		return
@@ -1417,7 +1417,7 @@ func main() {
 	}
 	srv := &http.Server{Addr: listen, Handler: licenseClient.Middleware(http.HandlerFunc(a.serve)), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10}
 	go func() {
-		log.Printf("Go Emby listening %s; redirect-only playback", listen)
+		log.Printf("AI Emby listening %s; redirect-only playback", listen)
 		if e := srv.ListenAndServe(); e != nil && e != http.ErrServerClosed {
 			log.Fatal(e)
 		}

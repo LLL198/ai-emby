@@ -1,0 +1,6 @@
+{
+  "Architecture": "linux/amd64",
+  "SHA256": "cef7fa19b454891d3addb776545a7a162a839737382023ffc17fcc323f96b2be",
+  "Description": "Core executable with scan-deadline and mounted-filesystem write compatibility fixes. Its complete source is still being recovered.",
+  "Version": "2026.09.28-124350"
+}

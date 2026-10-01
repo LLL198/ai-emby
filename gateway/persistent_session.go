@@ -15,9 +15,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// Only a browser which explicitly remembers its existing, valid login can
-// extend that token. The original service still authenticates every request
-// and revokes the row on logout, password changes or account deletion.
+// Extend an existing valid device login; logout and account changes revoke the token.
 const rememberedTokenExpiry int64 = 253402300799 // End of year 9999.
 
 func openSessionDatabase() (*sql.DB, error) {
@@ -55,9 +53,8 @@ func persistDeviceSession(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		sessionError(w, http.StatusBadRequest, "设备信息无效")
 		return
 	}
-	// This read goes through the original authentication AND license checks.
-	// /Users/Me excludes API keys and identifies the actual token owner.
-	authorized, err := get(r, originalURL, "/emby/Users/Me")
+	// /Users/Me checks authorization and identifies the session owner.
+	authorized, err := get(r, coreURL, "/emby/Users/Me")
 	if err != nil {
 		sessionError(w, http.StatusBadGateway, "登录服务暂时不可用，请稍后重试")
 		return

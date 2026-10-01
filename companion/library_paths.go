@@ -119,7 +119,7 @@ func (a *App) libraryFolders(w http.ResponseWriter, r *http.Request) {
 		}
 		_, e = tx.Exec("DELETE FROM items WHERE lib=? AND (path=? OR substr(path,1,length(?))=?)", b.ID, removed, removed+"/", removed+"/")
 	}
-	primary := "/media/.go-emby-empty-" + b.ID
+	primary := "/media/.ai-emby-empty-" + b.ID
 	if len(paths) > 0 {
 		primary = paths[0]
 	}

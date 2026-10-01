@@ -575,7 +575,7 @@ async function loadMediaSettings() {
           `<label class="toggle-label"><input class="switch" role="switch" type="checkbox" name="${k}" ${c[k] ? "checked" : ""}>${label}</label>`,
       )
       .join("") +
-    `<p>浏览简介立即返回已有信息，后台一次完整提取视频、音频和字幕信息，所有任务遵守媒体信息提取并发设置。开启下一集预加载时，播放开始后延迟在后台提取下一集；关闭后不再自动预加载。已有完整信息会跳过，同一任务合并去重，播放不等待提取。视频由客户端直连 CDN；仅后台提取产生少量媒体读取流量。</p><p>持久化关闭：影视文件删除后，自动清理对应媒体信息。开启：保留媒体信息供重新入库复用。</p><label class="row">媒体信息保存目录 <input name="Directory" value="${esc(c.Directory)}" required style="flex:1"><button type="button" class="secondary icon-button" title="恢复媒体信息" aria-label="恢复媒体信息" onclick="restoreMediaDialog()"><svg viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 2 8M3 3v7h7M12 7v5l3 2"/></svg></button></label><p><small>要将神医助手或者Mediainfokeeper媒体信息放入go-emby的媒体信息目录中。</small></p><p>统一保存到数据目录下；更换目录会迁移已有媒体信息。</p>`;
+    `<p>浏览简介立即返回已有信息，后台一次完整提取视频、音频和字幕信息，所有任务遵守媒体信息提取并发设置。开启下一集预加载时，播放开始后延迟在后台提取下一集；关闭后不再自动预加载。已有完整信息会跳过，同一任务合并去重，播放不等待提取。视频由客户端直连 CDN；仅后台提取产生少量媒体读取流量。</p><p>持久化关闭：影视文件删除后，自动清理对应媒体信息。开启：保留媒体信息供重新入库复用。</p><label class="row">媒体信息保存目录 <input name="Directory" value="${esc(c.Directory)}" required style="flex:1"><button type="button" class="secondary icon-button" title="恢复媒体信息" aria-label="恢复媒体信息" onclick="restoreMediaDialog()"><svg viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 2 8M3 3v7h7M12 7v5l3 2"/></svg></button></label><p><small>要将神医助手或者Mediainfokeeper媒体信息放入应用的媒体信息目录中。</small></p><p>统一保存到数据目录下；更换目录会迁移已有媒体信息。</p>`;
   const concurrencyForm = $("#media-concurrency");
   const concurrency = concurrencyForm.elements.Concurrency;
   concurrency.value = c.Concurrency;
@@ -1131,10 +1131,10 @@ document.addEventListener("click", (e) =>
 let serverNameRequest=0;
 async function loadServerName() {
   const request=++serverNameRequest;
-  let name="MACA";
+  let name="AI Emby";
   try {
     const c = await api("/System/Info/Public");
-    name = typeof c.ServerName === "string" && c.ServerName.trim() ? c.ServerName : "MACA";
+    name = serverDisplayName(c.ServerName);
   } catch {}
   if(request!==serverNameRequest)return;
   serverName=name;
@@ -1463,7 +1463,7 @@ async function loadConsole() {
     if (controller.signal.aborted || !host.isConnected || host.closest('.admin-section').hidden || view !== 'admin') return;
     const duration = seconds => `${Math.floor(seconds/86400)}天 ${Math.floor(seconds%86400/3600)}小时`;
     const stat = (label, value, note='') => `<div class="dashboard-stat"><span>${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ''}</div>`;
-    host.innerHTML = `<div class="dashboard-status"><span class="dashboard-status-dot" aria-hidden="true"></span>服务正常 · 运行 ${duration(data.uptimeSeconds)}</div><div class="dashboard-grid">${stat('电影',data.movieCount)}${stat('电视剧',data.seriesCount)}${stat('剧集',data.episodeCount)}${stat('用户',data.userCount)}</div><div class="dashboard-grid">${stat('CPU',`${Number(data.cpuPercent||0).toFixed(1)}%`,'Go Emby 进程')}${stat('内存',`${Math.round(data.memoryBytes/1048576)} MB`,'Go Emby 进程占用')}${stat('运行时长',duration(data.uptimeSeconds))}${stat('正在播放',data.activePlaybackCount)}</div><section class="dashboard-playing"><h3>正在播放</h3>${data.activePlayback.length ? data.activePlayback.map(x => `<article class="dashboard-playing-item"><div><strong>${esc(x.username||'未知用户')}</strong><span>${esc(x.mediaName||'未知媒体')}</span></div><small>${esc([x.device,x.client].filter(Boolean).join(' · '))}</small><div class="dashboard-playing-progress"><progress max="100" value="${Math.max(0,Math.min(100,Number(x.progressPercent)||0))}"></progress><span>${Math.round(x.progressPercent||0)}%</span></div></article>`).join('') : '<p class="dashboard-empty">当前没有正在播放</p>'}</section>`;
+    host.innerHTML = `<div class="dashboard-status"><span class="dashboard-status-dot" aria-hidden="true"></span>服务正常 · 运行 ${duration(data.uptimeSeconds)}</div><div class="dashboard-grid">${stat('电影',data.movieCount)}${stat('电视剧',data.seriesCount)}${stat('剧集',data.episodeCount)}${stat('用户',data.userCount)}</div><div class="dashboard-grid">${stat('CPU',`${Number(data.cpuPercent||0).toFixed(1)}%`,'AI Emby 进程')}${stat('内存',`${Math.round(data.memoryBytes/1048576)} MB`,'AI Emby 进程占用')}${stat('运行时长',duration(data.uptimeSeconds))}${stat('正在播放',data.activePlaybackCount)}</div><section class="dashboard-playing"><h3>正在播放</h3>${data.activePlayback.length ? data.activePlayback.map(x => `<article class="dashboard-playing-item"><div><strong>${esc(x.username||'未知用户')}</strong><span>${esc(x.mediaName||'未知媒体')}</span></div><small>${esc([x.device,x.client].filter(Boolean).join(' · '))}</small><div class="dashboard-playing-progress"><progress max="100" value="${Math.max(0,Math.min(100,Number(x.progressPercent)||0))}"></progress><span>${Math.round(x.progressPercent||0)}%</span></div></article>`).join('') : '<p class="dashboard-empty">当前没有正在播放</p>'}</section>`;
   } catch (e) { if (!controller.signal.aborted && host.isConnected) host.textContent = '控制台读取失败：' + e.message; }
   if (consoleController === controller) consoleController = null;
   if (!controller.signal.aborted && host.isConnected && !host.closest('.admin-section').hidden && view === 'admin') consoleTimer = setTimeout(loadConsole, 3000);

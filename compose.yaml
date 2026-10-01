@@ -1,4 +1,4 @@
-name: go-emby
+name: ${COMPOSE_PROJECT_NAME:-ai-emby}
 services:
   postgres:
     image: postgres:17-bookworm
@@ -14,7 +14,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-  go-emby:
+  ai-emby:
     image: ghcr.io/lll198/ai-emby:${IMAGE_TAG:-latest}
     build:
       context: .
@@ -31,7 +31,7 @@ services:
       DATABASE_URL: postgres://emby:${POSTGRES_PASSWORD:?请设置数据库密码}@postgres:5432/emby?sslmode=disable
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请设置管理员初始密码}
       LICENSE_KEY: ${LICENSE_KEY:-}
-      LICENSE_SERVER_URL: ${LICENSE_SERVER_URL:-https://tl.macacaaca.top}
+      LICENSE_SERVER_URL: "${LICENSE_SERVER_URL:-}"
       LICENSE_CA_FILE: ${LICENSE_CA_FILE:-}
       PUBLIC_URL: ${PUBLIC_URL:-}
       BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}

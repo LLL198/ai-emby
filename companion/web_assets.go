@@ -45,7 +45,7 @@ func (a *App) webAssetRoute(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if name == "/web/js/app.js" {
 		version, _ := json.Marshal(buildVersion)
-		data = bytes.ReplaceAll(data, []byte("__GO_EMBY_BUILD_VERSION__"), version)
+		data = bytes.ReplaceAll(data, []byte("__AI_EMBY_VERSION__"), version)
 	}
 
 	w.Header().Set("Content-Type", contentType)

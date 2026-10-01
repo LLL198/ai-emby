@@ -15,7 +15,7 @@ import (
 
 const (
 	bangumiAPIBase = "https://api.bgm.tv/v0/"
-	bangumiAgent   = "go-emby/1.0 (media metadata scraper)"
+	bangumiAgent   = "ai-emby/1.0 (media metadata scraper)"
 )
 
 type bangumiSubject struct {

@@ -179,10 +179,10 @@ func serveReleaseUpdates(db *sql.DB, w http.ResponseWriter, r *http.Request) boo
 		sessionError(w, 405, "GET/POST required")
 		return true
 	}
-	// Keep the original license checks and administrator authorization.
-	authorized, err := get(r, originalURL, "/admin/library-settings")
+	// Validate administrator access before accepting update requests.
+	authorized, err := get(r, coreURL, "/admin/library-settings")
 	if err != nil {
-		sessionError(w, 502, "原服务暂时不可用")
+		sessionError(w, 502, "核心服务暂时不可用")
 		return true
 	}
 	if authorized.StatusCode != 200 {

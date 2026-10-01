@@ -34,12 +34,12 @@ const Panel = (() => {
   function libraryDetails(lib) {
     const title=$('#panel-page-heading h1');
     if(title){title.innerHTML=`<span class="${lib.Hidden?'library-hidden':''}"><span class="library-name">${esc(lib.Name)}</span></span>`}
-    document.title='媒体库目录 · '+(serverName||'Go Emby');
+    document.title='媒体库目录 · '+(serverName||'AI Emby');
     const hash='#admin/libraries/'+encodeURIComponent(lib.Id);
     if(location.hash!==hash)history.pushState({page:'admin',library:lib.Id},'',hash);
   }
   function drawer() {
-    return `<button id="drawer-backdrop" type="button" aria-label="关闭导航" onclick="toggleDrawer(false)"></button><aside id="drawer" aria-label="管理导航"><div class="panel-brand"><span class="brand-monogram" aria-hidden="true"><i></i><i></i><i></i><i></i></span><div>Go Emby</div></div><nav class="panel-navigation">${groups.map(([name,links])=>`<div class="nav-group"><p>${name}</p>${links.map(([label,icon,target,active])=>`<button type="button" data-panel-target="${target}" ${active?`data-panel-indices="${active.join(',')}"`:''} onclick="${target==='files'?'filesPage(\'\')':target==='logs'?'showLogs()':`navigateAdminSection(${target})`}">${drawerIcon(icon)}<span>${label}</span><span class="nav-active-mark" aria-hidden="true"></span></button>`).join('')}</div>`).join('')}</nav><div class="panel-nav-footer"><button type="button" onclick="browseRoot()"><span>打开影库</span><span aria-hidden="true">↗</span></button></div></aside>`;
+    return `<button id="drawer-backdrop" type="button" aria-label="关闭导航" onclick="toggleDrawer(false)"></button><aside id="drawer" aria-label="管理导航"><div class="panel-brand"><span class="brand-monogram" aria-hidden="true"><i></i><i></i><i></i><i></i></span><div>AI Emby</div></div><nav class="panel-navigation">${groups.map(([name,links])=>`<div class="nav-group"><p>${name}</p>${links.map(([label,icon,target,active])=>`<button type="button" data-panel-target="${target}" ${active?`data-panel-indices="${active.join(',')}"`:''} onclick="${target==='files'?'filesPage(\'\')':target==='logs'?'showLogs()':`navigateAdminSection(${target})`}">${drawerIcon(icon)}<span>${label}</span><span class="nav-active-mark" aria-hidden="true"></span></button>`).join('')}</div>`).join('')}</nav><div class="panel-nav-footer"><button type="button" onclick="browseRoot()"><span>打开影库</span><span aria-hidden="true">↗</span></button></div></aside>`;
   }
   function syncNavigation() {
     document.querySelectorAll('[data-panel-target]').forEach(button=>{
@@ -66,7 +66,7 @@ const Panel = (() => {
     const overview=n===12;
     header().innerHTML=`<div class="page-heading ${overview?'overview-heading':''}"><div><p class="eyebrow">${overview?'控制台':category} <span>/</span> MEDIA WORKSPACE</p><h1 tabindex="-1">${overview?'所有精彩，<span>井然有序。</span>':title}</h1>${overview?`<div class="hero-actions"><button type="button" onclick="navigateAdminSection(0)">管理媒体库 ${drawerIcon('media')}</button><button type="button" class="secondary" onclick="navigateAdminSection(8)">进入刮削工作台 <span aria-hidden="true">↗</span></button></div>`:''}</div>${overview?'<div class="hero-art" aria-hidden="true"><img src="/web/assets/media-workspace.svg" alt=""></div>':''}</div>${tabs.length?`<nav class="section-tabs" aria-label="${title}">${tabs.map(([index,label])=>`<button type="button" aria-current="${n===index?'page':'false'}" onclick="navigateAdminSection(${index})">${label}</button>`).join('')}</nav>`:''}`;
     document.body.dataset.panelSection=key;
-    document.title=`${title} · ${serverName||'Go Emby'}`;
+    document.title=`${title} · ${serverName||'AI Emby'}`;
     syncNavigation();
     if(route&&location.hash!==`#admin/${key}`)history.pushState({page:'admin',section:n},'',`#admin/${key}`);
     window.scrollTo(0,0);

@@ -1,4 +1,4 @@
-module go-emby
+module github.com/LLL198/ai-emby/companion
 
 go 1.26
 

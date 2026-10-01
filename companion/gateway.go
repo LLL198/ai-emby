@@ -14,7 +14,7 @@ import (
 
 // NanShare can cache redirects without checking a viewer token. The public
 // gateway authenticates and reserves a device BEFORE forwarding a video request.
-// Its response guard never relays an upstream video body, even on fallback.
+// Its response guard never relays a media response body, even on fallback.
 func (a *App) gateway() http.Handler { return a.gatewayFor("http://127.0.0.1:7791") }
 func (a *App) gatewayFor(targetURL string) http.Handler {
 	target, _ := url.Parse(targetURL)
@@ -28,7 +28,7 @@ func (a *App) gatewayFor(targetURL string) http.Handler {
 		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, e error) {
-		a.recordError(r, "NanShare 播放错误", "上游连接或响应失败: "+safeProxyError(e))
+		a.recordError(r, "NanShare 播放错误", "媒体源连接或响应失败: "+safeProxyError(e))
 		fail(w, 502, "直链解析失败；已禁止服务器中转视频，请检查 NanShare 与视频源")
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +104,7 @@ func (a *App) resolveNanShare(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, e error) {
-		a.recordError(r, "NanShare 播放错误", "上游连接或响应失败: "+safeProxyError(e))
+		a.recordError(r, "NanShare 播放错误", "媒体源连接或响应失败: "+safeProxyError(e))
 		fail(w, 502, "NanShare 直链解析失败")
 	}
 	guard := proxy.ModifyResponse

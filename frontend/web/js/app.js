@@ -164,7 +164,7 @@ function openUserMenu(event) {
  ];
  let sheet;
  sheet=UI.ActionSheet('账户',entries.map(x=>({...x,icon:drawerIcon(x.icon),action:()=>{sheet.close();run(x.action)()}})),null,{
-  variant:'account-menu',profile:{name:user?.Name||'用户',server:serverName||'MACA',version:buildVersion,avatar:avatarForUser(),loadAvatar,uploadAvatar:async file=>{await api(`/Users/${encodeURIComponent(profileUserId)}/Avatar`,'POST',file,{raw:true});if(user?.Id===profileUserId)setAvatar(file)}}
+  variant:'account-menu',profile:{name:user?.Name||'用户',server:serverName||'AI Emby',version:buildVersion,avatar:avatarForUser(),loadAvatar,uploadAvatar:async file=>{await api(`/Users/${encodeURIComponent(profileUserId)}/Avatar`,'POST',file,{raw:true});if(user?.Id===profileUserId)setAvatar(file)}}
  });
 }
 
@@ -182,11 +182,12 @@ function nav(){
  if((view==="admin"||view==="files")&&user?.Policy?.IsAdministrator){document.querySelector("header").insertAdjacentHTML("afterbegin",'<button id="hamburger" aria-label="展开功能菜单" aria-expanded="false"><span></span><span></span><span></span></button>');const drawer=renderAdminDrawer(view);document.body.insertAdjacentHTML("beforeend",drawer);$("#drawer").addEventListener("click",e=>{if(e.target.closest("button")){toggleDrawer(false)}});$("#hamburger").onclick=()=>{toggleDrawer($("#hamburger").getAttribute("aria-expanded")!=="true")}}
  Panel.syncNavigation();
 }
-let serverName="MACA",loginMarkTimer=null;
+function serverDisplayName(value){const name=typeof value==="string"?value.trim():"";return !name||/^(?:go[ -]?emby|maca)$/i.test(name)?"AI Emby":name}
+let serverName="AI Emby",loginMarkTimer=null;
 function stopLoginMark(){clearTimeout(loginMarkTimer);loginMarkTimer=null}
 function renderLoginMark(){
  stopLoginMark();const mark=$(".login-mark");if(view!=="login"||!mark)return;
- const name=serverName||"MACA",letters=Array.from(name),reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
+ const name=serverName||"AI Emby",letters=Array.from(name),reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
  mark.setAttribute("aria-label",name);mark.textContent="";
  const text=document.createElement("span");text.setAttribute("aria-hidden","true");mark.append(text);
  mark.classList.toggle("login-mark-typing",!reduced);

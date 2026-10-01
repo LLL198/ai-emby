@@ -50,11 +50,10 @@ func serveScanRoutes(w http.ResponseWriter, r *http.Request, companion *httputil
 	if path != "/admin/scan" && path != "/admin/scan-all" && path != "/admin/scan-control" && path != "/admin/scan-settings" && path != "/admin/scan/status" && path != "/admin/library-settings" && !(path == "/admin/libraries" && r.Method == http.MethodGet) {
 		return false
 	}
-	// Use an original admin route for every scanner request, retaining license
-	// enforcement and the original administrator authorization.
-	authorized, err := get(r, originalURL, "/admin/library-settings")
+	// Validate administrator access before forwarding scanner requests.
+	authorized, err := get(r, coreURL, "/admin/library-settings")
 	if err != nil {
-		http.Error(w, "原服务不可用", 502)
+		http.Error(w, "核心服务不可用", 502)
 		return true
 	}
 	if authorized.StatusCode != 200 {
@@ -70,7 +69,7 @@ func serveScanRoutes(w http.ResponseWriter, r *http.Request, companion *httputil
 	authorized.Body.Close()
 	if path == "/admin/libraries" {
 		var libraries []map[string]any
-		if !scanReadJSON(w, r, originalURL, path, &libraries) {
+		if !scanReadJSON(w, r, coreURL, path, &libraries) {
 			return true
 		}
 		var live struct {
@@ -120,7 +119,7 @@ func serveScanRoutes(w http.ResponseWriter, r *http.Request, companion *httputil
 			delete(submitted, "FileConcurrency")
 		}
 		data, _ := json.Marshal(submitted)
-		response, err := scanRequest(r, originalURL, path, http.MethodPut, data)
+		response, err := scanRequest(r, coreURL, path, http.MethodPut, data)
 		if err != nil {
 			http.Error(w, "保存媒体库设置失败", 502)
 			return true
@@ -153,11 +152,11 @@ func serveScanRoutes(w http.ResponseWriter, r *http.Request, companion *httputil
 	}
 	if path == "/admin/scan-control" {
 		if r.Method == http.MethodGet {
-			var original, local struct{ Paused bool }
-			if !scanReadJSON(w, r, originalURL, path, &original) || !scanReadJSON(w, r, scraperURL, path, &local) {
+			var core, local struct{ Paused bool }
+			if !scanReadJSON(w, r, coreURL, path, &core) || !scanReadJSON(w, r, scraperURL, path, &local) {
 				return true
 			}
-			scanRespond(w, map[string]bool{"Paused": original.Paused || local.Paused})
+			scanRespond(w, map[string]bool{"Paused": core.Paused || local.Paused})
 			return true
 		}
 		if r.Method != http.MethodPut {
@@ -169,9 +168,9 @@ func serveScanRoutes(w http.ResponseWriter, r *http.Request, companion *httputil
 			http.Error(w, "无效请求", 400)
 			return true
 		}
-		response, err := scanRequest(r, originalURL, path, http.MethodPut, data)
+		response, err := scanRequest(r, coreURL, path, http.MethodPut, data)
 		if err != nil {
-			http.Error(w, "原扫描控制服务不可用", 502)
+			http.Error(w, "核心扫描控制服务不可用", 502)
 			return true
 		}
 		if response.StatusCode != 200 {

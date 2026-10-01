@@ -19,11 +19,10 @@ import (
 	"time"
 )
 
-const originalURL = "http://127.0.0.1:18097"
+const coreURL = "http://127.0.0.1:18097"
 const scraperURL = "http://127.0.0.1:18098"
 
-// The editorial frontend replaces static assets only. All API requests retain
-// their existing authentication, licensing and service routing.
+// Serve frontend assets while API requests follow their configured service routes.
 func serveFrontend(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
@@ -113,11 +112,11 @@ func main() {
 	} else {
 		defer sessionDB.Close()
 	}
-	original := start("/usr/local/bin/go-emby", "127.0.0.1:18097", false)
-	companion := start("/usr/local/bin/go-emby-scraper", "127.0.0.1:18098", true)
-	originalTarget, _ := url.Parse(originalURL)
+	core := start("/usr/local/bin/ai-emby-core", "127.0.0.1:18097", false)
+	companion := start("/usr/local/bin/ai-emby-worker", "127.0.0.1:18098", true)
+	coreTarget, _ := url.Parse(coreURL)
 	scraperTarget, _ := url.Parse(scraperURL)
-	originalProxy := httputil.NewSingleHostReverseProxy(originalTarget)
+	coreProxy := httputil.NewSingleHostReverseProxy(coreTarget)
 	scraperProxy := httputil.NewSingleHostReverseProxy(scraperTarget)
 	listen := os.Getenv("LISTEN")
 	if listen == "" {
@@ -139,7 +138,7 @@ func main() {
 			return
 		}
 		if path == "/health" {
-			for _, base := range []string{originalURL, scraperURL} {
+			for _, base := range []string{coreURL, scraperURL} {
 				response, err := get(r, base, "/health")
 				if err != nil {
 					http.Error(w, "service unavailable", 503)
@@ -162,39 +161,38 @@ func main() {
 		isScraper := path == "/admin/scraper" || strings.HasPrefix(path, "/admin/scraper/")
 		isLogs := path == "/admin/logs" && r.Method == http.MethodGet && r.URL.Query().Get("category") != "proxy"
 		if !isScraper && !isLogs {
-			originalProxy.ServeHTTP(w, r)
+			coreProxy.ServeHTTP(w, r)
 			return
 		}
-		// Preserve the original service's licensing and administrator access
-		// checks. No credentials or license values are stored or logged here.
-		authorized, err := get(r, originalURL, "/admin/scraper")
+		// Authenticate administrator requests before forwarding them to the worker.
+		authorized, err := get(r, coreURL, "/admin/scraper")
 		if err != nil {
-			http.Error(w, "original service unavailable", 502)
+			http.Error(w, "core service unavailable", 502)
 			return
 		}
 		if authorized.StatusCode != 200 {
 			relay(w, authorized)
 			return
 		}
-		var originalState struct {
+		var coreState struct {
 			Running, Planning bool
 			Settings          struct{ MonitorEnabled bool }
 		}
-		err = json.NewDecoder(io.LimitReader(authorized.Body, 2<<20)).Decode(&originalState)
+		err = json.NewDecoder(io.LimitReader(authorized.Body, 2<<20)).Decode(&coreState)
 		authorized.Body.Close()
 		if err != nil {
-			http.Error(w, "invalid original scraper state", 502)
+			http.Error(w, "invalid core scraper state", 502)
 			return
 		}
 		if isScraper {
 			if r.Method == http.MethodPost && (path == "/admin/scraper/plan" || path == "/admin/scraper/start") {
-				if originalState.Running || originalState.Planning {
-					http.Error(w, "原程序刮削任务运行中，请等待完成", 409)
+				if coreState.Running || coreState.Planning {
+					http.Error(w, "核心服务刮削任务运行中，请等待完成", 409)
 					return
 				}
-				// Automatic work still belongs to the original process. Block a
+				// Automatic work still belongs to the core process. Block a
 				// manual companion task if that watcher could start overlapping work.
-				if originalState.Settings.MonitorEnabled {
+				if coreState.Settings.MonitorEnabled {
 					http.Error(w, "请先关闭实时刮削监控，再启动手动并发任务", 409)
 					return
 				}
@@ -203,7 +201,7 @@ func main() {
 			return
 		}
 		responses := make([]map[string]json.RawMessage, 2)
-		for i, base := range []string{originalURL, scraperURL} {
+		for i, base := range []string{coreURL, scraperURL} {
 			response, err := get(r, base, r.URL.RequestURI())
 			if err != nil {
 				http.Error(w, "log service unavailable", 502)
@@ -237,7 +235,7 @@ func main() {
 		json.NewEncoder(w).Encode(responses[0])
 	})}
 	exited := make(chan error, 2)
-	go func() { exited <- original.Wait() }()
+	go func() { exited <- core.Wait() }()
 	go func() { exited <- companion.Wait() }()
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -252,14 +250,14 @@ func main() {
 		log.Printf("child service exited: %v", err)
 	}
 	server.Close()
-	for _, command := range []*exec.Cmd{original, companion} {
+	for _, command := range []*exec.Cmd{core, companion} {
 		command.Process.Signal(syscall.SIGTERM)
 	}
 	for i := 0; i < 2; i++ {
 		select {
 		case <-exited:
 		case <-time.After(35 * time.Second):
-			for _, command := range []*exec.Cmd{original, companion} {
+			for _, command := range []*exec.Cmd{core, companion} {
 				command.Process.Kill()
 			}
 			fmt.Fprintln(os.Stderr, "forced child shutdown")

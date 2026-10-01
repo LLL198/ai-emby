@@ -4,7 +4,7 @@ const FilesPage = (() => {
   const parentPath = (p) => !p ? "" : p.split("/").filter(Boolean).slice(0,-1).join("/");
   const join = (a,b) => [a,b].filter(Boolean).join("/");
   const size = (n) => { if (!n) return "—"; const units=["B","KB","MB","GB","TB"]; let i=0,v=n; while(v>=1024&&i<units.length-1){v/=1024;i++} return `${v.toFixed(i?1:0)} ${units[i]}`; };
-  const authHeaders = () => ({"X-Emby-Token":token,"X-Emby-Authorization":`Emby Client="Go Emby Web", Device="Browser", DeviceId="${device}", Version="1.0"`});
+  const authHeaders = () => ({"X-Emby-Token":token,"X-Emby-Authorization":`Emby Client="AI Emby Web", Device="Browser", DeviceId="${device}", Version="1.0"`});
   async function request(path, options={}) { const res=await fetch(path,{...options,headers:{...authHeaders(),...(options.headers||{})}}); if(!res.ok){let b;try{b=await res.json()}catch{};throw new Error(b?.Message||b?.error||`HTTP ${res.status}`)} const ct=res.headers.get("content-type")||""; return ct.includes("json")?res.json():res; }
   function setRoute(replace=false){const hash="#files"+(state.path?"/"+state.path.split("/").map(encodeURIComponent).join("/"):"");history[replace?"replaceState":"pushState"]({page:"files",path:state.path},"",hash)}
   function routePath(){if(!location.hash.startsWith("#files"))return "";return location.hash.slice(6).split("/").filter(Boolean).map(x=>decodeURIComponent(x)).join("/")}

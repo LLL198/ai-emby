@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-PROJECT="${1:-/opt/go-emby}"
+PROJECT="${1:-/opt/ai-emby}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 test "$(id -u)" = 0 || { echo '请以 root 运行安装脚本'; exit 1; }
 test -f "$PROJECT/compose.yaml"
