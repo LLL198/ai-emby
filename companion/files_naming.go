@@ -646,7 +646,9 @@ func namingRename(root *os.Root, m namingMove, reverse bool) error {
 		return fmt.Errorf("此挂载不支持安全文件改名：%w", err)
 	}
 	if err = root.Remove(old); err != nil {
-		_ = root.Remove(next)
+		if cleanupErr := root.Remove(next); cleanupErr != nil {
+			return fmt.Errorf("源文件未删除，目标链接清理失败：%w", cleanupErr)
+		}
 		return err
 	}
 	return nil
@@ -698,6 +700,12 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 	}
 	filesMu.Lock()
 	defer filesMu.Unlock()
+	a.features.mu.Lock()
+	defer a.features.mu.Unlock()
+	if len(a.features.jobs) > 0 {
+		fail(w, 409, "有资料补全、导入或 STRM 生成任务正在进行，请完成后再改名")
+		return
+	}
 	a.scraper.mu.Lock()
 	defer a.scraper.mu.Unlock()
 	if a.scraper.running || a.scraper.planning {
@@ -782,12 +790,26 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 				rollbackErrors = append(rollbackErrors, completed[i].New)
 			}
 		}
+		for _, move := range moves {
+			if fi, checkErr := fileCheck(root, move.New); checkErr == nil && os.SameFile(move.Info, fi) {
+				found := false
+				for _, path := range rollbackErrors {
+					if path == move.New {
+						found = true
+						break
+					}
+				}
+				if !found {
+					rollbackErrors = append(rollbackErrors, move.New)
+				}
+			}
+		}
 		message := "改名失败，已撤回本批文件改动：" + scraperFilesystemError("改名", err).Error()
 		if len(rollbackErrors) > 0 {
 			message = "改名失败，部分文件未能撤回，请按改名记录恢复：" + strings.Join(rollbackErrors, "、")
 			a.filesChanged(paths)
 		}
-		_, _ = a.namingJournal(plan.ID, completed, "failed", message)
+		_, _ = a.namingJournal(plan.ID, moves, "failed", message)
 		a.finishActivity(job, errors.New(message))
 		delete(a.naming.plans, plan.ID)
 		fail(w, 500, message)
