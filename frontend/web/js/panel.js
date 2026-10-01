@@ -49,7 +49,7 @@ const Panel = (() => {
     if(location.hash!==hash)history.pushState({page:'admin',library:lib.Id},'',hash);
   }
   function drawer() {
-    return `<button id="drawer-backdrop" type="button" aria-label="关闭导航" onclick="toggleDrawer(false)"></button><aside id="drawer" aria-label="管理导航"><div class="panel-brand"><span class="brand-monogram" aria-hidden="true"><i></i><i></i><i></i><i></i></span><div>AI Emby</div></div><nav class="panel-navigation">${groups.map(([name,links])=>`<div class="nav-group"><p>${name}</p>${links.map(([label,icon,target,active])=>`<button type="button" data-panel-target="${target}" ${active?`data-panel-indices="${active.join(',')}"`:''} onclick="${target==='files'?'filesPage(\'\')':target==='logs'?'showLogs()':`navigateAdminSection(${target})`}">${drawerIcon(icon)}<span>${label}</span><span class="nav-active-mark" aria-hidden="true"></span></button>`).join('')}</div>`).join('')}</nav></aside>`;
+    return `<button id="drawer-backdrop" type="button" aria-label="关闭导航" onclick="toggleDrawer(false)"></button><aside id="drawer" aria-label="管理导航"><nav class="panel-navigation">${groups.map(([name,links])=>`<div class="nav-group"><p>${name}</p>${links.map(([label,icon,target,active])=>`<button type="button" data-panel-target="${target}" ${active?`data-panel-indices="${active.join(',')}"`:''} onclick="${target==='files'?'filesPage(\'\')':target==='logs'?'showLogs()':`navigateAdminSection(${target})`}">${drawerIcon(icon)}<span>${label}</span><span class="nav-active-mark" aria-hidden="true"></span></button>`).join('')}</div>`).join('')}</nav></aside>`;
   }
   function syncNavigation() {
     document.querySelectorAll('[data-panel-target]').forEach(button=>{
@@ -71,10 +71,10 @@ const Panel = (() => {
   }
   function activate(n, route=true) {
     current=n;
-    const [key,title,category]=pages[n]||pages[12];
+    const [key,title]=pages[n]||pages[12];
     const tabs=[0,2].includes(n)?[[0,'媒体库'],[2,'展示顺序']]:[9,10].includes(n)?[[9,'字幕'],[10,'片头片尾']]:[6,7,11].includes(n)?[[6,'TMDB'],[7,'Telegram Bot'],[11,'网络代理']]:[];
     const overview=n===12;
-    header().innerHTML=`<div class="page-heading ${overview?'overview-heading':''}"><div><p class="eyebrow">${overview?'控制台':category} <span>/</span> MEDIA WORKSPACE</p><h1 tabindex="-1">${overview?'所有精彩，<span>井然有序。</span>':title}</h1>${overview?`<div class="hero-actions"><button type="button" onclick="navigateAdminSection(0)">管理媒体库 ${drawerIcon('media')}</button><button type="button" class="secondary" onclick="navigateAdminSection(8)">进入刮削工作台 <span aria-hidden="true">↗</span></button></div>`:''}</div>${overview?'<div class="hero-art" aria-hidden="true"><img src="/web/assets/media-workspace.svg" alt=""></div>':''}</div>${tabs.length?`<nav class="section-tabs" aria-label="${title}">${tabs.map(([index,label])=>`<button type="button" aria-current="${n===index?'page':'false'}" onclick="navigateAdminSection(${index})">${label}</button>`).join('')}</nav>`:''}`;
+    header().innerHTML=`<div class="page-heading"><h1 tabindex="-1">${title}</h1>${overview?`<div class="page-heading-actions"><button type="button" class="secondary" onclick="navigateAdminSection(0)">${drawerIcon('media')}管理媒体库</button><button type="button" onclick="navigateAdminSection(8)">${drawerIcon('scraper')}元数据刮削</button></div>`:''}</div>${tabs.length?`<nav class="section-tabs" aria-label="${title}">${tabs.map(([index,label])=>`<button type="button" aria-current="${n===index?'page':'false'}" onclick="navigateAdminSection(${index})">${label}</button>`).join('')}</nav>`:''}`;
     document.body.dataset.panelSection=key;
     document.title=`${title} · ${serverName||'AI Emby'}`;
     syncNavigation();
