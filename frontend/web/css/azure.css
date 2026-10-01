@@ -85,12 +85,6 @@ body.panel-view #drawer button:hover{background:var(--surface-2);color:var(--acc
 body.panel-view #drawer button[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:650;border:0;padding-left:13px;box-shadow:none}
 .nav-active-mark{width:5px;height:5px;border-radius:50%;background:currentColor;margin-left:auto;visibility:hidden}
 [aria-current="page"] > .nav-active-mark{visibility:visible}
-.panel-nav-footer{border:0;padding:15px 13px 10px;background:var(--surface-2);border-radius:15px}
-.sidebar-library-note{display:flex;align-items:center;gap:11px;margin-bottom:12px}
-.sidebar-library-note > svg{color:var(--accent);width:27px!important;height:27px!important}
-.sidebar-library-note strong{display:block;font-size:12px;font-weight:600;color:var(--text)}
-.sidebar-library-note small{font-size:10px;color:var(--text-secondary)}
-body.panel-view .panel-nav-footer button{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:34px!important;padding:8px 11px!important;background:var(--surface)!important;border:1px solid var(--border)!important;color:var(--accent)!important;border-radius:8px!important;font-size:11px!important}
 body.panel-view main#app{margin-left:242px;padding:30px clamp(24px,3.2vw,52px) 60px;min-height:calc(100dvh - 72px)}
 body.panel-view #app > *{max-width:1260px}
 .page-heading{padding:0 0 12px;margin-bottom:18px;border:0;align-items:center;gap:24px}
