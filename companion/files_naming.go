@@ -397,7 +397,7 @@ func namingDestination(path string, directory bool, b namingRequest, re *regexp.
 		return "", "", errors.New("季目录或特别篇中的文件不能自动当作电影")
 	}
 	if hasEpisode {
-		if ep.HasSeason && hasParentSeason && ep.Season != parentSeason && b.Mode != "sequence" {
+		if ep.HasSeason && hasParentSeason && ep.Season != parentSeason {
 			return "", "", errors.New("文件季号与所在季目录冲突，请先核对季目录")
 		}
 		if !ep.HasSeason {
@@ -550,8 +550,9 @@ func namingNFOConflict(root *os.Root, moves []namingMove) string {
 			return "无法读取关联 NFO，请先检查资料"
 		}
 		var record struct {
-			XMLName         xml.Name
-			Season, Episode *int
+			XMLName xml.Name
+			Season  *int `xml:"season"`
+			Episode *int `xml:"episode"`
 		}
 		err = xml.NewDecoder(io.LimitReader(f, 2<<20)).Decode(&record)
 		f.Close()
