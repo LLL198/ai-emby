@@ -8,8 +8,7 @@ import (
 	"path/filepath"
 )
 
-// contains reports whether path belongs to the captured item scope. A nil
-// scope represents the unrestricted case used by the binary.
+// A nil file scope includes every item.
 func (scope *scraperFileScope) contains(libraryID, path string) bool {
 	if scope == nil {
 		return true
@@ -131,10 +130,7 @@ func (a *App) scraperFileScopeIn(path string, libraries []M) (*scraperFileScope,
 	return best, nil
 }
 
-// waitScraper suspends a scraper worker while the control endpoint has a
-// pause channel installed. The channel is closed to resume work; cancellation
-// remains governed by the caller's context. This matches the channel/select
-// flow in the saved binary pseudocode and has no fixed-duration timeout.
+// waitScraper waits for resume or cancellation through the caller context.
 func (a *App) waitScraper(ctx context.Context, activityID string) error {
 	for {
 		a.scraper.mu.Lock()
@@ -154,9 +150,7 @@ func (a *App) waitScraper(ctx context.Context, activityID string) error {
 	}
 }
 
-// scraperWaitState updates the addressed activity and, while present, the
-// active scraper activity. Activity matching and the "scraper" category check
-// were recovered from the binary's activity-slice traversal.
+// Update the task and active scraper activities together.
 func (a *App) scraperWaitState(activityID, state string) {
 	activeTask := a.scraper.taskID.Load()
 	activeTaskID := ""

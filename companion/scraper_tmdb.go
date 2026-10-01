@@ -75,10 +75,7 @@ func (a *App) scraperDownloadArtwork(ctx context.Context, rawURL, cacheDirectory
 	return data, nil
 }
 
-// scraperTitleVariants retains the original query and, when it contains both
-// letters and numbers, adds the two title forms used by the TMDB search path.
-// The ASCII category table used by the binary is not available as Go source;
-// rune filtering below follows its observed letter/number split.
+// Generate separate letter and non-letter variants for mixed titles.
 func scraperTitleVariants(title string) []string {
 	variants := []string{title}
 	hasLetter, hasNumber := false, false

@@ -54,14 +54,7 @@ func (a *App) tmdbUnlock() {
 	<-a.tmdb.gate
 }
 
-// tmdbIdentity returns the metadata cache key and the TMDB API path for an
-// item. Season and Episode records use their parent Series' provider ID while
-// retaining their own season/episode path suffix.
-//
-// The binary confirms the `{tmdb-123}` / `{tmdbid-123}` tag, `movie`/`tv`
-// endpoint prefixes, and the `|zh-CN|` cache namespace. The exact choice of
-// display title used for the name-based fallback is inferred from the item
-// fields retained in the Go ABI.
+// Use the parent series provider ID for season and episode cache keys.
 func (a *App) tmdbIdentity(item Item) (key, endpoint string) {
 	original := item
 	season, episode := item.Season, item.Episode
@@ -149,10 +142,7 @@ func (a *App) tmdbIdentity(item Item) (key, endpoint string) {
 	return key, endpoint
 }
 
-// resolveTMDBItem resolves the binary's name-based cache identity through a
-// unique TMDB search result. The search thresholds and its ambiguity rule are
-// reconstructed from the scraper pseudocode; the selected provider ID is kept
-// on the local Item copy so season/episode requests can use their series ID.
+// Resolve a unique TMDB match and retain its provider ID on the item copy.
 func (a *App) resolveTMDBItem(ctx context.Context, item Item, settings tmdbConfig) (Item, string, string, error) {
 	key, endpoint := a.tmdbIdentity(item)
 	if key == "" || endpoint == "" {
@@ -204,10 +194,7 @@ func (a *App) resolveTMDBItem(ctx context.Context, item Item, settings tmdbConfi
 	return item, key, endpoint, nil
 }
 
-// lockTMDBRequest serializes refreshes for the same TMDB identity while still
-// allowing unrelated titles to fetch concurrently. The binary's App state
-// contains the same request map and reference counter; this lock lifecycle is
-// a source-level reconstruction of that state.
+// Serialize requests for one TMDB identity while other identities proceed concurrently.
 func (a *App) lockTMDBRequest(ctx context.Context, key string) (func(), bool) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -248,10 +235,7 @@ func (a *App) lockTMDBRequest(ctx context.Context, key string) (func(), bool) {
 	}
 }
 
-// ensureTMDBRequest refreshes the per-item metadata cache. `force` bypasses a
-// still-valid cache entry; `includeImages` asks TMDB to include its image
-// payload when the caller is resolving artwork. Search and cache behavior are
-// reconstructed from the saved Ghidra output and runtime strings.
+// Refresh cached metadata; force bypasses the cache and includeImages requests artwork.
 func (a *App) ensureTMDBRequest(ctx context.Context, item Item, force, includeImages bool) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -338,8 +322,7 @@ func readTMDB(key, directory string) (tmdbRecord, bool) {
 	return record, true
 }
 
-// 0x85aa80. DTOs use permanent metadata records (Until == 0); expiring
-// request records remain usable by the scraper but are not display metadata.
+// Display permanent records; the scraper can also use unexpired request records.
 func (a *App) cachedTMDB(item Item) tmdbData {
 	settings := a.tmdbSettings()
 	if !settings.Enabled {

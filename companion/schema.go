@@ -1,9 +1,6 @@
 package main
 
-// Exact SQL strings extracted from the live ELF; names are reconstruction aids.
-
-// ELF 0xa0d193, 2301 bytes.
-const recoveredBaseSchemaSQL = `CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT NOT NULL);
+const baseSchemaSQL = `CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT NOT NULL);
  DELETE FROM settings WHERE k IN ('playback_resolver_enabled','playback_resolver_port','playback_resolver_lookup_ips');
  CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL ,hash TEXT NOT NULL,admin BIGINT NOT NULL DEFAULT 0,first_admin BIGINT NOT NULL DEFAULT 0,max_devices BIGINT NOT NULL DEFAULT 2);
  CREATE TABLE IF NOT EXISTS tokens(hash TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id) ON DELETE CASCADE,device TEXT NOT NULL,expires BIGINT NOT NULL);
@@ -18,8 +15,7 @@ const recoveredBaseSchemaSQL = `CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMA
  CREATE TABLE IF NOT EXISTS plays(user_id TEXT REFERENCES users(id) ON DELETE CASCADE,device TEXT NOT NULL,item TEXT NOT NULL,updated BIGINT NOT NULL,PRIMARY KEY(user_id,device));
  CREATE TABLE IF NOT EXISTS userdata(user_id TEXT REFERENCES users(id) ON DELETE CASCADE,item TEXT REFERENCES items(id) ON DELETE CASCADE,position BIGINT NOT NULL DEFAULT 0,played BIGINT NOT NULL DEFAULT 0,PRIMARY KEY(user_id,item));`
 
-// ELF 0xa083ed, 494 bytes.
-const recoveredUserDataSchemaSQL = `CREATE TABLE IF NOT EXISTS userdata_extra(
+const userDataSchemaSQL = `CREATE TABLE IF NOT EXISTS userdata_extra(
  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
  item TEXT REFERENCES items(id) ON DELETE CASCADE,
  favorite BIGINT NOT NULL DEFAULT 0,
@@ -32,11 +28,25 @@ const recoveredUserDataSchemaSQL = `CREATE TABLE IF NOT EXISTS userdata_extra(
  updated BIGINT NOT NULL,
  PRIMARY KEY(user_id,item));`
 
-// ELF 0xa087f7, 586 bytes.
-const recoveredIntroSchemaSQL = `CREATE TABLE IF NOT EXISTS intro_markers(series_id TEXT NOT NULL,season BIGINT NOT NULL,parent_id TEXT NOT NULL,intro_start_ticks BIGINT NOT NULL DEFAULT 0,intro_end_ticks BIGINT NOT NULL DEFAULT 0,credits_start_ticks BIGINT NOT NULL DEFAULT 0,intro_samples BIGINT NOT NULL DEFAULT 0,credits_samples BIGINT NOT NULL DEFAULT 0,sample_count BIGINT NOT NULL DEFAULT 0,confidence DOUBLE PRECISION NOT NULL DEFAULT 0,source TEXT NOT NULL DEFAULT 'behavior',updated_at BIGINT NOT NULL,PRIMARY KEY(series_id,season)); CREATE INDEX IF NOT EXISTS intro_markers_parent ON intro_markers(parent_id)`
+const introSchemaSQL = `
+ CREATE TABLE IF NOT EXISTS intro_markers (
+   series_id TEXT NOT NULL,
+   season BIGINT NOT NULL,
+   parent_id TEXT NOT NULL,
+   intro_start_ticks BIGINT NOT NULL DEFAULT 0,
+   intro_end_ticks BIGINT NOT NULL DEFAULT 0,
+   credits_start_ticks BIGINT NOT NULL DEFAULT 0,
+   intro_samples BIGINT NOT NULL DEFAULT 0,
+   credits_samples BIGINT NOT NULL DEFAULT 0,
+   sample_count BIGINT NOT NULL DEFAULT 0,
+   confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+   source TEXT NOT NULL DEFAULT 'behavior',
+   updated_at BIGINT NOT NULL,
+   PRIMARY KEY (series_id, season)
+ );
+ CREATE INDEX IF NOT EXISTS intro_markers_parent ON intro_markers(parent_id)`
 
-// ELF 0xa0ac2c, 1585 bytes.
-const recoveredSortSchemaSQL = `
+const sortSchemaSQL = `
  ALTER TABLE items ADD COLUMN IF NOT EXISTS added_at BIGINT NOT NULL DEFAULT 0;
  ALTER TABLE items ADD COLUMN IF NOT EXISTS premiere_date TEXT NOT NULL DEFAULT '';
  ALTER TABLE items ADD COLUMN IF NOT EXISTS sort_name TEXT NOT NULL DEFAULT '';
@@ -76,8 +86,7 @@ const recoveredSortSchemaSQL = `
  FOR EACH ROW EXECUTE FUNCTION preserve_item_sort_fields();
  `
 
-// ELF 0xa092aa, 807 bytes.
-const recoveredSortBackfillSQL = `
+const sortBackfillSQL = `
  WITH batch AS (
    SELECT id
    FROM items
@@ -115,5 +124,34 @@ const recoveredSortBackfillSQL = `
  WHERE i.id=batch.id
  `
 
-// ELF 0xa0996a, 1072 bytes.
-const recoveredScannerUpsertSQL = `INSERT INTO items(id,lib,parent,name,kind,path,url,overview,poster,year,season,episode,mtime,size,seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET parent=excluded.parent,name=COALESCE((SELECT name FROM media_display_names WHERE item=excluded.id),CASE WHEN excluded.name=? OR (items.name ~ '[一-鿿]' AND excluded.name !~ '[一-鿿]') THEN COALESCE(NULLIF(items.name,''),excluded.name) ELSE excluded.name END),kind=excluded.kind,url=excluded.url,overview=COALESCE(NULLIF(excluded.overview,''),items.overview),poster=COALESCE(NULLIF(excluded.poster,''),items.poster),year=CASE WHEN excluded.year>0 THEN excluded.year ELSE items.year END,season=excluded.season,episode=excluded.episode,mtime=excluded.mtime,size=excluded.size,seen=excluded.seen,added_at=CASE WHEN items.kind IN ('Movie','Episode') AND excluded.kind IN ('Movie','Episode') AND (items.url,items.mtime,items.size) IS DISTINCT FROM (excluded.url,excluded.mtime,excluded.size) THEN (extract(epoch from clock_timestamp())*1000000000)::bigint ELSE items.added_at END RETURNING (xmax = 0)`
+const scannerUpsertSQL = `
+ INSERT INTO items (
+   id,lib,parent,name,kind,path,url,overview,poster,year,season,episode,mtime,size,seen
+ ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ ON CONFLICT(path) DO UPDATE SET
+   parent = excluded.parent,
+   name = COALESCE(
+     (SELECT name FROM media_display_names WHERE item=excluded.id),
+     CASE
+       WHEN excluded.name=? OR (items.name ~ '[一-鿿]' AND excluded.name !~ '[一-鿿]')
+         THEN COALESCE(NULLIF(items.name,''),excluded.name)
+       ELSE excluded.name
+     END
+   ),
+   kind = excluded.kind,
+   url = excluded.url,
+   overview = COALESCE(NULLIF(excluded.overview,''),items.overview),
+   poster = COALESCE(NULLIF(excluded.poster,''),items.poster),
+   year = CASE WHEN excluded.year>0 THEN excluded.year ELSE items.year END,
+   season = excluded.season,
+   episode = excluded.episode,
+   mtime = excluded.mtime,
+   size = excluded.size,
+   seen = excluded.seen,
+   added_at = CASE
+     WHEN items.kind IN ('Movie','Episode') AND excluded.kind IN ('Movie','Episode')
+       AND (items.url,items.mtime,items.size) IS DISTINCT FROM (excluded.url,excluded.mtime,excluded.size)
+       THEN (extract(epoch from clock_timestamp())*1000000000)::bigint
+     ELSE items.added_at
+   END
+ RETURNING (xmax = 0)`

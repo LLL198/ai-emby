@@ -76,7 +76,7 @@ func start(path, listen string, scraper bool) *exec.Cmd {
 	if scraper {
 		command.Env = append(command.Env, "SCRAPER_SERVICE_ONLY=1")
 	} else {
-		// Exact binary's serverListenAddress reads PORT, not LISTEN.
+		// The media service reads its listening port from PORT.
 		command.Env = append(command.Env, "PORT=18097")
 	}
 	command.Stdout, command.Stderr = os.Stdout, os.Stderr

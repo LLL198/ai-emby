@@ -5,8 +5,7 @@ import (
 	"strings"
 )
 
-// 0x7ea760. Keep the first unplayed episode after the last played episode in
-// each ordered series. A later played episode invalidates an earlier candidate.
+// Select the first unplayed episode after the last played episode in each series.
 func (a *App) nextUp(w http.ResponseWriter, r *http.Request, user User) {
 	seriesID := q(r, "SeriesId")
 	rows, err := a.db.Query(`SELECT i.id, CASE WHEN p.kind='Season' THEN p.parent ELSE p.id END AS series,

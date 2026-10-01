@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// Reconstructed from 0x7f96a0..0x7fabe0. The request struct is anonymous in
-// the binary; this name is an aid for sharing its recovered layout.
 type proxySettingsRequest struct {
 	Enabled                       bool
 	Type, URL, Username, Password string
@@ -105,9 +103,6 @@ func (a *App) proxySettingsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	config.PasswordConfigured = config.Password != ""
 	a.proxy.replace(config)
-	// Original also clears the global releaseChecker result/time/error under
-	// its mutex. release_update.go is still missing; retain that integration
-	// gap explicitly rather than inventing a disconnected cache here.
 	respond(w, a.proxy.snapshot())
 }
 

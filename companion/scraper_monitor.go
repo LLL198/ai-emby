@@ -82,8 +82,7 @@ func (a *App) scraperMonitorRoots() []scraperMonitorRoot {
 	return roots
 }
 
-// stable is also present as an inlined method in monitorScraper. The runtime
-// type metadata preserves its name; the body preserves the two-second gate.
+// Require an unchanged directory signature for two seconds.
 func (discovery *scraperDiscovery) stable(signature string, now time.Time) bool {
 	if discovery.signature != signature {
 		discovery.signature = signature
@@ -93,8 +92,7 @@ func (discovery *scraperDiscovery) stable(signature string, now time.Time) bool 
 	return now.Sub(discovery.stableSince) >= 2*time.Second
 }
 
-// monitorScraper follows the saved event/select loop. One automatic directory
-// worker runs at a time; manual scraping and a held preview plan also defer it.
+// Monitor stable directories, running one automatic task while manual tasks are idle.
 func (a *App) monitorScraper(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -323,9 +321,7 @@ func (a *App) scraperRecognizeDirectory(entries []fs.DirEntry, libraryID, root, 
 	})
 }
 
-// scraperAutoDirectory returns whether the monitor should retry this directory.
-// Its context, discovery pointer, entry slice, and configuration are recovered
-// from the worker call and their Go ABI layouts.
+// Return whether the monitor should retry this directory.
 func (a *App) scraperAutoDirectory(ctx context.Context, discovery *scraperDiscovery, entries []fs.DirEntry, config scraperConfig) bool {
 	scope := discovery.scope
 	a.scraperPhase("识别中", scope, MediaRecognition{}, config.Scraper, "规则识别器")
@@ -394,8 +390,6 @@ func (a *App) scraperAutoDirectory(ctx context.Context, discovery *scraperDiscov
 	current.ManualEnabled = false
 	current.ManualScopes = nil
 	activityID := a.newActivity("scraper", "", "实时监控 · 自动刮削计划")
-	// The register/stack grouping is verified; the lexical order of the
-	// configuration argument is a local choice shared with the recovered builder.
 	plan, err := a.buildScraperItems(workerCtx, current, items, activityID)
 	a.finishActivity(activityID, err)
 	if err != nil {

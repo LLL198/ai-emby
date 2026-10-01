@@ -200,13 +200,13 @@ func (a *App) scanLibraryScopedLegacy(lib string, incremental, allowEmpty bool, 
 		if e != nil {
 			return e
 		}
-		// Recovered transaction-local flag and SQL from 0x805aa0.
+		// Let the sort-field trigger recognize updates made by this scan.
 		if _, e = tx.Exec("SELECT set_config('go_emby.scanner_upsert','true',true)"); e != nil {
 			tx.Rollback()
 			tx = nil
 			return e
 		}
-		stmt, e = tx.Prepare(recoveredScannerUpsertSQL)
+		stmt, e = tx.Prepare(scannerUpsertSQL)
 		return e
 	}
 	flush := func() error {
@@ -235,8 +235,7 @@ func (a *App) scanLibraryScopedLegacy(lib string, incremental, allowEmpty bool, 
 				return e
 			}
 		}
-		// The upsert has 16 parameters and returns whether this is an insert.
-		// 0x805240 derives the fallback name from the directory/file basename.
+		// Use the directory or file basename when preserving a previous display name.
 		fallbackName := filepath.Base(x.Path)
 		if x.Kind == "Movie" || x.Kind == "Episode" {
 			fallbackName = strings.TrimSuffix(fallbackName, filepath.Ext(fallbackName))

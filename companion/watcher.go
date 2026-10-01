@@ -22,8 +22,6 @@ func (a *App) watchDelay() int {
 	return n
 }
 
-// Reconstructed from watcher.go:178, 0x8668e0; the remainder of this copied
-// watcher file still needs exact-version review against the binary.
 func (a *App) refreshMediaPaths(libraryID string, paths []string) {
 	paths = compactRefreshPaths(paths)
 	a.scanLibraryScoped(libraryID, false, len(paths) != 0, paths)

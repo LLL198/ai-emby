@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// Client at 0x1260980, transport at 0x1266840; callback 0x766240 returns
-// http.ErrUseLastResponse. Closing a successful response never relays its body.
+// Read the first response without automatically following its redirect.
 var sourceRedirectClient = &http.Client{
 	Transport: &http.Transport{MaxIdleConnsPerHost: 16},
 	Timeout:   20 * time.Second,
@@ -17,14 +16,16 @@ var sourceRedirectClient = &http.Client{
 	},
 }
 
-// 0x837d20. Despite the original name, only Host is compared (including port).
+// Compare hosts including ports, ignoring case.
 func sameSourceOrigin(first, second string) bool {
-	a, aerr := url.Parse(first)
-	b, berr := url.Parse(second)
-	return aerr == nil && berr == nil && strings.EqualFold(a.Host, b.Host)
+	firstURL, err := url.Parse(first)
+	if err != nil {
+		return false
+	}
+	secondURL, err := url.Parse(second)
+	return err == nil && strings.EqualFold(firstURL.Host, secondURL.Host)
 }
 
-// 0x837de0.
 func fetchSourceRedirect(r *http.Request, source string) sourceRedirectResult {
 	if !fastHTTPSource(source) {
 		return sourceRedirectResult{}
@@ -49,6 +50,8 @@ func fetchSourceRedirect(r *http.Request, source string) sourceRedirectResult {
 	}
 	defer response.Body.Close()
 	return sourceRedirectResult{
-		status: response.StatusCode, location: response.Header.Get("Location"), contentType: response.Header.Get("Content-Type"),
+		status:      response.StatusCode,
+		location:    response.Header.Get("Location"),
+		contentType: response.Header.Get("Content-Type"),
 	}
 }

@@ -40,10 +40,7 @@ func scraperPreferences(ctx context.Context) scraperConfig {
 	}
 }
 
-// scraperEndpoint replaces an episode/season path's unresolved or stale
-// series ID with the ID stored in the refreshed TMDB record. The binary's
-// error path explicitly reports the Chinese "电视剧 TMDB 编号不可用" message
-// when that record cannot supply a numeric ID.
+// Replace a stale series ID with the refreshed TMDB ID.
 func (a *App) scraperEndpoint(ctx context.Context, item Item, endpoint string) (string, error) {
 	if item.Kind != "Season" && item.Kind != "Episode" {
 		return endpoint, nil
@@ -79,9 +76,7 @@ func tmdbSeriesEndpoint(endpoint string) string {
 	return strings.Trim(endpoint, "/")
 }
 
-// scraperOriginal obtains the series/movie's original-language tag. Season
-// and episode endpoints are reduced to their parent series first, matching
-// the path slicing observed in the binary.
+// Look up the original language on the parent series or movie.
 func (a *App) scraperOriginal(ctx context.Context, endpoint string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -97,9 +92,7 @@ func (a *App) scraperOriginal(ctx context.Context, endpoint string) (string, err
 	return strings.TrimSpace(data.OriginalLanguage), nil
 }
 
-// scraperMetadata caches the source-language metadata used alongside the
-// localized TMDB record. The cache namespace is present verbatim in the
-// binary; the exact cache lifetime and field merge rules are inferred.
+// Cache source-language metadata alongside localized TMDB metadata.
 func (a *App) scraperMetadata(ctx context.Context, item Item, endpoint string) error {
 	if ctx == nil {
 		ctx = context.Background()

@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-// 0x7bb380.
 func serverListenAddress() (string, error) {
 	value := strings.TrimSpace(os.Getenv("PORT"))
 	if value == "" {

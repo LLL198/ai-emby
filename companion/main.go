@@ -32,24 +32,38 @@ var assets embed.FS
 
 type M = map[string]any
 type App struct {
-	*appState
+	db           *Database
+	serverID     string
+	cursorSecret string
+	attempts     map[string][]time.Time
+
+	intro        introState
+	proxy        proxyState
+	subtitles    subtitleState
+	telegram     telegramState
+	fastNanShare fastNanShareState
+	xiaoyaFast   xiaoyaFastState
+	tmdb         tmdbState
+	mediaEvents  mediaEventHub
+	refreshGuard mediaRefreshGuard
+	mediaSchema  string
+	mediaBatch   probeBatchState
+	dashboardCPU dashboardCPUSample
+	scraper      scraperState
+	scanner      concurrentScanState
+	pages        pageCache
+	proxyDebug   proxyDebugState
+	activity     activityState
+	probes       probeState
+	jobs         libraryJobQueue
+
 	scanControlMu sync.Mutex
 	scanResume    chan struct{}
-	pages         pageCache
-	cursorSecret  string
-	proxyDebug    proxyDebugState
-	activity      activityState
-	probes        probeState
-	db            *Database
 	write         sync.Mutex
 	libraryConfig sync.Mutex
 	scan          sync.RWMutex
-	jobs          libraryJobQueue
-	scanner       concurrentScanState
 	playing       sync.Mutex
 	loginMu       sync.Mutex
-	attempts      map[string][]time.Time
-	serverID      string
 }
 type User struct {
 	ID     string
@@ -76,13 +90,13 @@ func must(e error) {
 	}
 }
 func (a *App) init() {
-	if a.appState == nil {
-		a.appState = &appState{}
+	if a.attempts == nil {
+		a.attempts = make(map[string][]time.Time)
 	}
-	_, e := a.db.Exec(recoveredBaseSchemaSQL)
+	_, e := a.db.Exec(baseSchemaSQL)
 	must(e)
 	must(a.extraSchema())
-	_, e = a.db.Exec(recoveredUserDataSchemaSQL)
+	_, e = a.db.Exec(userDataSchemaSQL)
 	must(e)
 	must(a.libraryVisibilitySchema())
 	must(a.browseSchema())
@@ -90,7 +104,7 @@ func (a *App) init() {
 	must(a.sortSchema())
 	must(a.versionsSchema())
 	must(a.initialsSchema())
-	_, e = a.db.Exec(recoveredIntroSchemaSQL)
+	_, e = a.db.Exec(introSchemaSQL)
 	must(e)
 	a.loadProxySettings()
 	mustExecLogin := `CREATE TABLE IF NOT EXISTS user_logins(user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, last_login BIGINT NOT NULL)`
@@ -321,7 +335,7 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	// The recovered runtime's /web/css and /web/js responses use no-cache.
+	// Allow browsers to revalidate CSS and JavaScript assets.
 	w.Header().Set("Cache-Control", "no-cache")
 	if a.webAssetRoute(w, r) {
 		return
@@ -1360,7 +1374,7 @@ func (a *App) backup() (string, error) {
 func main() {
 	db, e := openDatabase(os.Getenv("DATABASE_URL"))
 	must(e)
-	a := &App{appState: &appState{}, db: db, attempts: map[string][]time.Time{}}
+	a := &App{db: db, attempts: make(map[string][]time.Time)}
 	if os.Getenv("SCRAPER_SERVICE_ONLY") == "1" {
 		// Deployment companion: use the original service's existing schema and
 		// credentials. The local gateway checks original authorization/license.
@@ -1384,7 +1398,6 @@ func main() {
 	go licenseClient.Run(licenseCtx)
 	go a.reclaimIdleMemory()
 	go a.watchMedia()
-	// Recovered main.gowrap4 at 0x7d3b80 shares the service context.
 	go a.monitorScraper(licenseCtx)
 	go a.runScanSchedule()
 	if e := a.migrateMedia(); e != nil {

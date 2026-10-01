@@ -8,12 +8,10 @@ import (
 	"unicode"
 )
 
-// Patterns recovered from main.init (0x7657be and 0x7657f2).
 var displaySuffixPattern = regexp.MustCompile(`(?i)(?:\((?:19[0-9]{2}|20[0-9]{2}|tmdb(?:id)?-[0-9]+|imdb-tt[0-9]+)\)|（(?:19[0-9]{2}|20[0-9]{2}|tmdb(?:id)?-[0-9]+|imdb-tt[0-9]+)）|\{(?:tmdb(?:id)?-[0-9]+|imdb-tt[0-9]+)\}|\[(?:tmdb(?:id)?-[0-9]+|imdb-tt[0-9]+)\])$`)
 var episodeReleasePattern = regexp.MustCompile(`(?i)(?:\bS[0-9]{1,2}[ ._-]*EP?[0-9]{1,3}\b|(?:^|[ ._-])(?:2160p|1080p|720p|WEB-DL|BluRay|H[ .]?26[45]|x26[45])(?:$|[ ._-]))`)
 
-// 0x792ec0. Strip recognized suffixes from right to left, retaining the
-// rightmost year/provider ID and never stripping the entire title.
+// Strip recognized suffixes from right to left, retaining the rightmost year and provider IDs.
 func splitDisplaySuffix(title string) (string, int, M) {
 	title = strings.TrimSpace(title)
 	year := 0
@@ -47,7 +45,6 @@ func splitDisplaySuffix(title string) (string, int, M) {
 	return title, year, ids
 }
 
-// 0x7932e0.
 func localDisplayFallback(item Item) (string, int, M) {
 	title, year, ids := splitDisplaySuffix(item.Name)
 	if item.Kind != "Movie" && item.Kind != "Series" {
@@ -75,12 +72,10 @@ func localDisplayFallback(item Item) (string, int, M) {
 	return title, year, ids
 }
 
-// containsDisplayHan names an inlined predicate in the binary.
 func containsDisplayHan(title string) bool {
 	return strings.IndexFunc(title, func(r rune) bool { return unicode.Is(unicode.Han, r) }) >= 0
 }
 
-// 0x7938c0.
 func episodeDisplayName(item Item, nfo sidecar, tmdb tmdbData) string {
 	tmdbTitle := ""
 	if tmdb.ID != 0 {
@@ -91,10 +86,9 @@ func episodeDisplayName(item Item, nfo sidecar, tmdb tmdbData) string {
 			return strings.TrimSpace(title)
 		}
 	}
-	return "第" + chineseEpisodeNumber(max(item.Episode, 0)) + "集"
+	return "第" + chineseEpisodeNumber(item.Episode) + "集"
 }
 
-// 0x793a80.
 func episodeReleaseTitle(title string) bool {
 	title = strings.TrimSpace(title)
 	if episodeReleasePattern.MatchString(title) {
@@ -109,39 +103,40 @@ func episodeReleaseTitle(title string) bool {
 	return false
 }
 
-// 0x793c80. The caller clamps episode numbers to zero before calling.
+// Episode numbers are formatted as Chinese numerals.
 func chineseEpisodeNumber(n int) string {
+	n = max(n, 0)
 	digits := []rune("零一二三四五六七八九")
 	if n < 10 {
 		return string(digits[n])
 	}
-	for _, unit := range []struct {
-		value int
-		name  string
-	}{{10000, "万"}, {1000, "千"}, {100, "百"}, {10, "十"}} {
-		if n < unit.value {
-			continue
-		}
-		quotient, remainder := n/unit.value, n%unit.value
-		title := chineseEpisodeNumber(quotient) + unit.name
-		if unit.value == 10 && quotient == 1 {
-			title = unit.name
-		}
-		if remainder != 0 {
-			if remainder < unit.value/10 {
-				title += "零"
-			}
-			if remainder >= 10 && remainder < 20 && unit.value > 10 {
-				title += "一"
-			}
-			title += chineseEpisodeNumber(remainder)
-		}
+
+	unit, name := 10, "十"
+	switch {
+	case n >= 10000:
+		unit, name = 10000, "万"
+	case n >= 1000:
+		unit, name = 1000, "千"
+	case n >= 100:
+		unit, name = 100, "百"
+	}
+	quotient, remainder := n/unit, n%unit
+	title := chineseEpisodeNumber(quotient) + name
+	if unit == 10 && quotient == 1 {
+		title = name
+	}
+	if remainder == 0 {
 		return title
 	}
-	return strconv.Itoa(n)
+	if remainder < unit/10 {
+		title += "零"
+	}
+	if remainder >= 10 && remainder < 20 && unit > 10 {
+		title += "一"
+	}
+	return title + chineseEpisodeNumber(remainder)
 }
 
-// 0x793f40.
 func displayName(item Item, nfo sidecar, tmdb tmdbData) string {
 	if item.Kind == "Episode" {
 		return episodeDisplayName(item, nfo, tmdb)
@@ -182,7 +177,6 @@ func displayName(item Item, nfo sidecar, tmdb tmdbData) string {
 	return title
 }
 
-// 0x794520.
 func (a *App) applyDisplayName(item Item, dto M, nfo sidecar, tmdb tmdbData) {
 	name := displayName(item, nfo, tmdb)
 	dto["Name"], dto["SortName"] = name, name

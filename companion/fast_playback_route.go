@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// 0x79b7c0. Keep resolver-specific URLs unchanged.
+// Keep resolver-specific URLs unchanged.
 func fastPlaybackSourceURL(playbackURL, source string) string {
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(source)), "ed2k://") {
 		return playbackURL
@@ -16,8 +16,7 @@ func fastPlaybackSourceURL(playbackURL, source string) string {
 	return fastPlaybackURL(playbackURL)
 }
 
-// 0x79b8e0. Only rewrite relative, recognized direct-play routes; preserve
-// query parameters and clear the old escaped path after changing Path.
+// Rewrite relative direct-play routes, preserving query parameters and clearing RawPath.
 func fastPlaybackURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "" || parsed.Host != "" {
@@ -32,7 +31,6 @@ func fastPlaybackURL(raw string) string {
 	return parsed.String()
 }
 
-// 0x79baa0.
 func fastPlaybackItem(path string) (string, bool) {
 	parts := strings.Split(embyPath(path), "/")
 	if len(parts) == 5 && strings.EqualFold(parts[1], "items") && parts[2] != "" && strings.EqualFold(parts[3], "playback") && isStreamRoute(parts[4]) {

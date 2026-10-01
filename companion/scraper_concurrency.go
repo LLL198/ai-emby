@@ -8,8 +8,7 @@ import (
 	"sync"
 )
 
-// Local feature, not recovered original source. Limit media workers separately
-// from the shared TMDB request-rate limiter in tmdbGet.
+// Limit media workers separately from the shared TMDB request rate.
 const maxScraperConcurrency = 32
 
 func scraperConcurrency(value int) int {

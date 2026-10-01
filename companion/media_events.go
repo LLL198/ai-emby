@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// subscribe allocates the binary's 4096-event buffer. Removing a subscriber
-// only deletes the map entry; the binary does not close its channel.
+// Unsubscribing removes the entry without closing the event channel.
 func (hub *mediaEventHub) subscribe() (chan mediaFsEvent, func()) {
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
@@ -26,8 +25,7 @@ func (hub *mediaEventHub) subscribe() (chan mediaFsEvent, func()) {
 	}
 }
 
-// publish retains the read lock across fanout and drops an event for a full
-// subscriber buffer, as shown by runtime.selectnbsend in the saved pseudocode.
+// Drop events for full subscribers so one slow consumer cannot block publication.
 func (hub *mediaEventHub) publish(event mediaFsEvent) {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
@@ -39,8 +37,6 @@ func (hub *mediaEventHub) publish(event mediaFsEvent) {
 	}
 }
 
-// These path helpers preserve the slash-boundary checks from 0x7d6fe0 and
-// 0x7d7180. Their target platform is Linux, matching the recovered executable.
 func refreshPathsOverlap(first, second string) bool {
 	first, second = filepath.Clean(first), filepath.Clean(second)
 	return first == second || strings.HasPrefix(first, second+"/") || strings.HasPrefix(second, first+"/")
@@ -121,9 +117,7 @@ func (a *App) automaticRefreshOwner() string {
 	return ""
 }
 
-// queueBatchRefresh and its timer closure recover 0x7d81a0/0x7d8940. The
-// generation check invalidates old callbacks, while an active scraper causes
-// the same callback to rearm rather than refresh during a batch.
+// Ignore stale callbacks and defer refreshes while the scraper is active.
 func (a *App) queueBatchRefresh(libraryID string, paths []string, manual bool) {
 	if libraryID == "" {
 		return

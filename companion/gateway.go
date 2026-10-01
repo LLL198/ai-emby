@@ -67,7 +67,6 @@ func isVideoRequest(path string) bool {
 	return strings.HasPrefix(p, "/videos/")
 }
 
-// 0x7a58e0.
 func isStreamRoute(route string) bool {
 	route = strings.ToLower(route)
 	return route == "stream" || strings.HasPrefix(route, "stream.") || route == "original" || strings.HasPrefix(route, "original.")

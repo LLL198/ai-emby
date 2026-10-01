@@ -82,8 +82,7 @@ func (a *App) scraperScopeValid(scope scraperScope) bool {
 	return false
 }
 
-// sanitizeScraperScopes removes duplicate or invalid scopes while retaining
-// input order. The binary caps the accepted output at 4096 entries.
+// Remove invalid or duplicate scopes in input order, keeping at most 4096 entries.
 func (a *App) sanitizeScraperScopes(scopes []scraperScope) []scraperScope {
 	if len(scopes) == 0 {
 		return nil
@@ -233,9 +232,7 @@ func (a *App) scraperTree(w http.ResponseWriter, r *http.Request) {
 	respond(w, M{"Results": results})
 }
 
-// scraperPhase records the scope and recognition fields passed on the Go ABI
-// stack. String fields are wrapped as errors only for the shared sanitizer.
-// The aggregate argument order is reconstructed from the callers.
+// Record scope, recognition and progress fields on the activity.
 func (a *App) scraperPhase(phase string, scope scraperScope, recognition MediaRecognition, scraper, reason string) {
 	safe := func(value string) string {
 		if value == "" {

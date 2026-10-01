@@ -68,4 +68,4 @@ python3 scripts/package.py 2026.10.01-165649
 
 ## 恢复状态
 
-恢复进度见 [文件状态清单](docs/source-recovery-status.csv)、[函数声明清单](docs/source-function-inventory.csv) 和 [2026-10-01 恢复记录](docs/recovery-2026-10-01.md)。已有同名声明不代表功能已完整恢复，也不代表与原二进制等价。
+恢复进度见 [文件状态清单](docs/source-recovery-status.csv)、[函数声明清单](docs/source-function-inventory.csv) 和 [2026-10-01 恢复记录](docs/recovery-2026-10-01.md)。源码命名、注释及结构的整理见 [源码整理记录](docs/source-cleanup-2026-10-01.md)。已有同名声明不代表功能已完整恢复，也不代表与原二进制等价。

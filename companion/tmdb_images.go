@@ -16,6 +16,7 @@ import (
 )
 
 const maxArtworkBytes = 20 << 20
+const maxValidatedArtworkEntries = 1024
 
 var posterHTTP = &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(r *http.Request, via []*http.Request) error {
 	if len(via) > 2 || r.URL.Scheme != "https" || r.URL.Host != "image.tmdb.org" {
@@ -106,7 +107,7 @@ func readArtworkCache(path string) ([]byte, bool) {
 			return nil, false
 		}
 		validatedArtworkMu.Lock()
-		if len(validatedArtwork) > 0x3ff {
+		if len(validatedArtwork) >= maxValidatedArtworkEntries {
 			clear(validatedArtwork)
 		}
 		validatedArtwork[digest] = struct{}{}

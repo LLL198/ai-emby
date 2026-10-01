@@ -10,10 +10,6 @@ import (
 	"sync"
 )
 
-// Reconstructed from scraper_recognizer.go in the stripped runtime binary.
-// Recognition rules and data layouts are supported by Ghidra output and the
-// Go runtime type catalogue; original source formatting and comments are lost.
-
 type MediaRecognition struct {
 	Kind       string
 	Title      string

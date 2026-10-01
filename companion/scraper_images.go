@@ -11,18 +11,19 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
-// Reconstructed from the exact binary's scraper_images.go functions at
-// 0x81d6e0, 0x81d920, and 0x81da80. The runtime decodes JPEG, PNG, and WebP;
-// it writes logo artwork as PNG and other artwork as JPEG (quality 92).
+const maxScraperImagePixels = 40_000_000
+
+// Validate image dimensions before decoding the full image.
 func scraperValidateImage(data []byte) error {
 	config, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || config.Width <= 0 || config.Height <= 0 ||
-		int64(config.Width)*int64(config.Height) >= 40_000_001 {
+		int64(config.Width)*int64(config.Height) > maxScraperImagePixels {
 		return errors.New("图片格式无效或尺寸过大")
 	}
 	return nil
 }
 
+// Encode logos as PNG and other artwork as JPEG with quality 92.
 func scraperImageBytes(data []byte, artworkType string) ([]byte, error) {
 	if err := scraperValidateImage(data); err != nil {
 		return nil, err

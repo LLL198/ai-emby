@@ -11,8 +11,7 @@ import (
 	"github.com/lib/pq"
 )
 
-// Preserve the recovered upsert's display-name, Chinese-title, timestamp and
-// empty-metadata rules while sending a whole batch in one database request.
+// Batch writes preserve display names, Chinese titles, timestamps and existing metadata.
 const concurrentScanUpsertSuffix = ` ON CONFLICT(path) DO UPDATE SET
 parent=excluded.parent,
 name=COALESCE((SELECT name FROM media_display_names WHERE item=excluded.id),CASE WHEN excluded.name=CASE WHEN excluded.kind IN ('Movie','Episode') THEN regexp_replace(regexp_replace(excluded.path,'^.*/',''),'\.[^.]*$','') ELSE regexp_replace(excluded.path,'^.*/','') END OR (items.name ~ '[一-鿿]' AND excluded.name !~ '[一-鿿]') THEN COALESCE(NULLIF(items.name,''),excluded.name) ELSE excluded.name END),

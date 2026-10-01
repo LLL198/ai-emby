@@ -9,8 +9,7 @@ import (
 	"net/http"
 )
 
-// 0x85e680. Avatar changes require the user's own session, including for an
-// administrator. Administrators can read another user's avatar.
+// Avatar changes require the owner session; administrators can read other avatars.
 func (a *App) userAvatar(w http.ResponseWriter, r *http.Request, user User, userID string) {
 	if user.API || userID == "" {
 		fail(w, http.StatusForbidden, "无权限")

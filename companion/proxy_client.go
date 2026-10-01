@@ -9,8 +9,6 @@ import (
 
 var errInvalidProxyConfiguration = errors.New("invalid proxy configuration")
 
-// Reconstructed from proxy_client.go at 0x7f6200-0x7f6fa0. Settings loading
-// and the proxy administration routes are in proxy_settings.go.
 func (state *proxyState) snapshot() proxySettings {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
@@ -60,7 +58,7 @@ func newExternalClient(base *http.Client, config proxySettings) (*http.Client, f
 }
 
 func (a *App) externalHTTPClient(scope string, base *http.Client) *http.Client {
-	if a == nil || a.appState == nil {
+	if a == nil {
 		return base
 	}
 	state := &a.proxy
@@ -87,7 +85,9 @@ func (a *App) externalHTTPClient(scope string, base *http.Client) *http.Client {
 	if err != nil {
 		return base
 	}
-	// The binary assumes replace/load initialized the client map.
+	if state.clients == nil {
+		state.clients = make(map[string]*http.Client)
+	}
 	state.clients[key] = client
 	if transport, ok := client.Transport.(*http.Transport); ok {
 		state.transports = append(state.transports, transport)

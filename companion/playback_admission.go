@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// Reconstructed from the exact executable's Ghidra output and its embedded
-// SQL/error strings. It was absent from the local reference source snapshot.
 type playbackDenied string
 
 func (e playbackDenied) Error() string { return string(e) }

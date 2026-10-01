@@ -15,9 +15,11 @@ import (
 	"time"
 )
 
-// Reconstructed from scraper.go:222 (0x809a20). The target occupies six
-// register words and Item occupies 256 stack bytes; the two unused words are
-// target.Action, not a separate media-type argument.
+const (
+	maxScraperErrorBytes = 1024
+	maxScraperErrorRunes = 256
+)
+
 func scraperAllowedTarget(target scraperTarget, item Item) bool {
 	if strings.EqualFold(filepath.Ext(target.Path), ".webp") {
 		return false
@@ -39,10 +41,7 @@ func scraperAllowedTarget(target scraperTarget, item Item) bool {
 	return false
 }
 
-// scraperAdmin reconstructs scraper.go:943 (0x814480), including the plan
-// closure at 0x817280. Names and closure boundaries are inferred. The original
-// scan used WithTimeout(5*time.Minute); WithCancel below is the requested local
-// modification, keeping explicit cancellation without a total scan deadline.
+// Manual tasks remain active until completion or explicit cancellation.
 func (a *App) scraperAdmin(w http.ResponseWriter, r *http.Request, path string) {
 	switch path {
 	case "/admin/scraper":
@@ -286,7 +285,6 @@ var (
 	scraperRegistryMu sync.RWMutex
 	scraperRegistry   = make(map[string]Scraper)
 
-	// scraperCategoryContents is the binary's fixed category-to-artwork table.
 	scraperCategoryContents = map[string][]string{
 		"Movie":   {"NFO", "Poster", "Backdrop", "Logo", "Disc", "Banner"},
 		"Series":  {"NFO", "Poster", "Backdrop", "Logo", "Banner"},
@@ -298,9 +296,7 @@ var (
 	scraperCredentialPattern = regexp.MustCompile(`(?i)(api[_-]?key|access[_-]?key|key|token|password|passwd|sign(?:ature)?|authorization|secret|credential)\s*[:=]\s*[^\s,;]+`)
 )
 
-// RegisterScraper stores a provider by its Name. The binary holds the write
-// lock while asking for the name and panics on a nil/unnamed or duplicate
-// registration.
+// RegisterScraper rejects nil, unnamed and duplicate providers.
 func RegisterScraper(scraper Scraper) {
 	scraperRegistryMu.Lock()
 	defer scraperRegistryMu.Unlock()
@@ -372,9 +368,7 @@ func validScraperConfig(config scraperConfig) bool {
 	return true
 }
 
-// scraperRoot verifies that a target path is still inside one of the paths
-// configured for the library. The binary reports a missing library and an
-// out-of-scope media path as separate errors.
+// scraperRoot checks that the target remains inside a configured library path.
 func (a *App) scraperRoot(libraryID, targetPath string) (string, error) {
 	var libraryPath string
 	if err := a.db.QueryRow("SELECT path FROM libraries WHERE id=?", libraryID).Scan(&libraryPath); err != nil {
@@ -479,7 +473,7 @@ func scraperCandidates(artwork, kind, path string, season int) []string {
 		}
 	}
 
-	// The binary appends the canonical filename after the legacy aliases.
+	// Try legacy aliases before the canonical filename.
 	return append(candidates, primary)
 }
 
@@ -500,9 +494,7 @@ func scraperFileState(libraryPath, targetPath string) (bool, error) {
 	return true, nil
 }
 
-// scraperExistingTarget returns the first existing legacy/canonical path from
-// the binary's candidate order. If none exists, it returns the canonical
-// target with found=false so callers can create that path.
+// Prefer an existing legacy filename; otherwise return the canonical target.
 func scraperExistingTarget(libraryRoot, artwork, kind, path string, season int) (string, bool, error) {
 	for _, candidate := range scraperCandidates(artwork, kind, path, season) {
 		found, err := scraperFileState(libraryRoot, candidate)
@@ -580,18 +572,17 @@ func scraperSanitize(message, secret string) string {
 	}
 	message = scraperURLPattern.ReplaceAllString(message, "[URL 已隐藏]")
 	message = scraperCredentialPattern.ReplaceAllString(message, "$1=[已隐藏]")
-	if len(message) > 0x400 {
+	if len(message) > maxScraperErrorBytes {
 		runes := []rune(message)
-		if len(runes) > 0x100 {
-			runes = runes[:0x100]
+		if len(runes) > maxScraperErrorRunes {
+			runes = runes[:maxScraperErrorRunes]
 		}
 		message = string(runes)
 	}
 	return message
 }
 
-// scraperOpen is from scraper.go:257 in the binary. It uses an os.Root to
-// reject symlinks and keep reconstructed writes inside the media library.
+// scraperOpen confines writes to the library root and rejects symlinks.
 func scraperOpen(libraryPath, targetPath string) (*os.Root, string, error) {
 	if !filepath.IsAbs(libraryPath) || !filepath.IsAbs(targetPath) || filepath.Clean(targetPath) != targetPath {
 		return nil, "", errors.New("拒绝链接或不可访问路径")
@@ -624,8 +615,7 @@ func scraperOpen(libraryPath, targetPath string) (*os.Root, string, error) {
 	return root, relativePath, nil
 }
 
-// buildScraperPlan follows 0x80a7e0 and its activity closures. It only reads
-// the media index and inspects targets; provider fetches happen during execution.
+// Build the plan from the media index; fetch provider data only during execution.
 func (a *App) buildScraperPlan(ctx context.Context, config scraperConfig) (plan *scraperPlan, err error) {
 	if !config.Enabled {
 		a.scraperPhase("跳过", scraperScope{}, MediaRecognition{}, config.Scraper, "刮削总开关关闭，禁止生成计划")
@@ -665,9 +655,6 @@ func (a *App) buildScraperPlan(ctx context.Context, config scraperConfig) (plan 
 	return a.buildScraperItems(ctx, config, items, activityID)
 }
 
-// buildScraperItems reconstructs 0x80b260 and closures 0x80c9e0-0x80cd60.
-// The config/slice grouping is supported by the Go ABI and runtime types;
-// original lexical argument order and local names are not recoverable.
 func (a *App) buildScraperItems(ctx context.Context, config scraperConfig, items []Item, activityID string) (*scraperPlan, error) {
 	if !config.Enabled {
 		return nil, errors.New("刮削总开关关闭")
@@ -780,7 +767,7 @@ func (a *App) buildScraperItems(ctx context.Context, config scraperConfig, items
 			entry.Total, entry.Done = len(items), index+1
 		})
 	}
-	// The binary discards the provisional counts and recounts enabled objects.
+	// Recount only the enabled objects.
 	plan.Pending, plan.Skipped, plan.Overwrite = 0, 0, 0
 	for _, object := range plan.Objects {
 		if object.Disabled {
@@ -800,7 +787,6 @@ func (a *App) buildScraperItems(ctx context.Context, config scraperConfig, items
 	return plan, nil
 }
 
-// runScraper restores the serial media-object loop at 0x80d780.
 func (a *App) runScraper(ctx context.Context, plan *scraperPlan) error {
 	a.scraper.taskID.Store(&plan.ID)
 	defer func() {
@@ -820,7 +806,6 @@ func (a *App) runScraper(ctx context.Context, plan *scraperPlan) error {
 	}
 	activityID := a.newActivity("scraper", plan.ID, "刮削 · "+strings.Join(selection, " → "))
 	provider := orderedScrapers(selection)
-	// Local extension; keep the recovered serial path for the default setting.
 	if concurrency := scraperConcurrency(plan.Config.Concurrency); concurrency > 1 {
 		return a.runScraperConcurrent(ctx, plan, activityID, provider, concurrency)
 	}
@@ -881,10 +866,6 @@ func (a *App) runScraper(ctx context.Context, plan *scraperPlan) error {
 	return err
 }
 
-// scrapeObject reconstructs 0x80f080 and its closures, including the target
-// routine at 0x810680 and refresh cleanup at 0x813720. The closure boundaries
-// and local variable names are inferred; runtime aggregates and constants are
-// recovered from the exact binary.
 func (a *App) scrapeObject(ctx context.Context, config scraperConfig, object scraperObject, provider Scraper, activityID string) error {
 	if object.Error != "" {
 		return errors.New(object.Error)
@@ -1021,8 +1002,7 @@ func (a *App) scrapeObject(ctx context.Context, config scraperConfig, object scr
 			return errors.New("请求已取消或超时")
 		}
 		phase("已下载", fmt.Sprintf("%s · %d 字节 · 准备保存：%s", target.Content, len(data), safePath))
-		// libraryConfig is runtime appState offset 0xa428. Keep the same lock
-		// across configured-root revalidation and writing the returned bytes.
+		// Hold the configuration lock while validating the root and writing the file.
 		a.libraryConfig.Lock()
 		currentRoot, rootErr := a.scraperRoot(item.Lib, item.Path)
 		if fetchCtx.Err() != nil {

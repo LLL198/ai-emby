@@ -10,13 +10,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Reconstructed from scraper_files.go functions in the running binary at
-// 0x81c320-0x81d700. The renameat2 fallback is a local compatibility fix for
-// mounted filesystems that return EINVAL/ENOSYS/EOPNOTSUPP for renameat2.
-
+// Validate and atomically write NFO or artwork within the library.
 func (a *App) scraperWrite(libraryRoot string, target scraperTarget, item Item, data []byte, overwrite bool) error {
 	artworkType, targetPath := target.Content, target.Path
-	if !scraperAllowedTarget(target, item) || len(data) == 0 || len(data) > 0x1400000 {
+	if !scraperAllowedTarget(target, item) || len(data) == 0 || len(data) > maxArtworkBytes {
 		return errors.New("拒绝不支持的目标或文件内容")
 	}
 	if artworkType != "NFO" {
@@ -95,8 +92,7 @@ func (a *App) scraperWrite(libraryRoot string, target scraperTarget, item Item, 
 
 	var renameErr error
 	if !overwrite {
-		// Keep the same directory-relative rename used by the binary. Some
-		// FUSE/network mounts reject renameat2 even with flags=0.
+		// Some FUSE and network mounts reject renameat2 even with zero flags.
 		dirFile, openErr := dirRoot.Open(".")
 		if openErr != nil {
 			return scraperFilesystemError("原子写入失败", openErr)

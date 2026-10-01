@@ -10,7 +10,7 @@ import (
 
 var userImageMIMEs = []string{"image/webp", "image/jpeg", "image/png"}
 
-// 0x7a6d20. Hash the user identifier before using it as a file name.
+// Hash user identifiers before using them as file names.
 func userImagePath(directory, userID, mime string) string {
 	extension := ".webp"
 	switch mime {
@@ -26,7 +26,6 @@ func userImagePath(directory, userID, mime string) string {
 	return filepath.Join(root, directory, digest(userID)+extension)
 }
 
-// 0x7a6f00.
 func userImageFile(directory, userID string) (string, bool) {
 	for _, mime := range userImageMIMEs {
 		path := userImagePath(directory, userID, mime)
@@ -37,8 +36,7 @@ func userImageFile(directory, userID string) (string, bool) {
 	return "", false
 }
 
-// 0x7a7040. The temporary file stays in the destination directory so the
-// final rename is atomic; other image formats are removed after the rename.
+// Write and rename in the same directory, then remove other image formats.
 func saveUserImage(directory, userID, mime string, data []byte) error {
 	root := os.Getenv("MEDIA_INFO_ROOT")
 	if root == "" {
@@ -79,7 +77,6 @@ func saveUserImage(directory, userID, mime string, data []byte) error {
 	return nil
 }
 
-// 0x7a75c0.
 func deleteUserImage(directory, userID string) error {
 	for _, mime := range userImageMIMEs {
 		if err := os.Remove(userImagePath(directory, userID, mime)); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -89,7 +86,7 @@ func deleteUserImage(directory, userID string) error {
 	return nil
 }
 
-// 0x7a7720. ServeContent implements HEAD, range and conditional requests.
+// ServeContent handles HEAD, range and conditional requests.
 func serveUserImage(w http.ResponseWriter, r *http.Request, path string) error {
 	file, err := os.Open(path)
 	if err != nil {

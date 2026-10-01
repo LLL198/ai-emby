@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// 0x792be0. Detect direct-play endpoints even below an additional path prefix.
+// Detect direct-play endpoints below an additional path prefix.
 func embyVideoLocation(path string) bool {
 	if _, ok := fastPlaybackItem(path); ok {
 		return true

@@ -9,10 +9,7 @@ import (
 	"time"
 )
 
-// Reconstructed from the exact executable's Ghidra output at
-// ../pseudocode/a0/008669a0_main.__App_.webAssetRoute.c and checked against
-// the live /web/js/app.js response. The original source is unavailable.
-const recoveredBuildVersion = "2026.09.28-124350"
+const buildVersion = "2026.09.28-124350"
 
 func (a *App) webAssetRoute(w http.ResponseWriter, r *http.Request) bool {
 	name := r.URL.Path
@@ -47,7 +44,7 @@ func (a *App) webAssetRoute(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	if name == "/web/js/app.js" {
-		version, _ := json.Marshal(recoveredBuildVersion)
+		version, _ := json.Marshal(buildVersion)
 		data = bytes.ReplaceAll(data, []byte("__GO_EMBY_BUILD_VERSION__"), version)
 	}
 

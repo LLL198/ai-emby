@@ -1,7 +1,6 @@
 package main
 
-// 0x796ba0. Query all Series/Season roots together and only mutate DTOs after
-// successfully reading every row. Duplicate roots share the same counts.
+// Count Series/Season roots in one query; apply results only after reading every row.
 func (a *App) fillEpisodeCounts(items []Item, dtos []M, user User) {
 	positions := map[string][]int{}
 	args := []any{}

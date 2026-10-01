@@ -40,9 +40,8 @@ func (a *App) newActivity(category, item, name string) string {
 	}
 	key := id()
 	now := time.Now()
-	// Restored from 0x766d60 and the runtime activityEntry layout.
 	taskID := ""
-	if category == "scraper" && a.appState != nil {
+	if category == "scraper" {
 		if task := a.scraper.taskID.Load(); task != nil {
 			taskID = *task
 		}

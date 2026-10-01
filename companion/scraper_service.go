@@ -10,10 +10,7 @@ import (
 	"time"
 )
 
-// Local deployment adapter for the recovered manual scraper. Its port is
-// loopback-only inside the container. The public gateway asks the original
-// server to authorize every scraper/log request before forwarding it here.
-// The original server owns schema migrations, watchers, playback and licensing.
+// Serve scraper and scan requests on the internal port after gateway authorization.
 func (a *App) runScraperService() {
 	must(a.initConcurrentScanner())
 	listen := os.Getenv("LISTEN")

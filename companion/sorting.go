@@ -5,11 +5,8 @@ import (
 	"time"
 )
 
-// Recovered from 0x836120 and closure 0x836240. The SQL is preserved exactly
-// in schema_recovery.go; this file remains partial until randomPage and
-// premiereDate have been reconstructed.
 func (a *App) sortSchema() error {
-	if _, err := a.db.Exec(recoveredSortSchemaSQL); err != nil {
+	if _, err := a.db.Exec(sortSchemaSQL); err != nil {
 		return err
 	}
 	var version string
@@ -26,11 +23,10 @@ func (a *App) sortSchema() error {
 	return nil
 }
 
-// 0x837c80 updates batches of 500; RowsAffected and database errors both
-// terminate the loop, with 50 ms between nonempty batches.
+// Backfill 500 rows per batch, yielding for 50 ms between batches.
 func (a *App) backfillSortFields() error {
 	for {
-		result, err := a.db.Exec(recoveredSortBackfillSQL)
+		result, err := a.db.Exec(sortBackfillSQL)
 		if err != nil {
 			return err
 		}

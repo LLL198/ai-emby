@@ -1,5 +1,3 @@
-// Recovered runtime type declarations copied from the exact binary type catalogue.
-// Existing reference-checkout declarations are left untouched and remain version-unverified.
 package main
 
 import (
@@ -64,8 +62,8 @@ type assrtSub struct {
 	URL      string      `json:"url"`
 	Files    []assrtFile `json:"filelist"`
 	Lang     struct {
-		Desc string          "json:\"desc\""
-		List map[string]bool "json:\"langlist\""
+		Desc string          `json:"desc"`
+		List map[string]bool `json:"langlist"`
 	} `json:"lang"`
 }
 
@@ -313,36 +311,6 @@ type active struct {
 	episode   int
 }
 
-type appState struct {
-	intro         introState
-	proxy         proxyState
-	subtitles     subtitleState
-	mediaEvents   mediaEventHub
-	refreshGuard  mediaRefreshGuard
-	scraper       scraperState
-	telegram      telegramState
-	fastNanShare  fastNanShareState
-	xiaoyaFast    xiaoyaFastState
-	mediaSchema   string
-	tmdb          tmdbState
-	scanControlMu sync.Mutex
-	scanResume    chan struct{}
-	pages         pageCache
-	cursorSecret  string
-	proxyDebug    proxyDebugState
-	activity      activityState
-	dashboardCPU  dashboardCPUSample
-	probes        probeState
-	mediaBatch    probeBatchState
-	write         sync.Mutex
-	libraryConfig sync.Mutex
-	scan          sync.RWMutex
-	jobs          libraryJobQueue
-	loginMu       sync.Mutex
-	attempts      map[string][]time.Time
-	serverID      string
-}
-
 type browseSortSpec struct {
 	expr    string
 	kind    string
@@ -351,7 +319,7 @@ type browseSortSpec struct {
 
 type catalogBatch struct {
 	metadata map[string]sidecar
-	media    map[string]map[string]interface{}
+	media    map[string]M
 	child    map[string]int
 	versions map[string][]Item
 	remote   map[string]tmdbData
@@ -360,12 +328,12 @@ type catalogBatch struct {
 }
 
 type catalogGroupedRow struct {
-	row   interface{ Scan(...interface{}) error }
+	row   interface{ Scan(...any) error }
 	group *string
 }
 
 type collageEntry struct {
-	data  []uint8
+	data  []byte
 	until time.Time
 }
 
@@ -535,7 +503,7 @@ type scraperConfig struct {
 	FanartAPIKey       string
 	Overwrite          bool
 	Categories         map[string]scraperCategory
-	// Local extension: media workers per task, not API requests per second.
+	// Media workers per task; API request rate is configured separately.
 	Concurrency int
 }
 
