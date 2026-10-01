@@ -54,7 +54,7 @@ Compose 须包含 `./update-control:/app/update-control` 挂载。默认 root �
 
 ## 发布新版本
 
-版本格式：`YYYY.MM.DD-HHMMSS`，例如 `2026.10.01-165649`。仓库 Actions 的 **Publish release** 手动工作流构建并发布 Linux amd64 更新包及 GHCR 镜像。版本应递增，已有版本不覆盖。
+版本格式：`YYYY.MM.DD-HHMMSS`，例如 `2026.10.01-165649`。仓库 Actions 的 **Publish release** 手动工作流构建并发布 Linux amd64 更新包及 GHCR 镜像。版本应递增，已有版本不覆盖；输入已发布版本时只使用该版本已有更新包发布 Docker 镜像。
 
 本机构建更新包：
 
