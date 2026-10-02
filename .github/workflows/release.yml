@@ -60,6 +60,6 @@ jobs:
       - name: Publish release
         if: steps.version.outputs.exists != 'true'
         run: |
-          gh release create "$VERSION" --target "$GITHUB_SHA" --title "AI Emby $VERSION" \
-            --notes 'Linux amd64 release: gateway, parallel scanning and scraping, frontend and core runtime.' \
+          gh release create "$VERSION" --target "$GITHUB_SHA" --title "AI Emby $VERSION" --latest \
+            --notes '包含网盘挂载、STRM 目录选择、刮削待处理全选与批量操作、夸克移动端 302 配置，以及完整网盘运行组件。夸克 302 需自行填写有效移动端请求 URL。Linux amd64 / x86_64 Docker 设备可在面板检查更新；其他架构暂不适用。' \
             "dist/$VERSION/ai-emby-linux-amd64.tar.gz" "dist/$VERSION/update-linux-amd64.json" "dist/$VERSION/SHA256SUMS"

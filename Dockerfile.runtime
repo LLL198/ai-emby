@@ -10,8 +10,11 @@ COPY bin/go-emby /usr/local/bin/ai-emby-core
 COPY bin/go-emby-scraper /usr/local/bin/ai-emby-worker
 COPY bin/scraper-gateway /usr/local/bin/ai-emby-gateway
 COPY frontend/ /app/frontend/
+COPY frontend/.release/ai-emby-cloud-engine /usr/local/bin/ai-emby-cloud-engine
+COPY frontend/.release/third_party/ /app/third_party/
 COPY VERSION /app/VERSION
-RUN chmod 755 /usr/local/bin/ai-emby-core /usr/local/bin/ai-emby-worker /usr/local/bin/ai-emby-gateway
+RUN chmod 755 /usr/local/bin/ai-emby-core /usr/local/bin/ai-emby-worker /usr/local/bin/ai-emby-gateway /usr/local/bin/ai-emby-cloud-engine \
+    && rm -rf /app/frontend/.release
 LABEL org.opencontainers.image.title="ai-emby" \
       org.opencontainers.image.source="https://github.com/LLL198/ai-emby" \
       org.opencontainers.image.description="AI Emby with parallel library scanning and scraping"
