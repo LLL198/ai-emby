@@ -577,7 +577,8 @@ const ScraperIssues = (()=>{
   const statusNames={review:'无法确定',conflict:'命名冲突',failed:'刮削失败'};
   function select(label,values){return UI.el('select',{'aria-label':label},values.map(([value,name])=>UI.el('option',{value},name)));}
   function mount(host,onCount=()=>{}){
-    let page=1,sequence=0,controller=null,timer=null,searchTimer=null;
+    let page=1,sequence=0,controller=null,timer=null,searchTimer=null,loading=false,busy=false,current=[];
+    const chosen=new Set();
     const search=UI.el('input',{type:'search',placeholder:'搜索名称、路径或原因','aria-label':'搜索待处理项目'});
     const source=select('任务来源',[['','全部来源'],['naming','规范命名'],['scraper','元数据刮削']]);
     const status=select('问题类型',[['','全部问题'],['review','无法确定'],['conflict','命名冲突'],['failed','刮削失败']]);
@@ -587,10 +588,48 @@ const ScraperIssues = (()=>{
     const list=UI.el('div',{class:'media-issues-list'});
     const pagination=UI.el('div',{class:'media-issues-pagination'});
     const filters=UI.el('div',{class:'media-issues-filters'},[search,source,status,state,refresh]);
-    host.replaceChildren(filters,summary,list,pagination);
+    const all=UI.el('input',{type:'checkbox','aria-label':'全选本页待处理项目'});
+    const selectionCount=UI.el('span',{class:'media-issues-selected',role:'status','aria-live':'polite'});
+    const clear=UI.el('button',{type:'button',class:'secondary'},'取消选择');
+    const batchIgnore=UI.el('button',{type:'button',class:'secondary'},'批量忽略');
+    const batchRestore=UI.el('button',{type:'button',class:'secondary'},'恢复待处理');
+    const selection=UI.el('div',{class:'media-issues-selection'},[UI.el('label',{class:'media-issues-select-all'},[all,UI.el('span',{},'全选本页')]),selectionCount,clear,batchIgnore,batchRestore]);
+    host.replaceChildren(filters,summary,selection,list,pagination);
     const alive=()=>host.isConnected&&view==='admin'&&!host.closest('.admin-section')?.hidden;
     const visible=()=>alive()&&!host.closest('[data-scraper-pane]')?.hidden;
+    function updateSelection(){
+      const locked=busy||loading;
+      all.checked=current.length>0&&chosen.size===current.length;
+      all.indeterminate=chosen.size>0&&chosen.size<current.length;
+      all.disabled=locked||!current.length;
+      selectionCount.textContent=`已选 ${chosen.size} 项`;
+      clear.disabled=locked||!chosen.size;
+      batchIgnore.disabled=locked||!current.some(issue=>chosen.has(issue.id)&&!issue.ignored);
+      batchRestore.disabled=locked||!current.some(issue=>chosen.has(issue.id)&&issue.ignored);
+      for(const input of list.querySelectorAll('[data-issue-select]')){input.checked=chosen.has(input.dataset.issueSelect);input.disabled=locked||!current.length;input.closest('.media-issue').classList.toggle('is-selected',input.checked);}
+      for(const button of list.querySelectorAll('button'))button.disabled=locked||!current.length;
+      for(const button of pagination.querySelectorAll('button'))button.disabled=locked||button.dataset.unavailable==='true';
+      for(const input of [search,source,status,state])input.disabled=busy;
+      refresh.disabled=locked;
+    }
+    function resetSelection(){sequence++;controller?.abort();loading=false;chosen.clear();current=[];updateSelection();}
+    all.onchange=()=>{if(all.checked)current.forEach(issue=>chosen.add(issue.id));else chosen.clear();updateSelection();};
+    clear.onclick=()=>{chosen.clear();updateSelection();};
+    async function setIgnored(ids,ignored){
+      if(busy||loading||!ids.length)return;
+      busy=true;controller?.abort();sequence++;updateSelection();
+      try {
+        const result=await api(endpoint,'PUT',{ids,ignored});
+        ids.forEach(id=>chosen.delete(id));
+        toast(`${ignored?'已忽略':'已恢复待处理'} ${result.updated} 项${result.missing?`，${result.missing} 项已处理或移除`:''}`);
+      }finally{busy=false;await load(true);updateSelection();}
+    }
+    batchIgnore.onclick=run(()=>setIgnored([...chosen],true));
+    batchRestore.onclick=run(()=>setIgnored([...chosen],false));
     function render(data){
+      current=data.items;
+      const present=new Set(current.map(issue=>issue.id));
+      for(const id of chosen)if(!present.has(id))chosen.delete(id);
       summary.textContent=`待处理 ${data.pending} 项 · 当前筛选 ${data.total} 项`;
       list.replaceChildren();
       for(const issue of data.items){
@@ -610,11 +649,7 @@ const ScraperIssues = (()=>{
         }},'修正命名');
         actions.append(fix,open);
         if(issue.source==='scraper')actions.append(UI.el('button',{type:'button',class:'secondary',onclick:()=>openFileScraper({path:'/'+issue.path,name})},'重试刮削'));
-        const ignore=UI.el('button',{type:'button',class:'secondary',onclick:run(async()=>{
-          ignore.disabled=true;
-          try {await api(endpoint,'PUT',{id:issue.id,ignored:!issue.ignored});await load(true);}
-          finally {ignore.disabled=false;}
-        })},issue.ignored?'恢复待处理':'忽略');
+        const ignore=UI.el('button',{type:'button',class:'secondary',onclick:run(()=>setIgnored([issue.id],!issue.ignored))},issue.ignored?'恢复待处理':'忽略');
         actions.append(ignore);
         const badge=UI.el('span',{class:'media-issue-badge media-issue-badge--'+issue.status},issue.ignored?'已忽略':statusNames[issue.status]||issue.status);
         const heading=UI.el('div',{class:'media-issue-heading'},[UI.el('strong',{},name),badge]);
@@ -622,30 +657,36 @@ const ScraperIssues = (()=>{
         const meta=UI.el('small',{class:'media-issue-meta'},`${sourceNames[issue.source]||issue.source} · ${issue.directory?'文件夹':'媒体文件'} · ${new Date(issue.updated/1e6).toLocaleString()}`);
         const body=UI.el('div',{class:'media-issue-body'},[heading,path,UI.el('p',{class:'media-issue-reason'},issue.reason),meta]);
         if(issue.proposed)body.append(UI.el('details',{class:'media-issue-proposed'},[UI.el('summary',{},'目标名称'),UI.el('p',{},issue.proposed)]));
-        list.append(UI.el('article',{class:'media-issue'},[body,actions]));
+        const checkbox=UI.el('input',{type:'checkbox','aria-label':`选择 ${issue.path}`,'data-issue-select':issue.id,onchange:()=>{if(checkbox.checked)chosen.add(issue.id);else chosen.delete(issue.id);updateSelection();}});
+        list.append(UI.el('article',{class:'media-issue'},[UI.el('label',{class:'media-issue-select'},checkbox),body,actions]));
       }
       if(!data.items.length)list.append(UI.el('p',{class:'empty'},data.total?'此页没有项目，请返回上一页。':state.value==='ignored'?'没有已忽略的项目。':'没有符合条件的待处理项目。命名识别失败或刮削失败后会自动显示在这里。'));
       const pages=Math.max(1,Math.ceil(data.total/data.pageSize));
-      const prev=UI.el('button',{type:'button',class:'secondary',onclick:()=>{page--;load(true);}},'上一页');prev.disabled=page<=1;
-      const next=UI.el('button',{type:'button',class:'secondary',onclick:()=>{page++;load(true);}},'下一页');next.disabled=page>=pages;
+      const prev=UI.el('button',{type:'button',class:'secondary','data-unavailable':String(page<=1),onclick:()=>{page--;resetSelection();load(true);}},'上一页');
+      const next=UI.el('button',{type:'button',class:'secondary','data-unavailable':String(page>=pages),onclick:()=>{page++;resetSelection();load(true);}},'下一页');
       pagination.replaceChildren(prev,UI.el('span',{},`${page} / ${pages}`),next);
       pagination.hidden=pages===1&&page===1;
+      updateSelection();
     }
     async function load(full=visible()){
-      if(!host.isConnected)return;
-      const request=++sequence;controller?.abort();controller=new AbortController();refresh.disabled=true;
+      if(!host.isConnected||busy)return;
+      const request=++sequence;controller?.abort();controller=new AbortController();loading=true;updateSelection();
       const query=new URLSearchParams({page,search:search.value.trim(),source:source.value,status:status.value,state:state.value});
       if(!full)query.set('summary','true');
       try {
         const data=await api(endpoint+'?'+query,'GET',undefined,{signal:controller.signal});
         if(request!==sequence||!host.isConnected)return;
         onCount(data.pending);
-        if(full)render(data);
+        if(full){
+          const pages=Math.max(1,Math.ceil(data.total/data.pageSize));
+          if(page>pages){page=pages;resetSelection();await load(true);return;}
+          render(data);
+        }
       }catch(error){if(request===sequence&&error.name!=='AbortError')summary.textContent='待处理列表读取失败：'+error.message;}
-      finally{if(request===sequence)refresh.disabled=false;}
+      finally{if(request===sequence){loading=false;updateSelection();}}
     }
-    search.oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{page=1;load(true);},300);};
-    for(const input of [source,status,state])input.onchange=()=>{page=1;load(true);};
+    search.oninput=()=>{resetSelection();clearTimeout(searchTimer);searchTimer=setTimeout(()=>{page=1;load(true);},300);};
+    for(const input of [source,status,state])input.onchange=()=>{page=1;resetSelection();load(true);};
     refresh.onclick=()=>load(true);
     const pane=host.closest('[data-scraper-pane]');
     const tab=document.getElementById(pane?.getAttribute('aria-labelledby'));
@@ -656,7 +697,7 @@ const ScraperIssues = (()=>{
       await load();
       if(alive())timer=setTimeout(poll,10000);
     }
-    poll();
+    updateSelection();poll();
     return {refresh:()=>load(),dispose(){clearTimeout(timer);clearTimeout(searchTimer);controller?.abort();}};
   }
   return {mount};

@@ -180,17 +180,38 @@ func (a *App) mediaIssuesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPut {
 		var request struct {
-			ID      string `json:"id"`
-			Ignored bool   `json:"ignored"`
+			ID      string   `json:"id"`
+			IDs     []string `json:"ids"`
+			Ignored bool     `json:"ignored"`
 		}
 		if !body(w, r, &request) {
 			return
 		}
-		if len(request.ID) != 32 {
-			fail(w, 400, "无效待处理项目")
+		if request.ID != "" && len(request.IDs) != 0 {
+			fail(w, 400, "请使用单项或批量选择")
 			return
 		}
-		result, err := a.db.DB.ExecContext(r.Context(), "UPDATE feature_media_issues SET ignored=$1 WHERE id=$2", request.Ignored, request.ID)
+		ids := request.IDs
+		if request.ID != "" {
+			ids = []string{request.ID}
+		}
+		if len(ids) == 0 || len(ids) > 100 {
+			fail(w, 400, "请选择1–100个待处理项目")
+			return
+		}
+		unique := make([]string, 0, len(ids))
+		seen := make(map[string]bool, len(ids))
+		for _, issueID := range ids {
+			if len(issueID) != 32 {
+				fail(w, 400, "无效待处理项目")
+				return
+			}
+			if !seen[issueID] {
+				seen[issueID] = true
+				unique = append(unique, issueID)
+			}
+		}
+		result, err := a.db.DB.ExecContext(r.Context(), "UPDATE feature_media_issues SET ignored=$1 WHERE id=ANY($2)", request.Ignored, pq.Array(unique))
 		if err != nil {
 			featureError(w, err)
 			return
@@ -200,7 +221,7 @@ func (a *App) mediaIssuesAPI(w http.ResponseWriter, r *http.Request) {
 			fail(w, 404, "项目已处理或已移除")
 			return
 		}
-		respond(w, M{"ok": true})
+		respond(w, M{"ok": true, "updated": count, "missing": int64(len(unique)) - count})
 		return
 	}
 	query := r.URL.Query()
