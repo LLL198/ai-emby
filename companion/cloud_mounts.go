@@ -28,12 +28,15 @@ type cloudMount struct {
 	Enabled      bool
 	Status       string
 	PlaybackMode string
+	MobileReady  bool
+	MobileURL    string `json:"-"`
 }
 
 func (a *App) cloudMount(id string) (cloudMount, error) {
 	var m cloudMount
 	var enabled int
-	err := a.db.QueryRow("SELECT id,name,driver,storage_id,secret,enabled,playback_mode FROM feature_cloud_mounts WHERE id=?", id).Scan(&m.ID, &m.Name, &m.Driver, &m.StorageID, &m.Secret, &enabled, &m.PlaybackMode)
+	err := a.db.QueryRow("SELECT id,name,driver,storage_id,secret,enabled,playback_mode,quark_mobile_url FROM feature_cloud_mounts WHERE id=?", id).Scan(&m.ID, &m.Name, &m.Driver, &m.StorageID, &m.Secret, &enabled, &m.PlaybackMode, &m.MobileURL)
+	m.MobileReady = m.MobileURL != ""
 	if m.Driver == "WebDav" {
 		m.PlaybackMode = "proxy"
 	}
@@ -136,6 +139,9 @@ func (a *App) cloudAdmin(w http.ResponseWriter, r *http.Request) {
 		}
 		values := map[string]any{}
 		saved := []string{}
+		if driver == "Quark" {
+			schema.Additional = append(schema.Additional, cloudField{Name: "mobile_request_url", Type: "string"})
+		}
 		if mountID := r.URL.Query().Get("ID"); mountID != "" {
 			m, err := a.cloudMount(mountID)
 			if err != nil {
@@ -145,6 +151,9 @@ func (a *App) cloudAdmin(w http.ResponseWriter, r *http.Request) {
 			if m.Driver != driver {
 				fail(w, 400, "网盘类型不一致")
 				return
+			}
+			if m.MobileReady {
+				saved = append(saved, "mobile_request_url")
 			}
 			s, err := cloudGetStorage(r.Context(), m.StorageID)
 			if err != nil {
@@ -285,6 +294,23 @@ func (a *App) cloudSave(w http.ResponseWriter, r *http.Request) {
 	if b.Driver == "WebDav" {
 		m.PlaybackMode = "proxy"
 	}
+	if b.Driver == "Quark" {
+		if value, provided := b.Addition["mobile_request_url"]; provided {
+			raw, ok := value.(string)
+			if !ok {
+				fail(w, 400, "移动端请求 URL 格式错误")
+				return
+			}
+			if strings.TrimSpace(raw) != "" {
+				mobileURL, err := cloudQuarkMobileURL(raw)
+				if err != nil {
+					fail(w, 400, err.Error())
+					return
+				}
+				m.MobileURL = mobileURL
+			}
+		}
+	}
 	for _, f := range schema.Additional {
 		v, ok := b.Addition[f.Name]
 		if !ok || (cloudSensitive(f.Name) && v == "") {
@@ -353,7 +379,7 @@ func (a *App) cloudSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		m.Secret = hex.EncodeToString(secret[:])
-		_, err := a.db.Exec("INSERT INTO feature_cloud_mounts(id,name,driver,secret,enabled,created,playback_mode) VALUES(?,?,?,?,1,?,?)", m.ID, b.Name, b.Driver, m.Secret, featureNow(), m.PlaybackMode)
+		_, err := a.db.Exec("INSERT INTO feature_cloud_mounts(id,name,driver,secret,enabled,created,playback_mode,quark_mobile_url) VALUES(?,?,?,?,1,?,?,?)", m.ID, b.Name, b.Driver, m.Secret, featureNow(), m.PlaybackMode, m.MobileURL)
 		if err != nil {
 			featureError(w, err)
 			return
@@ -393,7 +419,7 @@ func (a *App) cloudSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := cloudCall(r.Context(), "POST", "/api/admin/storage/update", s, nil, "")
-	if _, e := a.db.Exec("UPDATE feature_cloud_mounts SET name=?,playback_mode=? WHERE id=?", b.Name, m.PlaybackMode, m.ID); e != nil {
+	if _, e := a.db.Exec("UPDATE feature_cloud_mounts SET name=?,playback_mode=?,quark_mobile_url=? WHERE id=?", b.Name, m.PlaybackMode, m.MobileURL, m.ID); e != nil {
 		featureError(w, e)
 		return
 	}
@@ -520,7 +546,12 @@ func (a *App) cloudResolve(w http.ResponseWriter, r *http.Request) {
 		URL    string      `json:"url"`
 		Header http.Header `json:"header"`
 	}
-	if err = cloudCall(r.Context(), "POST", "/api/fs/link", M{"path": cloudStoragePath(m, p)}, &link, r.UserAgent()); err != nil {
+	if m.Driver == "Quark" && m.MobileReady {
+		link.URL, err = cloudQuarkMobileLink(r.Context(), m, p)
+	} else {
+		err = cloudCall(r.Context(), "POST", "/api/fs/link", M{"path": cloudStoragePath(m, p)}, &link, r.UserAgent())
+	}
+	if err != nil {
 		fail(w, 502, err.Error())
 		return
 	}

@@ -4,6 +4,7 @@ const CloudMounts = (() => {
     address:'WebDAV 地址', root_folder_path:'根目录路径', vendor:'服务类型', tls_insecure_skip_verify:'跳过证书校验',
     authorization:'Authorization', username:'登录账号', password:'密码', sms_code:'短信验证码', mail_cookies:'移动邮箱 Cookie',
     cookie:'Cookie', qrcode_token:'二维码登录令牌', qrcode_source:'登录设备', root_folder_id:'根目录 ID', root_path:'根目录路径',
+    mobile_request_url:'移动端请求 URL（修复夸克 302）',
     access_token:'Access Token', refresh_token:'Refresh Token', phone_number:'手机号码', captcha_token:'验证码令牌',
     send_code:'保存时发送短信验证码', verify_code:'短信验证码', client_id:'Client ID', device_id:'设备 ID', device_sign:'设备签名',
     type:'空间类型', link_id:'分享链接 ID', cloud_id:'家庭 / 群空间 ID', user_domain_id:'用户域 ID',
@@ -15,7 +16,7 @@ const CloudMounts = (() => {
     '139Yun':['authorization','root_folder_id','type'],
     '115 Cloud':['cookie','root_folder_id'],
     '115 Open':['access_token','refresh_token','root_folder_id'],
-    Quark:['cookie','root_folder_id','use_transcoding_address'],
+    Quark:['cookie','root_folder_id','use_transcoding_address','mobile_request_url'],
     WebDav:['address','username','password','root_folder_path'],
     GuangYaPan:['client_id','phone_number','captcha_token','send_code','verify_code','access_token','refresh_token','root_path'],
   };
@@ -23,11 +24,11 @@ const CloudMounts = (() => {
     '139Yun':'可填写移动云盘 Authorization；使用邮箱登录时，在高级设置里填写移动邮箱 Cookie 和账号信息。',
     '115 Cloud':'填写已登录账号的 Cookie。115 的直链与播放客户端 User-Agent 绑定。',
     '115 Open':'使用 115 开放平台授权得到的 Access Token 和 Refresh Token。',
-    Quark:'原码播放可选择服务器中转。转码直链可能被夸克限制，出现 plf_invalid 时需要移动端接口凭据。',
+    Quark:'302 出现 plf_invalid 时，填写登录自己账号后捕获的 https://drive-m.quark.cn/1/clouddrive/… 请求 URL（需含 kps、sign、vcode、ut）。保存后沿用已有 STRM。留空保留已保存凭据，过期时重新获取并替换。',
     WebDav:'填写 WebDAV 地址、账号和密码，根目录默认 /。文件通过服务器读取，播放流量会经过 AI Emby。',
     GuangYaPan:'可使用 Token 登录；短信登录先填手机号和 Client ID，勾选发送短信后保存，再编辑挂载填写短信验证码。',
   };
-  const sensitive = name => /token|cookie|password|authorization|verify_code|sms_code|device_sign|verification_id|username|phone_number/i.test(name);
+  const sensitive = name => name==='mobile_request_url'||/token|cookie|password|authorization|verify_code|sms_code|device_sign|verification_id|username|phone_number/i.test(name);
   const states = {waiting:'等待中',running:'生成中',complete:'已完成',error:'失败',cancelled:'已取消',interrupted:'已中断'};
   const active = task => ['waiting','running','counting'].includes(task.State);
   let host, still, data, selected, currentPath='/', page=1, listing, browseSerial=0, loadSerial=0, pollTimer;
@@ -76,7 +77,7 @@ const CloudMounts = (() => {
     },'保存挂载');
     const dialog=document.getElementById('modal'), fields=dialog.querySelector('[data-fields]');
     const playback=dialog.querySelector('[name="PlaybackMode"]');
-    const applyPlayback=()=>{const input=fields.querySelector('[name="account:use_transcoding_address"]');if(input){const proxy=driver==='Quark'&&playback.value==='proxy';input.disabled=proxy;input.closest('label').hidden=proxy;}};
+    const applyPlayback=()=>{for(const name of ['use_transcoding_address','mobile_request_url']){const input=fields.querySelector(`[name="account:${name}"]`);if(input){const proxy=driver==='Quark'&&playback.value==='proxy';input.disabled=proxy;input.closest('label').hidden=proxy;}}};
     playback.onchange=applyPlayback;
     dialog.classList.add('cloud-sheet','cloud-account-sheet');
     const draw=async()=>{
@@ -95,7 +96,8 @@ const CloudMounts = (() => {
           return `<label>${esc(title)}<select name="${esc(name)}" ${required}>${options.map(v=>`<option value="${esc(v)}" ${String(value)===v?'selected':''}>${esc(names[v]||v)}</option>`).join('')}</select></label>`;
         }
         const addressHint=driver==='WebDav'&&f.name==='address'?'placeholder="https://dav.example.com/dav/"':'';
-        return field(name,title,value??'',sensitive(f.name)?'password':['number','float'].includes(f.type)?'number':'text',`${required} ${placeholder} ${addressHint} autocomplete="off" ${['number','float'].includes(f.type)?'min="0" step="any"':''}`);
+        const markup=field(name,title,value??'',sensitive(f.name)?'password':['number','float'].includes(f.type)?'number':'text',`${required} ${placeholder} ${addressHint} autocomplete="off" ${['number','float'].includes(f.type)?'min="0" step="any"':''}`);
+        return f.name==='mobile_request_url'?markup.replace('<label>','<label class="cloud-span">'):markup;
       };
       const common=items.filter(f=>primary[driver]?.includes(f.name)), advanced=items.filter(f=>!primary[driver]?.includes(f.name));
       fields.innerHTML=`<h3>账号与目录</h3><p class="cloud-account-tip">${esc(tips[driver])}</p><div class="feature-grid">${common.map(html).join('')}</div>${advanced.length?`<details class="cloud-advanced"><summary>高级配置</summary><div class="feature-grid">${advanced.map(html).join('')}</div></details>`:''}`;

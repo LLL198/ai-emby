@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS feature_media_issues(id TEXT PRIMARY KEY, source TEXT
 CREATE INDEX IF NOT EXISTS feature_media_issues_pending ON feature_media_issues(ignored,updated DESC,id);
 CREATE TABLE IF NOT EXISTS feature_cloud_mounts(id TEXT PRIMARY KEY, name TEXT NOT NULL, driver TEXT NOT NULL, storage_id BIGINT NOT NULL DEFAULT 0, secret TEXT NOT NULL, enabled BIGINT NOT NULL DEFAULT 1, created BIGINT NOT NULL);
 ALTER TABLE feature_cloud_mounts ADD COLUMN IF NOT EXISTS playback_mode TEXT NOT NULL DEFAULT 'redirect';
+ALTER TABLE feature_cloud_mounts ADD COLUMN IF NOT EXISTS quark_mobile_url TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS feature_tasks(id TEXT PRIMARY KEY, category TEXT NOT NULL, item TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, data TEXT NOT NULL, started BIGINT NOT NULL, updated BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS feature_tasks_updated ON feature_tasks(updated DESC);
 CREATE TABLE IF NOT EXISTS feature_library_policy(lib TEXT PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE, data TEXT NOT NULL);

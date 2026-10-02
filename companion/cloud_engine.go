@@ -105,7 +105,7 @@ func cloudCall(ctx context.Context, method, endpoint string, payload any, result
 	}
 	if envelope.Code != 200 || resp.StatusCode != 200 {
 		if strings.Contains(strings.ToLower(envelope.Message), "plf_invalid") {
-			return errors.New("夸克转码直链接口拒绝了当前请求（plf_invalid）。可在网盘配置中选择服务器中转；302 播放需要移动端接口凭据")
+			return errors.New("夸克转码直链接口拒绝了当前请求（plf_invalid）。请在网盘配置中填写自己账号的移动端请求 URL，以继续使用 302 直链播放")
 		}
 		return errCloudAccount
 	}
@@ -127,6 +127,9 @@ var cloudDrivers = map[string]string{"139Yun": "移动云盘", "115 Cloud": "115
 
 func cloudSensitive(key string) bool {
 	key = strings.ToLower(key)
+	if key == "mobile_request_url" {
+		return true
+	}
 	for _, part := range []string{"token", "cookie", "password", "authorization", "verify_code", "sms_code", "device_sign", "verification_id", "username", "phone_number"} {
 		if strings.Contains(key, part) {
 			return true
