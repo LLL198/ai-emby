@@ -26,7 +26,6 @@ const FilesPage = (() => {
     actions.replaceChildren(
       UI.el("button",{class:"secondary",onclick:()=>pickUpload()},"上传"),
       UI.el("button",{class:"secondary",onclick:run(mkdir)},"新建文件夹"),
-      UI.el("button",{class:"secondary",onclick:()=>FileNaming.open(state.path,[...state.selected],()=>load(state.path))},count?`规范命名 (${count})`:"规范命名"),
       ...(count?[
         UI.el("button",{class:"secondary",onclick:run(moveSelected)},`移动 (${count})`),
         UI.el("button",{class:"danger",onclick:run(deleteSelected)},`删除 (${count})`)
@@ -63,7 +62,6 @@ const FilesPage = (() => {
     };
     if (!item.isDir) add("下载", "download", ()=>download(item));
     if (item.isDir) add("重命名", "rename", ()=>rename(item));
-    if (item.isDir || /\.(strm|mkv|mp4|avi|ts|m4v|mov|webm|m2ts|iso)$/i.test(item.name)) add("规范命名", "rename", ()=>FileNaming.open(parentPath(item.path).replace(/^\//,""),[item.path],()=>load(state.path)));
     add("复制目录路径", "copy", ()=>copyDirectory(item));
     if (item.scrape) add("刮削", "scan", ()=>openFileScraper(item));
     add("移动", "folder", ()=>move([item.path]));

@@ -11,7 +11,9 @@ const FileNaming = (() => {
   function select(label,options) {
     return UI.el("select",{"aria-label":label},options.map(([value,text])=>UI.el("option",{value},text)));
   }
-  function open(path,paths=[],refresh=()=>{}) {
+  function mount(container, options={}) {
+    const {path="",paths=[],refresh=()=>{},useScraperScopes=false,onBeforeRun=()=>{},onComplete=()=>{},onBusy=()=>{},onError=()=>{},label=()=>"自动命名",initialMode="auto"}=options;
+    let externalBusy=false,reportedBusy=false,reportedApplying=false;
     let plan = null, busy = false, requestNumber = 0, applying = false, tmdb = "", scopePath=path, scopePaths=[...paths], visibleRows=200, previewAbort=null;
     const chosen = new Set();
     const wrap = UI.el("div",{class:"naming-content"});
@@ -23,6 +25,7 @@ const FileNaming = (() => {
     const folderButton=UI.el("button",{type:"button",class:"secondary"},"选择文件夹");
     scope.append(folderButton);
     const mode = select("命名方式",[["auto","自动标准命名"],["regex","正则替换"],["sequence","顺序编号"]]);
+    mode.value=initialMode;
     const kind = select("作品类型",[["auto","自动判断"],["tv","剧集 / 动漫 / 综艺"],["movie","电影"],["directory","仅文件夹"]]);
     const title = UI.el("input",{type:"text","aria-label":"作品名称",placeholder:"留空则从文件和目录识别",autocomplete:"off",maxlength:160});
     const year = UI.el("input",{type:"number","aria-label":"发行年份",placeholder:"可选",min:1800,max:2199});
@@ -74,27 +77,39 @@ const FileNaming = (() => {
     const applyButton = UI.el("button",{type:"button",disabled:true},"执行改名");
     const closeButton = UI.el("button",{type:"button",class:"secondary"},"关闭");
     const actions = UI.el("div",{class:"naming-actions"},[previewButton,closeButton,applyButton,autoButton]);
-    form.append(scope,scopeOptions,basic,metadata,searchbar,candidates,regexArea,sequenceArea,sequenceNote,templateArea,presetArea,variableHelp,tmdbOption,option,notice,feedback,results,actions);
+    if(useScraperScopes) {
+      mode.querySelector('[value="sequence"]').remove();
+      const singleSeason=UI.el("button",{type:"button",class:"secondary naming-single-season",onclick:()=>mount(null,{initialMode:"sequence",onBeforeRun,refresh})},"单季顺序编号");
+      const advanced=UI.el("details",{class:"naming-advanced"},[UI.el("summary",{},"高级命名规则"),basic,metadata,searchbar,candidates,regexArea,templateArea,presetArea,variableHelp,tmdbOption,option,singleSeason]);
+      recursive.checked=true;
+      form.append(UI.el("label",{class:"naming-option"},[folders,UI.el("span",{},"同时规范作品和季目录")]),advanced,notice,feedback,results,actions);
+      closeButton.remove();
+    } else form.append(scope,scopeOptions,basic,metadata,searchbar,candidates,regexArea,sequenceArea,sequenceNote,templateArea,presetArea,variableHelp,tmdbOption,option,notice,feedback,results,actions);
     wrap.append(form);
-    const dialog = UI.Modal("规范命名",wrap);
-    dialog.classList.add("naming-sheet");
-    const headingClose = dialog.querySelector('.section-heading button');
+    const dialog = container?null:UI.Modal("规范命名",wrap);
+    if(container){container.replaceChildren(wrap);wrap.classList.add('naming-inline');}
+    else dialog.classList.add("naming-sheet");
+    const headingClose = dialog?.querySelector('.section-heading button');
+    const alive=()=>dialog?dialog.open:wrap.isConnected&&(options.alive?.()??true);
     function updateButtons() {
-      previewButton.disabled=busy;
-      autoButton.disabled=busy;
-      autoButton.textContent=busy&&mode.value==="auto"?"正在处理…":"自动命名";
-      applyButton.disabled=busy||!plan||!chosen.size;
+      const locked=busy||externalBusy;
+      previewButton.disabled=locked;
+      autoButton.disabled=locked;
+      autoButton.textContent=busy&&mode.value==="auto"?"正在处理…":label();
+      applyButton.disabled=locked||!plan||!chosen.size;
       applyButton.hidden=!plan;
-      applyButton.textContent=applying?"正在改名…":`执行改名${chosen.size?` (${chosen.size})`:""}`;
-      closeButton.disabled=applying; headingClose.disabled=applying;
-      form.querySelectorAll("input,select").forEach(input=>input.disabled=busy||(input.closest('.naming-results')&&(!plan||input.dataset.namingReady!=="true")));
-      searchButton.disabled=busy||mode.value==="regex";
-      presetArea.querySelectorAll("button").forEach(button=>button.disabled=busy);
-      clearButton.disabled=busy;
-      folderButton.disabled=busy;
-      recursive.disabled=busy||mode.value==="sequence";
-      folders.disabled=busy||!recursive.checked||mode.value==="sequence";
+      applyButton.textContent=applying?"正在改名…":`${options.applyLabel?.()||"执行改名"}${chosen.size?` (${chosen.size})`:""}`;
+      closeButton.disabled=applying; if(headingClose)headingClose.disabled=applying;
+      form.querySelectorAll("input,select").forEach(input=>input.disabled=locked||(input.closest('.naming-results')&&(!plan||input.dataset.namingReady!=="true")));
+      searchButton.disabled=locked||mode.value==="regex";
+      presetArea.querySelectorAll("button").forEach(button=>button.disabled=locked);
+      form.querySelectorAll('.naming-single-season').forEach(button=>button.disabled=locked);
+      clearButton.disabled=locked;
+      folderButton.disabled=locked;
+      recursive.disabled=locked||mode.value==="sequence";
+      folders.disabled=locked||!recursive.checked||mode.value==="sequence";
       results.querySelectorAll('.naming-more').forEach(button=>button.disabled=applying);
+      if(reportedBusy!==busy||reportedApplying!==applying){reportedBusy=busy;reportedApplying=applying;onBusy(busy);}
     }
     function updateScope() {
       scope.querySelector("span").textContent="/media"+(scopePath?"/"+scopePath:"");
@@ -134,13 +149,13 @@ const FileNaming = (() => {
       async function poll() {
         try {
           const value=await api(endpoint+"progress?"+new URLSearchParams({ID:key}));
-          if(stopped||request!==requestNumber||!dialog.open)return;
+          if(stopped||request!==requestNumber||!alive())return;
           if(busy&&!['完成','预览完成','已停止'].includes(value.phase)) {
             const count=value.total?`${value.done}/${value.total}`:`已发现 ${value.done||0} 项`;
             feedback.textContent=`${value.phase} · ${count}${value.current?" · "+value.current:""}`;
           }
         } catch {}
-        if(!stopped&&request===requestNumber&&dialog.open)timer=setTimeout(poll,2000);
+        if(!stopped&&request===requestNumber&&alive())timer=setTimeout(poll,2000);
       }
       poll();
       return ()=>{stopped=true;clearTimeout(timer);};
@@ -169,9 +184,9 @@ const FileNaming = (() => {
     mode.onchange=modeChanged;
     kind.onchange=()=>{tmdb="";tmdbLabel.textContent="";clearButton.hidden=true;candidates.replaceChildren();invalidate();};
     clearButton.onclick=()=>{tmdb="";tmdbLabel.textContent="";clearButton.hidden=true;invalidate();};
-    closeButton.onclick=()=>dialog.close();
-    dialog.addEventListener("cancel",e=>{if(applying)e.preventDefault();});
-    dialog.addEventListener("close",()=>{requestNumber++;previewAbort?.abort();});
+    closeButton.onclick=()=>dialog?.close();
+    dialog?.addEventListener("cancel",e=>{if(applying)e.preventDefault();});
+    dialog?.addEventListener("close",()=>{requestNumber++;previewAbort?.abort();});
     searchButton.onclick=async()=>{
       if(busy)return;
       if(!["tv","movie"].includes(kind.value)) { feedback.textContent="请先选择电影或剧集类型。";return; }
@@ -180,7 +195,7 @@ const FileNaming = (() => {
       const sequence=++requestNumber;
       try {
         const data=await api("/admin/features/identify?"+new URLSearchParams({Type:kind.value,Query:title.value.trim()}));
-        if(sequence!==requestNumber||!dialog.open)return;
+        if(sequence!==requestNumber||!alive())return;
         candidates.replaceChildren();
         for(const item of (data.Items||[]).slice(0,12)) {
           const button=UI.el("button",{type:"button",class:"naming-candidate"});
@@ -193,7 +208,7 @@ const FileNaming = (() => {
           candidates.append(button);
         }
         feedback.textContent=data.Items?.length?"请选择作品，再生成改名预览。":"没有找到结果，可以修改标题或输入 TMDB ID 再试。";
-      } catch(error) { if(sequence===requestNumber)feedback.textContent=error.message; }
+      } catch(error) { if(sequence===requestNumber){feedback.textContent=error.name==='AbortError'?'已停止准备工作':error.message;onError(error);} }
       finally {busy=false;updateButtons();}
     };
     function renderRows(displayPlan=plan) {
@@ -232,7 +247,7 @@ const FileNaming = (() => {
       if(!displayPlan.rows.length)results.append(UI.el("p",{class:"empty"},"当前范围没有可处理的媒体文件或文件夹。"));
     }
     form.onsubmit=async e=>{
-      e.preventDefault();if(busy)return;
+      e.preventDefault();if(busy||externalBusy)return;
       const automatic=e.submitter===autoButton||!e.submitter&&mode.value==="auto";
       if(mode.value==="sequence"&&(!season.value||!title.value.trim())) {feedback.textContent="顺序编号需要填写作品名称和季号（特别篇填写 0）。";return;}
       busy=true;plan=null;chosen.clear();visibleRows=200;updateButtons();feedback.textContent=recursive.checked&&mode.value!=="sequence"?"正在扫描文件夹及全部子目录…":autoTMDB.checked?"正在自动匹配 TMDB 并检查名称…":"正在识别名称并检查冲突…";
@@ -241,12 +256,16 @@ const FileNaming = (() => {
       previewAbort=new AbortController();
       const stopProgress=progressMonitor(progress,sequence);
       try {
-        const data=await api(endpoint+"preview","POST",{path:scopePath,paths:scopePaths,mode:mode.value,kind:kind.value,title:title.value.trim(),year:year.value?Number(year.value):0,tmdb,autoTMDB:autoTMDB.checked,recursive:recursive.checked&&mode.value!=="sequence",folders:folders.checked,progress,season:season.value?Number(season.value):null,bare:bare.checked,template:template.value.trim(),pattern:pattern.value,replacement:replacement.value,start:Number(start.value),width:Number(width.value)},{signal:previewAbort.signal});
-        if(sequence!==requestNumber||!dialog.open)return;
+        await onBeforeRun();
+        const data=await api(endpoint+"preview","POST",{path:scopePath,paths:scopePaths,useScraperScopes,mode:mode.value,kind:kind.value,title:title.value.trim(),year:year.value?Number(year.value):0,tmdb,autoTMDB:autoTMDB.checked,recursive:recursive.checked&&mode.value!=="sequence",folders:folders.checked,progress,season:season.value?Number(season.value):null,bare:bare.checked,template:template.value.trim(),pattern:pattern.value,replacement:replacement.value,start:Number(start.value),width:Number(width.value)},{signal:previewAbort.signal});
+        if(sequence!==requestNumber||!alive())return;
         plan=data;data.rows.filter(row=>row.status==="ready").forEach(row=>chosen.add(row.id));
         renderRows();
         if(automatic&&chosen.size){stopProgress();await applyPlan(true);}
-        else feedback.textContent=automatic?"处理完成：已规范的项目保持原名，其余跳过原因见下方。":"预览已生成，检查新名称后执行。";
+        else {
+          feedback.textContent=automatic?"处理完成：已规范的项目保持原名，其余跳过原因见下方。":"预览已生成，检查新名称后执行。";
+          if(automatic){plan=null;await onComplete({renamed:0,scopeVersion:data.scopeVersion});}
+        }
       } catch(error) { if(sequence===requestNumber)feedback.textContent=error.message; }
       finally {stopProgress();previewAbort=null;busy=false;updateButtons();}
     };
@@ -257,6 +276,7 @@ const FileNaming = (() => {
       busy=true;applying=true;updateButtons();feedback.textContent="正在同步改名并迁移媒体记录…";
       const stopProgress=progressMonitor(selectedPlan.progress,requestNumber);
       try {
+        await onBeforeRun();
         const data=await api(endpoint+"apply","POST",{id:selectedPlan.id,rows:selected});
         plan=null;chosen.clear();
         feedback.textContent=`已改名 ${data.renamed} 项，包含关联文件共 ${data.files} 个。媒体库正在刷新。${data.journalWarning?"改名记录完成状态未能更新，准备记录仍可用于恢复。":""}`;
@@ -267,11 +287,14 @@ const FileNaming = (() => {
         } else results.replaceChildren(UI.el("p",{class:"empty"},"本批改名已完成。"));
         toast(`已改名 ${data.renamed} 项`);
         await refresh();
-      } catch(error) { feedback.textContent=error.message;plan=null;chosen.clear(); }
+        applying=false;updateButtons();
+        await onComplete(data);
+      } catch(error) { feedback.textContent=error.message;plan=null;chosen.clear();onError(error); }
       finally {stopProgress();busy=false;applying=false;updateButtons();}
     }
     applyButton.onclick=()=>{if(!busy)applyPlan();};
     modeChanged();
+    return {invalidate, setBusy(value){externalBusy=value;updateButtons();}, cancel(){if(applying)return false;previewAbort?.abort();return true;}, get applying(){return applying;}};
   }
-  return {open};
+  return {open:(path,paths=[],refresh=()=>{})=>mount(null,{path,paths,refresh}),mount};
 })();

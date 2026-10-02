@@ -28,6 +28,7 @@ type namingScope struct {
 func namingCollect(ctx context.Context, root *os.Root, base string, selected map[string]bool, request namingRequest, progress func(int, string)) (namingScope, error) {
 	scope := namingScope{Entries: map[string][]fs.DirEntry{}, Errors: map[string]string{}}
 	seen := map[string]bool{}
+	walked := map[string]bool{}
 	add := func(path string) error {
 		if !seen[path] {
 			seen[path] = true
@@ -44,6 +45,13 @@ func namingCollect(ctx context.Context, root *os.Root, base string, selected map
 			return err
 		}
 		info, err := fileCheck(root, path)
+		if err == nil {
+			allowed, descend := request.scopeAccess(path, info.IsDir())
+			if !allowed && (!info.IsDir() || !descend) {
+				return nil
+			}
+			include = include && allowed
+		}
 		if err != nil {
 			scope.Errors[path] = "源文件或目录不可访问，已跳过"
 			return add(path)
@@ -66,6 +74,10 @@ func namingCollect(ctx context.Context, root *os.Root, base string, selected map
 			scope.Errors[path] = "目录层级超过 128 层，已跳过这个分支"
 			return add(path)
 		}
+		if walked[path] {
+			return nil
+		}
+		walked[path] = true
 		entries, err := namingEntries(root, path)
 		if err != nil {
 			if errors.Is(err, errNamingDirectoryTooLarge) {
@@ -101,8 +113,20 @@ func namingCollect(ctx context.Context, root *os.Root, base string, selected map
 		}
 		return nil
 	}
-	if err := walk(base, false, 0); err != nil {
-		return scope, err
+	if request.UseScraperScopes {
+		for _, library := range request.ScopeRoots {
+			path, err := filepath.Rel(fileRoot(), library.Root)
+			if err != nil {
+				return scope, err
+			}
+			if err := walk(path, false, 0); err != nil {
+				return scope, err
+			}
+		}
+	} else {
+		if err := walk(base, false, 0); err != nil {
+			return scope, err
+		}
 	}
 	sort.SliceStable(scope.Files, func(i, j int) bool { return namingNatural(scope.Files[i], scope.Files[j]) })
 	return scope, nil

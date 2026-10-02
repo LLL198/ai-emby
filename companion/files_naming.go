@@ -29,25 +29,27 @@ type namingState struct {
 	progress   map[string]namingProgress
 }
 type namingRequest struct {
-	Path          string   `json:"path"`
-	Paths         []string `json:"paths"`
-	Mode          string   `json:"mode"`
-	Kind          string   `json:"kind"`
-	Title         string   `json:"title"`
-	Year          int      `json:"year"`
-	TMDB          string   `json:"tmdb"`
-	AutoTMDB      *bool    `json:"autoTMDB"`
-	Recursive     bool     `json:"recursive"`
-	Folders       bool     `json:"folders"`
-	Progress      string   `json:"progress"`
-	OriginalTitle string   `json:"-"`
-	Season        *int     `json:"season"`
-	Bare          bool     `json:"bare"`
-	Template      string   `json:"template"`
-	Pattern       string   `json:"pattern"`
-	Replacement   string   `json:"replacement"`
-	Start         int      `json:"start"`
-	Width         int      `json:"width"`
+	Path             string               `json:"path"`
+	Paths            []string             `json:"paths"`
+	Mode             string               `json:"mode"`
+	Kind             string               `json:"kind"`
+	Title            string               `json:"title"`
+	Year             int                  `json:"year"`
+	TMDB             string               `json:"tmdb"`
+	AutoTMDB         *bool                `json:"autoTMDB"`
+	Recursive        bool                 `json:"recursive"`
+	Folders          bool                 `json:"folders"`
+	Progress         string               `json:"progress"`
+	UseScraperScopes bool                 `json:"useScraperScopes"`
+	ScopeRoots       []namingLibraryScope `json:"-"`
+	OriginalTitle    string               `json:"-"`
+	Season           *int                 `json:"season"`
+	Bare             bool                 `json:"bare"`
+	Template         string               `json:"template"`
+	Pattern          string               `json:"pattern"`
+	Replacement      string               `json:"replacement"`
+	Start            int                  `json:"start"`
+	Width            int                  `json:"width"`
 }
 type namingMove struct {
 	Old  string      `json:"old"`
@@ -64,20 +66,25 @@ type namingRow struct {
 	Moves     []namingMove `json:"moves"`
 }
 type namingPlan struct {
-	ID          string      `json:"id"`
-	Rows        []namingRow `json:"rows"`
-	Created     time.Time   `json:"created"`
-	Owner       string      `json:"-"`
-	Root        string      `json:"root"`
-	Recursive   bool        `json:"recursive"`
-	Directories int         `json:"directories"`
-	Scanned     int         `json:"scanned"`
-	Progress    string      `json:"progress"`
+	ID           string      `json:"id"`
+	Rows         []namingRow `json:"rows"`
+	Created      time.Time   `json:"created"`
+	Owner        string      `json:"-"`
+	Root         string      `json:"root"`
+	Recursive    bool        `json:"recursive"`
+	Directories  int         `json:"directories"`
+	Scanned      int         `json:"scanned"`
+	Progress     string      `json:"progress"`
+	ScopeVersion string      `json:"scopeVersion,omitempty"`
 }
 
 func (a *App) namingAPI(w http.ResponseWriter, r *http.Request, user User) {
 	if r.URL.Path == "/admin/features/naming/progress" {
 		a.namingProgressAPI(w, r, user)
+		return
+	}
+	if r.URL.Path == "/admin/features/naming/refresh" {
+		a.namingRefresh(w, r)
 		return
 	}
 	if !featureMethod(w, r, http.MethodPost) {
@@ -174,6 +181,20 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 	if b.Progress == "" {
 		b.Progress = id()
 	}
+	scopeVersion := ""
+	if b.UseScraperScopes {
+		if b.Mode == "sequence" {
+			fail(w, 400, "顺序编号请在具体季目录操作")
+			return
+		}
+		b.Path, b.Paths, b.Recursive = "", nil, true
+		roots, version, scopeErr := a.namingScraperRoots()
+		if scopeErr != nil {
+			featureError(w, scopeErr)
+			return
+		}
+		b.ScopeRoots, scopeVersion = roots, version
+	}
 	var re *regexp.Regexp
 	if b.Mode == "regex" {
 		var err error
@@ -254,7 +275,7 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 		return
 	}
 	files := scope.Files
-	plan := &namingPlan{ID: id(), Owner: user.ID, Created: time.Now(), Rows: []namingRow{}, Root: dir, Recursive: b.Recursive, Directories: scope.Directories, Scanned: scope.Visited, Progress: b.Progress}
+	plan := &namingPlan{ID: id(), Owner: user.ID, Created: time.Now(), Rows: []namingRow{}, Root: dir, Recursive: b.Recursive, Directories: scope.Directories, Scanned: scope.Visited, Progress: b.Progress, ScopeVersion: scopeVersion}
 	protected := []string{}
 	if a.db != nil {
 		for _, library := range a.libraries() {
@@ -712,6 +733,13 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 		fail(w, 409, "预览已失效，请重新预览")
 		return
 	}
+	if plan.ScopeVersion != "" {
+		_, current, err := a.namingScraperRoots()
+		if err != nil || current != plan.ScopeVersion {
+			fail(w, 409, "目录选择已变化，请重新生成命名预览")
+			return
+		}
+	}
 	selected := map[string]bool{}
 	for _, key := range b.Rows {
 		if selected[key] {
@@ -794,6 +822,13 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 	}
 	if tx != nil {
 		defer tx.Rollback()
+	}
+	if plan.ScopeVersion != "" {
+		_, current, scopeErr := a.namingScraperRoots()
+		if scopeErr != nil || current != plan.ScopeVersion {
+			fail(w, 409, "目录选择已变化，请重新生成命名预览")
+			return
+		}
 	}
 	journal, err := a.namingJournal(plan.ID, moves, "prepared", "")
 	if err != nil {
@@ -898,7 +933,8 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 		}
 	}
 	a.namingProgressUpdate(plan.Progress, user.ID, "完成", len(moves), len(moves), "")
-	respond(w, M{"ok": true, "renamed": len(rows), "files": len(moves), "journal": journal, "journalWarning": journalErr != nil, "scanQueued": true, "destinations": destinations})
+	_, nextScopeVersion, _ := a.namingScraperRoots()
+	respond(w, M{"ok": true, "renamed": len(rows), "files": len(moves), "journal": journal, "journalWarning": journalErr != nil, "scanQueued": true, "destinations": destinations, "scopeVersion": nextScopeVersion})
 }
 
 func (a *App) namingJournal(key string, moves []namingMove, status, message string) (string, error) {
@@ -977,6 +1013,9 @@ func (a *App) namingCatalog(ctx context.Context, moves []namingMove) (*sql.Tx, e
 	}
 	records := []record{}
 	mapping := namingPathMapping(moves)
+	if err := namingRebaseScraperScopes(ctx, tx, mapping); err != nil {
+		return nil, err
+	}
 	ids := map[string]string{}
 	seen := map[string]bool{}
 	for _, m := range namingCatalogMoves(moves) {

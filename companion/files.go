@@ -166,7 +166,13 @@ func (a *App) filesChanged(paths []string) {
 		}
 		if changed {
 			key := lib["Id"].(string)
-			go a.scanLibrary(key)
+			if a.scanner.locks != nil {
+				if _, reserved := a.reserveConcurrentScan(key); reserved {
+					go a.runConcurrentScan(key, false, false, nil)
+				}
+			} else {
+				go a.scanLibrary(key)
+			}
 		}
 	}
 }

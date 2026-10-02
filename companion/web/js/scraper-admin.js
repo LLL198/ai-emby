@@ -87,11 +87,21 @@ async function loadScraperSettings() {
   const host = $('#scraper-settings');
   if (!host) return;
   let scanCancelled = false;
+  let namingBusy=false,namingUI=null;
   let config = { ManualEnabled: false, MonitorAutoRefresh: true, ChineseMetadata: true, OriginalPosters: false, ...result.Settings }, plan = null, busy = false, taskActive = !!(result.Running || result.Planning);
   const kinds = { Series: '电视剧 Series', Movie: '电影 Movie', Season: '季 Season', Episode: '集 Episode' };
   const contents = { Series: ['NFO', 'Poster', 'Backdrop', 'Logo', 'Banner'], Movie: ['NFO', 'Poster', 'Backdrop', 'Logo', 'Disc', 'Banner'], Season: ['NFO', 'Poster', 'Banner'], Episode: ['NFO', 'Still'] };
   const contentName = (kind, value) => ({ NFO: 'NFO元数据', Poster: '海报', Backdrop: '背景图', Logo: 'Logo', Still: '缩略图', Disc: '光盘图（如有）', Banner: '横幅图（如有）' })[value] || value;
-  host.innerHTML = `<div class="scraper-switch-line"><label class="tmdb-switch-row"><input class="switch" role="switch" name="enabled" type="checkbox" ${config.Enabled ? 'checked' : ''}><span>开启刮削</span></label><button type="button" class="secondary icon-button" data-settings title="刮削设置" aria-label="刮削设置">${fmIcon('gear')}</button><button type="button" class="secondary" data-concurrency>刮削并发</button></div><div class="scraper-switch-line scraper-monitor-line"><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor" type="checkbox" ${config.MonitorEnabled ? 'checked' : ''}><span>实时监控</span></label><button type="button" class="secondary icon-button" data-monitor-settings title="监控目录设置" aria-label="监控目录设置">${fmIcon('gear')}</button></div><div class="scraper-switch-line scraper-monitor-child"><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor-auto-refresh" type="checkbox" ${config.MonitorAutoRefresh ? 'checked' : ''}><span>自动刷新</span></label><span class="tmdb-help">与增强管理共用刷新队列；两处均开启时优先使用刮削管理，刷新本地元数据</span></div><div class="scraper-switch-line"><label class="tmdb-switch-row"><input class="switch" role="switch" name="manual" type="checkbox" ${config.ManualEnabled ? 'checked' : ''}><span>手动刮削</span></label><button type="button" class="secondary icon-button" data-manual-scopes title="手动刮削目录设置" aria-label="手动刮削目录设置">${fmIcon('gear')}</button></div><fieldset><legend>刮削器（至少选择一个）</legend><div data-scrapers></div><p class="tmdb-help">拖动 ☰ 调整优先级，也可使用方向键。排前面的优先刮削，后面的只补全缺失内容。Fanart.tv 提供图片，需配置 API Key；Bangumi 提供动画电影和剧集元数据、海报。</p></fieldset><p>仅处理当前媒体库索引中的媒体。扫描刮削任务只检查本地文件，得到计划后再开始刮削。实时监控独立于普通扫描；新目录稳定后等待媒体索引再自动刮削。写入 NFO、JPG/PNG；已有 WebP 保留并跳过。</p><p data-policy></p><div class="tmdb-actions"><button type="button" class="secondary" data-plan>扫描刮削任务</button><button type="button" class="secondary" data-start disabled>开始刮削</button><button type="button" class="secondary" data-cancel disabled>停止扫描 / 刮削</button></div><p data-result role="status" aria-live="polite">${result.Running ? '刮削运行中，可在实时日志查看；关闭刮削可取消。' : '尚未生成计划'}</p><details open data-live><summary>扫描 / 刮削实时信息</summary><p data-live-status role="status"></p><div data-live-entries></div></details><div data-details></div>`;
+  host.innerHTML = `
+    <div class="scraper-master"><div><span class="eyebrow">METADATA SERVICE</span><p>刮削服务</p></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="enabled" type="checkbox" ${config.Enabled?'checked':''}><span>启用刮削</span></label></div>
+    <div data-scraper-pane="manual">
+      <section class="setting-card"><div class="card-heading with-control"><div><span class="step-label">01 / SCOPE</span><h3>选择任务范围</h3></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="manual" type="checkbox" ${config.ManualEnabled?'checked':''}><span>手动刮削</span></label></div><div class="scope-controls"><div><span data-scope-summary>手动刮削目录</span><button type="button" class="secondary text-icon-button" data-manual-scopes>${fmIcon('folder')} 选择目录 / 磁盘</button></div><div><span>执行并发</span><button type="button" class="secondary" data-concurrency>刮削并发</button></div></div></section>
+      <section class="setting-card"><div class="card-heading"><span class="step-label">02 / PLAN & RUN</span><h3>预览并开始</h3></div><div class="scraper-operation"><label>任务操作<select data-operation><option value="scrape">仅刮削</option><option value="name">仅规范命名</option><option value="both">规范命名后刮削</option></select></label></div><p data-policy class="policy-note"></p><div data-scrape-actions class="tmdb-actions"><button type="button" class="secondary" data-plan>扫描任务</button><button type="button" data-start disabled>开始刮削 ↗</button></div><div data-naming hidden></div><div class="tmdb-actions"><button type="button" class="secondary" data-cancel disabled>停止任务</button></div><p data-result class="task-status" role="status" aria-live="polite">${result.Running?'刮削正在运行，下方显示实时记录。':'请先扫描生成计划。'}</p><div data-details></div></section>
+      <section class="setting-card"><details open data-live><summary>扫描与刮削记录</summary><p data-live-status role="status"></p><div data-live-entries></div></details></section>
+    </div>
+    <div data-scraper-pane="monitor"><section class="setting-card"><div class="card-heading with-control"><div><h3>实时监控</h3></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor" type="checkbox" ${config.MonitorEnabled?'checked':''}><span>启用监控</span></label></div><div class="scope-controls"><div><span data-monitor-summary>监控目录</span><button type="button" class="secondary text-icon-button" data-monitor-settings>${fmIcon('folder')} 选择监控目录</button></div></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor-auto-refresh" type="checkbox" ${config.MonitorAutoRefresh?'checked':''}><span>自动刷新本地元数据</span></label><p class="tmdb-help">与文件监听共用队列，均启用时由刮削接管。</p></section></div>
+    <div data-scraper-pane="settings"><section class="setting-card"><div class="card-heading"><h3>刮削器与优先级</h3></div><div data-scrapers></div><p class="tmdb-help">至少启用一个刮削器，按顺序补全缺失内容；Fanart.tv 需要 API Key。</p></section><section class="setting-card"><div class="card-heading"><h3>内容与写入策略</h3></div><button type="button" class="secondary text-icon-button" data-settings>${fmIcon('gear')} 配置刮削内容</button><p class="tmdb-help">已有 WebP 保留；保存设置后重新扫描生成计划。</p></section></div>`;
+  Panel.prepareScraper(host);
   const manual = host.querySelector('[name=manual]');
   manual.onchange = run(async () => {
     const next = { ...config, ManualEnabled: manual.checked };
@@ -157,23 +167,38 @@ async function loadScraperSettings() {
     });
   };
   const scan = host.querySelector('[data-plan]'), start = host.querySelector('[data-start]'), cancelButton = host.querySelector('[data-cancel]'), status = host.querySelector('[data-result]');
+  const operation=host.querySelector('[data-operation]');
   const controls = () => {
-    scan.disabled = busy || providerSaving || !config.Enabled || !config.ManualEnabled;
-    start.disabled = busy || providerSaving || !config.Enabled || !config.ManualEnabled || !plan || !(plan.Pending + plan.Overwrite);
-    cancelButton.disabled = !(busy || taskActive);
-    monitor.disabled = busy || providerSaving;
-    autoRefresh.disabled = busy || providerSaving;
-    manual.disabled = busy || providerSaving;
-    host.querySelector('[data-monitor-settings]').disabled = busy || providerSaving;
-    host.querySelector('[data-manual-scopes]').disabled = busy || providerSaving;
-    provider.querySelectorAll('input, button').forEach(el => { el.disabled = busy || providerSaving; });
-    enabled.disabled = providerSaving;
-    host.querySelector('[data-settings]').disabled = busy || providerSaving;
-    host.querySelector('[data-concurrency]').disabled = busy || providerSaving || taskActive;
+    const locked=busy||providerSaving||namingBusy;
+    scan.disabled = locked || taskActive || !config.Enabled || !config.ManualEnabled;
+    start.disabled = locked || taskActive || !config.Enabled || !config.ManualEnabled || !plan || !(plan.Pending + plan.Overwrite);
+    cancelButton.disabled = !(busy || taskActive || namingBusy) || !!namingUI?.applying;
+    monitor.disabled = locked;
+    autoRefresh.disabled = locked;
+    manual.disabled = locked;
+    operation.disabled=locked||taskActive;
+    host.querySelector('[data-monitor-settings]').disabled = locked;
+    host.querySelector('[data-manual-scopes]').disabled = locked||taskActive;
+    provider.querySelectorAll('input, button').forEach(el => { el.disabled = locked; });
+    enabled.disabled = locked;
+    host.querySelector('[data-settings]').disabled = locked;
+    host.querySelector('[data-concurrency]').disabled = locked || taskActive;
+    namingUI?.setBusy(busy||providerSaving||taskActive);
     host.querySelector('[data-concurrency]').textContent = `刮削并发：${config.Concurrency || 1}`;
+    host.querySelector('[data-scope-summary]').textContent = config.ManualScopes?.length ? `已设置 ${config.ManualScopes.length} 条目录选择规则` : '默认范围：全部媒体库目录';
+    host.querySelector('[data-monitor-summary]').textContent = `已选择 ${(config.MonitorScopes||[]).filter(x=>x.Enabled).length} 个监控目录`;
     host.querySelector('[data-policy]').textContent = `覆盖策略：${config.Overwrite ? '覆盖已有文件' : '跳过已有文件（默认）'}`;
   };
-  const invalidate = () => { plan = null; status.textContent = `设置已保存 · 刮削${config.Enabled ? '开启' : '关闭'} · 实时监控${config.MonitorEnabled ? '开启' : '关闭'} · 自动刷新${config.MonitorAutoRefresh ? '开启' : '关闭'} · 手动刮削${config.ManualEnabled ? '开启' : '关闭'}，请重新生成手动计划`; toast(status.textContent); host.querySelector('[data-details]').replaceChildren(); controls(); };
+  const invalidate = () => { plan = null; namingUI?.invalidate(); status.textContent = '设置已保存，请重新生成任务预览'; toast(status.textContent); host.querySelector('[data-details]').replaceChildren(); controls(); };
+  operation.onchange=()=>{
+    plan=null;namingUI?.invalidate();
+    host.querySelector('[data-naming]').hidden=operation.value==='scrape';
+    host.querySelector('[data-scrape-actions]').hidden=operation.value!=='scrape';
+    host.querySelector('[data-policy]').hidden=operation.value==='name';
+    host.querySelector('[data-details]').replaceChildren();
+    status.textContent=operation.value==='scrape'?'请先扫描生成计划。':operation.value==='both'?'使用上方目录范围，命名完成后自动刮削。':'使用上方目录范围进行规范命名。';
+    controls();
+  };
   enabled.onchange = run(async () => {
     const next = { ...config, Enabled: enabled.checked };
     try { await api('/admin/scraper', 'PUT', next); config = next; invalidate(); }
@@ -244,8 +269,8 @@ async function loadScraperSettings() {
     };
 
     const intro = monitorMode
-      ? '实时监控只选择当前媒体库父目录，不展开子目录。媒体库目录变化后这里同步变化。'
-      : '手动刮削可选择父目录或子目录。可使用搜索框快速查找已进入媒体库索引的目录。';
+      ? '仅支持媒体库父目录。'
+      : '';
 
     const toolbar = monitorMode
       ? `<div class="tmdb-actions"><button type="button" class="secondary" data-all>全选</button></div>`
@@ -253,7 +278,7 @@ async function loadScraperSettings() {
 
     fmDialog(
       monitorMode ? '实时监控目录' : '手动刮削目录',
-      `<p>${intro}</p>${toolbar}<div data-scope-tree></div>`,
+      `${intro ? `<p>${intro}</p>` : ''}${toolbar}<div data-scope-tree></div>`,
       async () => {
         if (monitorMode) {
           overrides = overrides.filter(item => item.Relative === '.');
@@ -321,14 +346,14 @@ async function loadScraperSettings() {
         row.innerHTML =
           `<div class="scraper-tree-line">` +
           `<input type="checkbox" aria-label="选择目录">` +
-          `<button type="button" class="secondary scraper-folder" aria-expanded="false">📁 <span></span></button>` +
+          `<button type="button" class="secondary scraper-folder" aria-expanded="false">${fmIcon("folder")}<span class="scraper-folder-label"></span></button>` +
           `</div><div data-children hidden></div>`;
 
         const input = row.querySelector('input');
         const expand = row.querySelector('button');
         const children = row.querySelector('[data-children]');
 
-        row.querySelector('span').textContent =
+        expand.querySelector('.scraper-folder-label').textContent =
           root ? `${node.Name} · ${node.Root}` : node.Name;
 
         visible.push({ node, input });
@@ -430,7 +455,7 @@ async function loadScraperSettings() {
   host.querySelector('[data-manual-scopes]').onclick = run(() => scopeDialog('manual'));
   renderProviders();
   host.querySelector('[data-concurrency]').onclick = () => {
-    fmDialog('刮削并发', `<label class="tmdb-field"><span>同时刮削的媒体数量</span><input name="concurrency" type="number" min="1" max="32" step="1" required value="${config.Concurrency || 1}"></label><p class="tmdb-help">可选 1–32，默认 1。保存后请重新扫描生成计划，对新任务生效。TMDB API 请求频率仍按 TMDB 设置控制。</p>`, async data => {
+    fmDialog('刮削并发', `<label class="tmdb-field"><span>同时刮削的媒体数量（1–32）</span><input name="concurrency" type="number" min="1" max="32" step="1" required value="${config.Concurrency || 1}"></label><p class="tmdb-help">保存后重新扫描；API 频率仍按 TMDB 设置。</p>`, async data => {
       const concurrency = Number(data.get('concurrency'));
       if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) throw Error('并发数必须是 1–32 的整数');
       const next = {...config, Concurrency: concurrency};
@@ -440,7 +465,7 @@ async function loadScraperSettings() {
     });
   };
   host.querySelector('[data-settings]').onclick = () => {
-    fmDialog('刮削设置', `<p>内容或覆盖策略保存后，请重新扫描生成计划。</p><div class="scraper-settings-grid">${Object.entries(kinds).map(([kind, title]) => `<fieldset class="scraper-category"><legend class="scraper-category-title">${title}</legend><label class="toggle-label scraper-category-toggle">开启本分类<input class="switch" role="switch" type="checkbox" name="${kind}-enabled" ${config.Categories[kind].Enabled ? 'checked' : ''}></label><div data-category="${kind}">${contents[kind].map(value => `<label class="row"><input type="checkbox" name="${kind}-${value}" ${config.Categories[kind].Content.includes(value) ? 'checked' : ''}>${contentName(kind, value)}</label>`).join('')}</div></fieldset>`).join('')}</div><p class="tmdb-help">勾选 Fanart.tv 后可刮削光盘图及横幅图；无可用图片时保留已有文件。</p><label class="tmdb-field"><span>Fanart.tv API Key</span><input type="password" name="fanart-api-key" autocomplete="off" value="${esc(config.FanartAPIKey || '')}"></label><div class="scraper-settings-options"><label class="tmdb-field"><span>覆盖策略</span><select name="overwrite"><option value="false" ${!config.Overwrite ? 'selected' : ''}>跳过已有文件</option><option value="true" ${config.Overwrite ? 'selected' : ''}>覆盖已有文件</option></select></label><div><label class="tmdb-switch-row"><input class="switch" role="switch" type="checkbox" name="chinese-metadata" ${config.ChineseMetadata ? 'checked' : ''}><span>刮削简体中文</span></label><p class="tmdb-help">默认开启；中文元数据不可用时自动回退影片原语言。</p></div><div><label class="tmdb-switch-row"><input class="switch" role="switch" type="checkbox" name="chinese-posters" ${!config.OriginalPosters ? 'checked' : ''}><span>刮削中文海报</span></label><p class="tmdb-help">默认开启；中文海报不可用时自动回退影片原语言海报。</p></div></div>`, async data => {
+    fmDialog('刮削设置', `<p>保存后重新扫描生成计划。</p><div class="scraper-settings-grid">${Object.entries(kinds).map(([kind, title]) => `<fieldset class="scraper-category"><legend class="scraper-category-title">${title}</legend><label class="toggle-label scraper-category-toggle">开启本分类<input class="switch" role="switch" type="checkbox" name="${kind}-enabled" ${config.Categories[kind].Enabled ? 'checked' : ''}></label><div data-category="${kind}">${contents[kind].map(value => `<label class="row"><input type="checkbox" name="${kind}-${value}" ${config.Categories[kind].Content.includes(value) ? 'checked' : ''}>${contentName(kind, value)}</label>`).join('')}</div></fieldset>`).join('')}</div><p class="tmdb-help">图片不可用时保留已有文件。</p><label class="tmdb-field"><span>Fanart.tv API Key</span><input type="password" name="fanart-api-key" autocomplete="off" value="${esc(config.FanartAPIKey || '')}"></label><div class="scraper-settings-options"><label class="tmdb-field"><span>覆盖策略</span><select name="overwrite"><option value="false" ${!config.Overwrite ? 'selected' : ''}>跳过已有文件</option><option value="true" ${config.Overwrite ? 'selected' : ''}>覆盖已有文件</option></select></label><div><label class="tmdb-switch-row"><input class="switch" role="switch" type="checkbox" name="chinese-metadata" ${config.ChineseMetadata ? 'checked' : ''}><span>刮削简体中文</span></label></div><div><label class="tmdb-switch-row"><input class="switch" role="switch" type="checkbox" name="chinese-posters" ${!config.OriginalPosters ? 'checked' : ''}><span>刮削中文海报</span></label><p class="tmdb-help">中文元数据或海报缺失时回退原语言。</p></div></div>`, async data => {
       const next = { ...config, FanartAPIKey: data.get('fanart-api-key').trim(), Overwrite: data.get('overwrite') === 'true', ChineseMetadata: data.has('chinese-metadata'), OriginalPosters: !data.has('chinese-posters'), Categories: {} };
       for (const kind of Object.keys(kinds)) next.Categories[kind] = { Enabled: data.has(`${kind}-enabled`), Content: contents[kind].filter(value => data.has(`${kind}-${value}`)) };
       await api('/admin/scraper', 'PUT', next); config = next; invalidate();
@@ -460,7 +485,13 @@ async function loadScraperSettings() {
     } catch (e) { if (!scanCancelled) { status.textContent = '任务扫描未完成：' + e.message; } }
     finally { busy = false; taskActive = false; controls(); }
   });
-  cancelButton.onclick = run(async () => { if (!busy && !taskActive) return; await api('/admin/scraper/cancel', 'POST', {}); scanCancelled = true; taskActive = false; plan = null; status.textContent = '已请求停止扫描或刮削任务'; controls(); });
+  cancelButton.onclick = run(async () => {
+    if (!busy && !taskActive && !namingBusy) return;
+    if(namingUI?.applying)return;
+    scanCancelled=true;namingUI?.cancel();
+    if(taskActive)await api('/admin/scraper/cancel', 'POST', {});
+    taskActive=false;plan=null;status.textContent='已停止后续处理，已完成的改名保留';controls();
+  });
   start.onclick = run(async () => {
     if (!plan) return;
     busy = true; controls();
@@ -468,10 +499,53 @@ async function loadScraperSettings() {
     catch (e) { plan = null; status.textContent = '未启动，请重新扫描刮削任务'; throw e; }
     finally { busy = false; controls(); }
   });
+  const activePage=()=>host.isConnected&&view==='admin'&&!host.closest('.admin-section')?.hidden&&!host.querySelector('[data-scraper-pane="manual"]').hidden;
+  namingUI=FileNaming.mount(host.querySelector('[data-naming]'),{
+    useScraperScopes:true,
+    alive:activePage,
+    onError:error=>{if(!scanCancelled)status.textContent='任务未继续：'+error.message;},
+    label:()=>operation.value==='both'?'命名并刮削':'自动命名',
+    applyLabel:()=>operation.value==='both'?'改名并刮削':'执行改名',
+    onBusy:value=>{namingBusy=value;controls();},
+    onBeforeRun:async()=>{
+      const state=await api('/admin/scraper');
+      if(state.Running||state.Planning||state.Settings.MonitorEnabled)throw Error('请先结束刮削任务并关闭实时刮削监控');
+      if(operation.value==='both'&&(!state.Settings.Enabled||!state.Settings.ManualEnabled))throw Error('请先开启刮削服务和手动刮削');
+      config={...config,...state.Settings};scanCancelled=false;
+    },
+    onComplete:async data=>{
+      const state=await api('/admin/scraper');config={...config,...state.Settings};controls();
+      if(operation.value!=='both')return;
+      const continuing=()=>!scanCancelled&&activePage();
+      if(!continuing())return;
+      status.textContent='命名已完成，正在刷新媒体库…';
+      const refresh=await api('/admin/features/naming/refresh','POST',{scopeVersion:data.scopeVersion});
+      const ids=new Set(refresh.Libraries);
+      while(continuing()){
+        const live=await api('/admin/scan/status');
+        if(!live.Libraries.some(lib=>ids.has(lib.Id)))break;
+        await new Promise(resolve=>setTimeout(resolve,1000));
+      }
+      if(!continuing())return;
+      const libraries=await api('/admin/libraries');
+      const failed=libraries.find(lib=>ids.has(lib.Id)&&(lib.Error||lib.Status!=='idle'));
+      if(failed)throw Error('命名已完成，媒体库刷新未完成：'+(failed.Error||failed.Name));
+      await api('/admin/features/naming/refresh','POST',{scopeVersion:refresh.scopeVersion,checkOnly:true});
+      if(!continuing())return;
+      status.textContent='媒体库已刷新，正在生成刮削计划…';
+      taskActive=true;controls();
+      try { plan=await ScraperManual.plan({alive:continuing}); }
+      finally { taskActive=false;controls(); }
+      if(!continuing()){plan=null;return;}
+      if(!(plan.Pending+plan.Overwrite)){plan=null;status.textContent='命名完成，当前范围没有待刮削内容。';return;}
+      await ScraperManual.start(plan);taskActive=true;plan=null;
+      status.textContent='命名完成，刮削已开始。';controls();
+    }
+  });
   const live = host.querySelector('[data-live]');
   let lastTaskStateCheck = 0;
   const poll = async () => {
-    if (!live.isConnected) return;
+    if (!live.isConnected || view!=='admin' || host.closest('.admin-section')?.hidden) return;
     try {
       const entries = await ScraperManual.logs();
       if (taskActive && Date.now() - lastTaskStateCheck > 2500) {
@@ -488,7 +562,7 @@ async function loadScraperSettings() {
     } catch (e) {
       if (live.isConnected) live.querySelector('[data-live-status]').textContent = '日志读取失败：' + e.message + '，正在重试';
     } finally {
-      if (live.isConnected) setTimeout(poll, 1000);
+      if (live.isConnected && view==='admin' && !host.closest('.admin-section')?.hidden) setTimeout(poll, 1000);
     }
   };
   poll();
