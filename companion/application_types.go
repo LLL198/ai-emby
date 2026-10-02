@@ -191,13 +191,15 @@ type scraperObject struct {
 }
 
 type scraperPlan struct {
-	ID        string
-	Config    scraperConfig
-	Objects   []scraperObject
-	Pending   int
-	Skipped   int
-	Overwrite int
-	Disabled  int
+	ID            string
+	Config        scraperConfig
+	Objects       []scraperObject
+	Pending       int
+	Skipped       int
+	Overwrite     int
+	Disabled      int
+	RetrySelected int `json:",omitempty"`
+	RetrySkipped  int `json:",omitempty"`
 }
 
 type scraperPoster struct {
@@ -505,6 +507,7 @@ type scored struct {
 type scraperConfig struct {
 	fileScope          *scraperFileScope
 	itemID             string
+	issueIDs           []string
 	manualRecognition  *MediaRecognition
 	taskID             string
 	Enabled            bool

@@ -113,6 +113,55 @@ func (a *App) scraperStoreIssue(ctx context.Context, object scraperObject, outco
 	}
 }
 
+func (a *App) scraperIssueItems(ctx context.Context, ids []string) ([]Item, int, error) {
+	rows, err := a.db.DB.QueryContext(ctx, "SELECT id,path,kind,item_id FROM feature_media_issues WHERE source='scraper' AND id=ANY($1)", pq.Array(ids))
+	if err != nil {
+		return nil, 0, errors.New("读取待处理项目失败")
+	}
+	issues := make(map[string]mediaIssue, len(ids))
+	for rows.Next() {
+		var issue mediaIssue
+		if err := rows.Scan(&issue.ID, &issue.Path, &issue.Kind, &issue.ItemID); err != nil {
+			rows.Close()
+			return nil, 0, errors.New("读取待处理项目失败")
+		}
+		issues[issue.ID] = issue
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, 0, errors.New("读取待处理项目失败")
+	}
+	items := make([]Item, 0, len(issues))
+	seen := make(map[string]bool, len(issues))
+	skipped := 0
+	for _, issueID := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+		issue, exists := issues[issueID]
+		if !exists || issue.ItemID == "" || !filepath.IsLocal(issue.Path) {
+			skipped++
+			continue
+		}
+		item, err := readItem(a.db.QueryRowContext(ctx, "SELECT "+cols+" FROM items WHERE id=$1", issue.ItemID))
+		if errors.Is(err, sql.ErrNoRows) {
+			skipped++
+			continue
+		}
+		if err != nil {
+			return nil, 0, errors.New("读取媒体索引失败")
+		}
+		if item.Kind != issue.Kind || item.Path != filepath.Join(fileRoot(), issue.Path) || len(scraperCategoryContents[item.Kind]) == 0 || seen[item.ID] {
+			skipped++
+			continue
+		}
+		seen[item.ID] = true
+		items = append(items, item)
+	}
+	return items, skipped, nil
+}
+
 func namingRebaseIssues(ctx context.Context, tx *sql.Tx, moves []namingMove, mapping namingPathMap) error {
 	paths, dirs := []string{}, []string{}
 	for _, move := range namingCatalogMoves(moves) {

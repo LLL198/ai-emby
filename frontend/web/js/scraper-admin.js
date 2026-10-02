@@ -1,10 +1,10 @@
 // Shared manual planning/start/polling used by settings and the locked file dialog.
 const ScraperManual = {
-  async plan({ file, root, itemID, manualRecognition, alive = () => true, onTask = () => {} } = {}) {
+  async plan({ file, root, itemID, issueIDs, manualRecognition, alive = () => true, onTask = () => {} } = {}) {
     const query = new URLSearchParams({async: 'true'});
     if (file !== undefined) query.set('file', file);
     if (root !== undefined) query.set('root', root);
-    const response = await api('/admin/scraper/plan?' + query, 'POST', {itemID, manualRecognition});
+    const response = await api('/admin/scraper/plan?' + query, 'POST', {itemID, issueIDs, manualRecognition});
     onTask(response.TaskID || response.ID);
     if (response.ID) return response;
     const deadline = Infinity           ;
@@ -21,7 +21,13 @@ const ScraperManual = {
   },
   start(plan) { return api('/admin/scraper/start', 'POST', {ID: plan.ID}); },
   logs(taskID) {
-    return api('/admin/logs?category=scraper').then(data => (data.Entries || []).filter(x => x.Category === 'scraper' && (!taskID || x.TaskID === taskID)).slice(0, 100));
+    return api('/admin/logs?category=scraper').then(data => {
+      const entries = (data.Entries || []).filter(x => x.Category === 'scraper' && (!taskID || x.TaskID === taskID));
+      const recent = entries.slice(0, 100);
+      const task = taskID && entries.find(x => x.ItemID === taskID);
+      if (task && !recent.includes(task)) recent.unshift(task);
+      return recent;
+    });
   }
 };
 async function openPosterScraper(itemID) {
@@ -33,10 +39,11 @@ async function openPosterScraper(itemID) {
     tmdb:item.ProviderIds?.Tmdb || ''
   }, true);
 }
-async function openFileScraper(item, poster = false) {
+async function openFileScraper(item, poster = false, onComplete = () => {}) {
   const content = UI.el('div', {class: 'file-scraper-content'});
-  content.innerHTML = `<p>仅刮削：${esc(item.name)}${poster ? '' : '（' + esc(item.path) + '）'}</p>${poster ? `<label>片名<input name="title" maxlength="256" required value="${esc(item.name)}"></label><label>年份<input name="year" type="number" min="0" max="9999" value="${esc(item.year)}"></label><label>TMDB ID<input name="tmdb" inputmode="numeric" pattern="[0-9]*" value="${esc(item.tmdb)}"></label>` : ''}<p>复用刮削管理的内容与覆盖设置；关闭窗口不会取消任务。</p><div class="tmdb-actions"><button type="button" data-plan>扫描刮削任务</button><button type="button" data-start disabled>开始刮削</button></div><p role="status" data-status>扫描计划后开始刮削</p><div data-logs aria-live="polite"></div>`;
-  const dialog = UI.Modal('刮削', content);
+  const retry = Array.isArray(item.issueIDs);
+  content.innerHTML = `<p>${retry ? `重新刮削已选 ${item.issueIDs.length} 个项目` : `仅刮削：${esc(item.name)}${poster ? '' : '（' + esc(item.path) + '）'}`}</p>${poster ? `<label>片名<input name="title" maxlength="256" required value="${esc(item.name)}"></label><label>年份<input name="year" type="number" min="0" max="9999" value="${esc(item.year)}"></label><label>TMDB ID<input name="tmdb" inputmode="numeric" pattern="[0-9]*" value="${esc(item.tmdb)}"></label>` : ''}<p>使用当前刮削内容、并发和覆盖设置；关闭窗口不会取消任务。</p><div class="tmdb-actions"><button type="button" data-plan>扫描刮削任务</button><button type="button" data-start disabled>开始刮削</button></div><p role="status" data-status>扫描计划后开始刮削</p><div data-logs aria-live="polite"></div>`;
+  const dialog = UI.Modal(retry ? '重新刮削' : '刮削', content);
   dialog.classList.add('file-scraper-dialog');
   const scan = content.querySelector('[data-plan]'), start = content.querySelector('[data-start]'), status = content.querySelector('[data-status]');
   let plan = null, taskID = '', timer, busy = false, started = false;
@@ -50,7 +57,7 @@ async function openFileScraper(item, poster = false) {
       const task = entries.find(x => x.ItemID === taskID);
       if (started && task) {
         status.textContent = '刮削：' + (logStates[task.State] || task.State);
-        if (['complete', 'error'].includes(task.State)) { started = false; controls(); }
+        if (['complete', 'error', 'cancelled'].includes(task.State)) { started = false; controls(); await onComplete(); }
       }
     } catch (e) { if (dialog.open) status.textContent = '日志读取失败：' + e.message + '，正在重试'; }
     finally { if (dialog.open) timer = setTimeout(poll, 1000); }
@@ -67,10 +74,10 @@ async function openFileScraper(item, poster = false) {
       } : undefined;
       if (poster && (!manualRecognition.Title || !/^[0-9]*$/.test(manualRecognition.TMDBID))) throw Error('请填写片名和有效 TMDB ID');
       plan = await ScraperManual.plan({
-        ...(poster ? {itemID:item.id, manualRecognition} : {file:item.path, root:item.root}),
+        ...(retry ? {issueIDs:item.issueIDs} : poster ? {itemID:item.id, manualRecognition} : {file:item.path, root:item.root}),
         alive:()=>dialog.open, onTask:id=>{taskID=id; poll();}
       });
-      if (dialog.open) status.textContent = `媒体 ${plan.TotalObjects ?? plan.Objects.length} · 待刮削 ${plan.Pending} · 覆盖 ${plan.Overwrite} · 跳过 ${plan.Skipped}`;
+      if (dialog.open) status.textContent = `媒体 ${plan.TotalObjects ?? plan.Objects.length} · 待刮削 ${plan.Pending} · 覆盖 ${plan.Overwrite} · 跳过 ${plan.Skipped}${plan.Disabled ? ` · 分类未启用 ${plan.Disabled}` : ''}${plan.FailedObjects ? ` · 路径不可用 ${plan.FailedObjects}` : ''}${plan.RetrySkipped ? ` · 已处理或媒体变更 ${plan.RetrySkipped}` : ''}`;
     } catch (e) { if (dialog.open) status.textContent = e.message; }
     finally { busy = false; controls(); }
   });
@@ -81,6 +88,8 @@ async function openFileScraper(item, poster = false) {
     catch (e) { plan = null; status.textContent = '启动失败：' + e.message; }
     finally { busy = false; controls(); }
   });
+  if (retry) scan.click();
+  return dialog;
 }
 
 async function loadScraperSettings() {
@@ -591,9 +600,10 @@ const ScraperIssues = (()=>{
     const all=UI.el('input',{type:'checkbox','aria-label':'全选本页待处理项目'});
     const selectionCount=UI.el('span',{class:'media-issues-selected',role:'status','aria-live':'polite'});
     const clear=UI.el('button',{type:'button',class:'secondary'},'取消选择');
+    const batchRetry=UI.el('button',{type:'button'},'批量重新刮削');
     const batchIgnore=UI.el('button',{type:'button',class:'secondary'},'批量忽略');
     const batchRestore=UI.el('button',{type:'button',class:'secondary'},'恢复待处理');
-    const selection=UI.el('div',{class:'media-issues-selection'},[UI.el('label',{class:'media-issues-select-all'},[all,UI.el('span',{},'全选本页')]),selectionCount,clear,batchIgnore,batchRestore]);
+    const selection=UI.el('div',{class:'media-issues-selection'},[UI.el('label',{class:'media-issues-select-all'},[all,UI.el('span',{},'全选本页')]),selectionCount,batchRetry,clear,batchIgnore,batchRestore]);
     host.replaceChildren(filters,summary,selection,list,pagination);
     const alive=()=>host.isConnected&&view==='admin'&&!host.closest('.admin-section')?.hidden;
     const visible=()=>alive()&&!host.closest('[data-scraper-pane]')?.hidden;
@@ -602,7 +612,9 @@ const ScraperIssues = (()=>{
       all.checked=current.length>0&&chosen.size===current.length;
       all.indeterminate=chosen.size>0&&chosen.size<current.length;
       all.disabled=locked||!current.length;
-      selectionCount.textContent=`已选 ${chosen.size} 项`;
+      const retryCount=current.filter(issue=>chosen.has(issue.id)&&issue.source==='scraper').length;
+      selectionCount.textContent=`已选 ${chosen.size} 项${chosen.size ? ` · 可重刮 ${retryCount} 项` : ''}`;
+      batchRetry.disabled=locked||!retryCount;
       clear.disabled=locked||!chosen.size;
       batchIgnore.disabled=locked||!current.some(issue=>chosen.has(issue.id)&&!issue.ignored);
       batchRestore.disabled=locked||!current.some(issue=>chosen.has(issue.id)&&issue.ignored);
@@ -615,6 +627,11 @@ const ScraperIssues = (()=>{
     function resetSelection(){sequence++;controller?.abort();loading=false;chosen.clear();current=[];updateSelection();}
     all.onchange=()=>{if(all.checked)current.forEach(issue=>chosen.add(issue.id));else chosen.clear();updateSelection();};
     clear.onclick=()=>{chosen.clear();updateSelection();};
+    batchRetry.onclick=run(()=>{
+      const issueIDs=current.filter(issue=>chosen.has(issue.id)&&issue.source==='scraper').map(issue=>issue.id);
+      if(busy||loading||!issueIDs.length)return;
+      return openFileScraper({issueIDs},false,()=>load(true));
+    });
     async function setIgnored(ids,ignored){
       if(busy||loading||!ids.length)return;
       busy=true;controller?.abort();sequence++;updateSelection();
@@ -648,7 +665,7 @@ const ScraperIssues = (()=>{
           });
         }},'修正命名');
         actions.append(fix,open);
-        if(issue.source==='scraper')actions.append(UI.el('button',{type:'button',class:'secondary',onclick:()=>openFileScraper({path:'/'+issue.path,name})},'重试刮削'));
+        if(issue.source==='scraper')actions.append(UI.el('button',{type:'button',class:'secondary',onclick:run(()=>openFileScraper({issueIDs:[issue.id]},false,()=>load(true)))},'重试刮削'));
         const ignore=UI.el('button',{type:'button',class:'secondary',onclick:run(()=>setIgnored([issue.id],!issue.ignored))},issue.ignored?'恢复待处理':'忽略');
         actions.append(ignore);
         const badge=UI.el('span',{class:'media-issue-badge media-issue-badge--'+issue.status},issue.ignored?'已忽略':statusNames[issue.status]||issue.status);

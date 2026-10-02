@@ -143,11 +143,35 @@ func (a *App) scraperAdmin(w http.ResponseWriter, r *http.Request, path string) 
 		var request struct {
 			ItemID            string
 			ManualRecognition *MediaRecognition
+			IssueIDs          []string
 		}
 		if !body(w, r, &request) {
 			return
 		}
 		query := r.URL.Query()
+		if request.IssueIDs != nil {
+			if len(request.IssueIDs) == 0 || len(request.IssueIDs) > 100 {
+				fail(w, http.StatusBadRequest, "请选择1–100个待处理项目")
+				return
+			}
+			if request.ItemID != "" || request.ManualRecognition != nil || query.Has("file") || query.Has("root") {
+				fail(w, http.StatusBadRequest, "批量重刮不能同时指定文件或手动识别")
+				return
+			}
+			unique := make([]string, 0, len(request.IssueIDs))
+			seen := make(map[string]bool, len(request.IssueIDs))
+			for _, issueID := range request.IssueIDs {
+				if len(issueID) != 32 || strings.Trim(issueID, "0123456789abcdef") != "" {
+					fail(w, http.StatusBadRequest, "无效待处理项目")
+					return
+				}
+				if !seen[issueID] {
+					seen[issueID] = true
+					unique = append(unique, issueID)
+				}
+			}
+			request.IssueIDs = unique
+		}
 		var scope *scraperFileScope
 		if request.ItemID != "" {
 			if query.Has("file") {
@@ -194,6 +218,7 @@ func (a *App) scraperAdmin(w http.ResponseWriter, r *http.Request, path string) 
 			return
 		}
 		config.fileScope, config.itemID, config.manualRecognition, config.taskID = scope, request.ItemID, request.ManualRecognition, id()
+		config.issueIDs = request.IssueIDs
 		a.scraper.taskID.Store(&config.taskID)
 		a.scraper.plan, a.scraper.planError, a.scraper.planning = nil, "", true
 		parent := r.Context()
@@ -624,6 +649,20 @@ func (a *App) buildScraperPlan(ctx context.Context, config scraperConfig) (plan 
 	activityID := a.newActivity("scraper", "", "扫描刮削任务 · "+config.Scraper)
 	defer func() { a.finishActivity(activityID, err) }()
 	a.changeActivity(activityID, func(entry *activityEntry) { entry.State = "counting" })
+	if len(config.issueIDs) > 0 {
+		items, skipped, err := a.scraperIssueItems(ctx, config.issueIDs)
+		if err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			return nil, errors.New("所选项目已处理、媒体已变更或尚未加入媒体库，请刷新待处理列表并检查索引")
+		}
+		plan, err := a.buildScraperItems(ctx, config, items, activityID)
+		if err == nil {
+			plan.RetrySelected, plan.RetrySkipped = len(config.issueIDs), skipped
+		}
+		return plan, err
+	}
 
 	query := "SELECT id,lib,parent,name,kind,path,url,overview,poster,year,season,episode,mtime,size,added_at,premiere_date,sort_name,random_key FROM items WHERE kind IN ('Movie','Series','Season','Episode')"
 	var args []any
@@ -699,7 +738,7 @@ func (a *App) buildScraperItems(ctx context.Context, config scraperConfig, items
 			directory = filepath.Dir(item.Path)
 		}
 		relative, relativeErr := filepath.Rel(libraryRoot, directory)
-		if rootFound && relativeErr == nil && config.fileScope == nil &&
+		if rootFound && relativeErr == nil && config.fileScope == nil && len(config.issueIDs) == 0 &&
 			!scraperScopeEnabled(config.ManualScopes, item.Lib, libraryRoot, relative, true) {
 			if directory != lastDirectory {
 				a.changeActivity(activityID, func(entry *activityEntry) {
