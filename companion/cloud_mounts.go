@@ -119,7 +119,7 @@ func (a *App) cloudAdmin(w http.ResponseWriter, r *http.Request) {
 		}
 		var network featureNetworkSettings
 		a.featureSetting("network", &network)
-		respond(w, M{"Mounts": mounts, "Drivers": cloudDrivers, "PublicURL": network.PublicURL, "EngineReady": engineErr == nil, "Tasks": a.cloudTasks()})
+		respond(w, M{"Mounts": mounts, "Drivers": cloudDrivers, "PublicURL": network.PublicURL, "OutputRoot": fileRoot(), "EngineReady": engineErr == nil, "Tasks": a.cloudTasks()})
 	case "/admin/features/cloud/fields":
 		if !featureMethod(w, r, "GET") {
 			return

@@ -123,15 +123,116 @@ const CloudMounts = (() => {
       if(!still()||ticket!==browseSerial)return;target.innerHTML=`<div class="cloud-notice" role="alert">${esc(error.message)}<button type="button" class="secondary" data-retry>重试</button></div>`;target.querySelector('[data-retry]').onclick=run(()=>browse(p,n));
     }
   }
+  function directoryField(name,title,value) {
+    const id='cloud-generate-'+name.toLowerCase();
+    return `<section class="cloud-directory-card"><div class="cloud-directory-label"><label for="${id}">${esc(title)}</label><button type="button" class="cloud-path-edit" data-path-edit="${name}">输入路径</button></div><div class="cloud-directory-control"><span aria-hidden="true">${icon('folder')}</span><input id="${id}" name="${name}" value="${esc(value)}" type="text" readonly required autocomplete="off" data-path-input="${name}" aria-expanded="false" aria-controls="cloud-generate-picker"><button type="button" class="secondary" data-pick-directory="${name}" aria-expanded="false" aria-controls="cloud-generate-picker">浏览选择</button></div></section>`;
+  }
+  function bindDirectoryPicker(dialog,mount,outputRoot) {
+    const picker=dialog.querySelector('[data-directory-picker]');
+    const form=dialog.querySelector('form'),submit=form.querySelector('[type="submit"]');
+    const normalize=(p,local=false)=>{
+      p=String(p||'');if(local)p=p.replaceAll('\\','/');
+      const clean=p.split('/').filter(Boolean).join('/');
+      return local&&/^[A-Za-z]:(\/|$)/.test(p)?(clean.length===2?clean+'/':clean):('/'+clean);
+    };
+    outputRoot=normalize(outputRoot,true);
+    const insideOutput=p=>outputRoot==='/'||p===outputRoot||p.startsWith(outputRoot.replace(/\/$/,'')+'/');
+    let request=0,controller,state=null;
+    const inputFor=kind=>dialog.querySelector(`[name="${kind}"]`);
+    const isCurrent=ticket=>ticket===request&&dialog.open&&picker.isConnected;
+    function close() {
+      request++;controller?.abort();picker.hidden=true;
+      submit.disabled=form.getAttribute('aria-busy')==='true';
+      dialog.querySelectorAll('[data-pick-directory],[data-path-input]').forEach(button=>button.setAttribute('aria-expanded','false'));
+    }
+    function select(p) {
+      const input=inputFor(state.kind);input.value=p;input.readOnly=true;
+      dialog.querySelector(`[data-path-edit="${state.kind}"]`).textContent='输入路径';
+      close();dialog.querySelector(`[data-pick-directory="${state.kind}"]`).focus();
+    }
+    function draw() {
+      const local=state.kind==='Output',root=local?outputRoot:'/',parts=state.path.split('/').filter(Boolean);
+      const crumbs=[`<button type="button" data-crumb="${esc(root)}">${esc(local?'媒体目录':mount.Name)}</button>`];
+      parts.forEach((name,i)=>{const p=normalize((local&&/^[A-Za-z]:/.test(state.path)?'':'/')+parts.slice(0,i+1).join('/'),local);if(local&&(p===root||!insideOutput(p)))return;crumbs.push(`<span aria-hidden="true">/</span><button type="button" data-crumb="${esc(p)}">${esc(name)}</button>`)});
+      picker.setAttribute('aria-label',local?'选择本地输出目录':'选择网盘源目录');
+      picker.innerHTML=`<div class="cloud-picker-heading"><h3>${local?'选择本地输出目录':'选择网盘源目录'}</h3><button type="button" class="secondary" data-picker-close>收起</button></div><nav class="cloud-picker-crumbs" aria-label="${local?'本地目录':'网盘目录'}">${crumbs.join('')}</nav><div class="cloud-picker-toolbar"><button type="button" class="secondary" data-picker-up ${state.path===root?'disabled':''}>上一级</button><label class="cloud-picker-search"><input type="search" data-picker-search placeholder="筛选本页文件夹" aria-label="筛选本页文件夹" autocomplete="off"></label><button type="button" class="secondary" data-picker-refresh>刷新</button></div><div class="cloud-picker-list" data-picker-list aria-busy="${state.loading}">${state.loading?'<p class="cloud-picker-empty" role="status">正在读取文件夹…</p>':state.error?`<div class="cloud-picker-empty" role="alert">${esc(state.error)}<button type="button" class="secondary" data-picker-retry>重试</button></div>`:state.items.length?state.items.map((item,i)=>`<button type="button" class="cloud-picker-folder" data-folder="${i}">${icon('folder')}<span>${esc(item.name)}</span><span aria-hidden="true">›</span></button>`).join(''):'<p class="cloud-picker-empty">本页没有子文件夹</p>'}</div><p class="cloud-picker-empty" data-filter-empty hidden>没有匹配的文件夹</p><div class="cloud-picker-pagination"><span>${state.loading?'':`第 ${state.page} 页 · 本页 ${state.items.length} 个文件夹`}</span><div><button type="button" class="secondary" data-picker-prev ${state.loading||state.error||state.page===1?'disabled':''}>上一页</button><button type="button" class="secondary" data-picker-next ${state.loading||state.error||!state.next?'disabled':''}>下一页</button></div></div>${local?`<details class="cloud-picker-new"><summary>设置新的输出子文件夹</summary><div><input type="text" data-new-directory placeholder="文件夹名称，例如 电影" aria-label="新输出子文件夹名称" autocomplete="off"><button type="button" class="secondary" data-use-new ${state.loading||state.error?'disabled':''}>使用此子目录</button></div><p>开始生成时自动创建。</p></details>`:''}<footer class="cloud-picker-footer"><div><span>${state.fallback?'已打开上级目录':'当前目录'}</span><strong>${esc(state.path)}</strong></div><button type="button" data-use-directory ${state.loading||state.error?'disabled':''}>使用此目录</button></footer>`;
+      picker.querySelector('[data-picker-close]').onclick=close;
+      picker.querySelectorAll('[data-crumb]').forEach(button=>button.onclick=()=>read(state.kind,button.dataset.crumb));
+      picker.querySelector('[data-picker-up]').onclick=()=>read(state.kind,parent(state.path));
+      picker.querySelector('[data-picker-refresh]').onclick=()=>read(state.kind,state.path,{refresh:true});
+      picker.querySelector('[data-picker-retry]')?.addEventListener('click',()=>read(state.kind,state.path));
+      picker.querySelectorAll('[data-folder]').forEach(button=>button.onclick=()=>read(state.kind,state.items[Number(button.dataset.folder)].path));
+      picker.querySelector('[data-picker-prev]').onclick=()=>local
+        ?read(state.kind,state.path,{page:state.page-1,cursor:state.history.at(-1)||'',history:state.history.slice(0,-1)})
+        :read(state.kind,state.path,{page:state.page-1});
+      picker.querySelector('[data-picker-next]').onclick=()=>local
+        ?read(state.kind,state.path,{page:state.page+1,cursor:state.next,history:[...state.history,state.cursor]})
+        :read(state.kind,state.path,{page:state.page+1});
+      picker.querySelector('[data-use-directory]').onclick=()=>select(state.path);
+      picker.querySelector('[data-picker-search]').oninput=e=>{
+        const search=e.target.value.trim().toLocaleLowerCase();let visible=0;
+        picker.querySelectorAll('[data-folder]').forEach(button=>{button.hidden=!state.items[Number(button.dataset.folder)].name.toLocaleLowerCase().includes(search);if(!button.hidden)visible++});
+        picker.querySelector('[data-filter-empty]').hidden=state.loading||!!state.error||!state.items.length||visible>0;
+      };
+      picker.querySelector('[data-use-new]')?.addEventListener('click',run(()=>{
+        const input=picker.querySelector('[data-new-directory]'),name=input.value.trim();
+        if(!name||name==='.'||name==='..'||/[\\/:*?"<>|\x00\r\n]/.test(name)||name.endsWith('.')){input.focus();throw Error('请输入有效的子文件夹名称')}
+        select(join(state.path,name));
+      }));
+      picker.querySelectorAll('input').forEach(input=>input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();if(input.matches('[data-new-directory]'))picker.querySelector('[data-use-new]').click()}}));
+    }
+    async function read(kind,p,options={}) {
+      const ticket=++request;controller?.abort();controller=new AbortController();
+      p=normalize(p,kind==='Output');if(kind==='Output'&&!insideOutput(p))p=outputRoot;
+      state={kind,path:p,page:options.page||1,cursor:options.cursor||'',history:options.history||[],items:[],next:'',loading:true,error:'',fallback:false};
+      picker.hidden=false;submit.disabled=true;
+      dialog.querySelectorAll('[data-pick-directory],[data-path-input]').forEach(button=>button.setAttribute('aria-expanded',String((button.dataset.pickDirectory||button.dataset.pathInput)===kind)));
+      draw();
+      try {
+        let result,attempt=0;
+        while(true) {
+          try {
+            const endpoint=kind==='Source'?base+'/list?'+new URLSearchParams({ID:mount.ID,Path:p,Page:state.page,Refresh:!!options.refresh}):'/admin/directories?'+new URLSearchParams({Path:p,After:state.cursor});
+            result=await api(endpoint,'GET',undefined,{signal:controller.signal});break;
+          } catch(error) {
+            if(!isCurrent(ticket))return;
+            if(kind!=='Output'||!options.fallback||p===outputRoot||![400,404].includes(error.status)||attempt++>=64)throw error;
+            p=parent(p);state.path=p;state.fallback=true;
+          }
+        }
+        if(!isCurrent(ticket))return;
+        state.path=normalize(result.Path,kind==='Output');
+        if(kind==='Output'&&!insideOutput(state.path))throw Error('输出目录必须位于媒体目录内');
+        state.items=kind==='Source'?result.Items.filter(item=>item.is_dir).map(item=>({name:item.name,path:join(state.path,item.name)})):result.Directories.map(item=>({name:item.Name,path:normalize(item.Path,true)})).filter(item=>insideOutput(item.path));
+        state.next=kind==='Source'?state.page*result.PerPage<result.Total:result.Next;
+      } catch(error) {
+        if(!isCurrent(ticket))return;state.error=error.message;
+      } finally {
+        if(isCurrent(ticket)){state.loading=false;draw()}
+      }
+    }
+    dialog.querySelectorAll('[data-pick-directory]').forEach(button=>button.onclick=()=>{const kind=button.dataset.pickDirectory;read(kind,inputFor(kind).value,{fallback:kind==='Output'})});
+    dialog.querySelectorAll('[data-path-input]').forEach(input=>input.onclick=()=>{if(input.readOnly)read(input.dataset.pathInput,input.value,{fallback:input.dataset.pathInput==='Output'})});
+    dialog.querySelectorAll('[data-path-input]').forEach(input=>input.addEventListener('keydown',e=>{
+      if(e.key==='Enter'){e.preventDefault();if(input.readOnly)input.click();else dialog.querySelector(`[data-path-edit="${input.dataset.pathInput}"]`).click()}
+    }));
+    dialog.querySelectorAll('[data-path-edit]').forEach(button=>button.onclick=()=>{
+      close();const input=inputFor(button.dataset.pathEdit);
+      if(input.readOnly){input.readOnly=false;button.textContent='完成输入';input.focus();input.select()}
+      else if(input.reportValidity()){input.value=input.value.trim();if(!input.value){input.focus();return}input.readOnly=true;button.textContent='输入路径'}
+    });
+    dialog.addEventListener('close',close,{once:true});
+  }
   async function generate() {
     if(!selected?.Enabled)return;const m=selected,source=currentPath;
     const libs=await api('/admin/features/libraries');
     const suffix=m.Name.replace(/[\\/:*?"<>|\r\n]/g,'_');
-    fmDialog('生成 STRM',`<div class="feature-grid">${field('Source','网盘源目录',source,'text','required')}${field('Output','本地输出目录','/media/网盘/'+suffix,'text','required')}<label class="cloud-span">AI Emby 服务地址<input name="PublicURL" type="url" required value="${esc(data.PublicURL||location.origin)}" placeholder="https://emby.example.com"></label>${field('Limit','本次最多生成（0 为不限）',0,'number','min="0" max="100000" required')}${field('Concurrency','文件写入并发',4,'number','min="1" max="8" required')}<label class="cloud-span">完成后扫描<select name="Library"><option value="">只生成 STRM</option>${libs.map(l=>`<option value="${esc(l.Id)}">${esc(l.Name)}</option>`).join('')}</select></label><label class="feature-check"><input name="Recursive" type="checkbox" checked>包含子目录</label><label class="feature-check"><input name="Overwrite" type="checkbox">覆盖已有 STRM</label></div><div class="cloud-actions"><button type="button" class="secondary" data-local-picker>选择本地目录</button></div><p class="cloud-account-tip">${m.PlaybackMode==='proxy'?'保留源目录结构，只生成视频的 STRM。服务器携带网盘认证读取视频，播放流量经过 AI Emby；账号凭据不会写入 STRM。':'保留源目录结构，只生成视频的 STRM。服务地址需能被播放设备访问，播放时获取网盘直链并 302 跳转。'}</p>`,async f=>{
+    const outputRoot=(data.OutputRoot||'/media').replace(/\/+$/,'')||'/';
+    fmDialog('生成 STRM',`<div class="cloud-directory-grid">${directoryField('Source','网盘源目录',source)}${directoryField('Output','本地输出目录',join(outputRoot,'网盘/'+suffix))}</div><section id="cloud-generate-picker" data-directory-picker role="region" hidden></section><div class="feature-grid"><label class="cloud-span">AI Emby 服务地址<input name="PublicURL" type="url" required value="${esc(data.PublicURL||location.origin)}" placeholder="https://emby.example.com"></label>${field('Limit','本次最多生成（0 为不限）',0,'number','min="0" max="100000" required')}${field('Concurrency','文件写入并发',4,'number','min="1" max="8" required')}<label class="cloud-span">完成后扫描<select name="Library"><option value="">只生成 STRM</option>${libs.map(l=>`<option value="${esc(l.Id)}">${esc(l.Name)}</option>`).join('')}</select></label><label class="feature-check"><input name="Recursive" type="checkbox" checked>包含子目录</label><label class="feature-check"><input name="Overwrite" type="checkbox">覆盖已有 STRM</label></div><p class="cloud-account-tip">${m.PlaybackMode==='proxy'?'保留源目录结构，只生成视频的 STRM。服务器携带网盘认证读取视频，播放流量经过 AI Emby；账号凭据不会写入 STRM。':'保留源目录结构，只生成视频的 STRM。服务地址需能被播放设备访问，播放时获取网盘直链并 302 跳转。'}</p>`,async f=>{
       await api(base+'/generate','POST',{ID:m.ID,Source:f.get('Source'),Output:f.get('Output'),PublicURL:f.get('PublicURL'),Library:f.get('Library'),Limit:Number(f.get('Limit')),Concurrency:Number(f.get('Concurrency')),Recursive:f.has('Recursive'),Overwrite:f.has('Overwrite')});
       toast('生成任务已启动');await poll();schedule();
     },'开始生成');
-    const dialog=document.getElementById('modal');dialog.classList.add('cloud-sheet','cloud-generate-sheet');dialog.querySelector('[data-local-picker]').onclick=run(()=>pickDirectory(p=>{dialog.querySelector('[name="Output"]').value=p}));
+    const dialog=document.getElementById('modal');dialog.classList.add('cloud-sheet','cloud-generate-sheet');bindDirectoryPicker(dialog,m,outputRoot);
   }
   function renderTasks(tasks) {
     const target=host?.querySelector('[data-tasks]');if(!target)return;
