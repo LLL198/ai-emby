@@ -317,7 +317,7 @@ func (a *App) managedFilesAvailable(ctx context.Context, config managedFileRoot,
 			}
 		}
 	}
-	rows, err := a.db.QueryContext(ctx, "SELECT i.path FROM plays p JOIN items i ON i.id=p.item WHERE p.updated>?", time.Now().Add(-2*time.Minute).Unix())
+	rows, err := a.db.QueryContext(ctx, "SELECT i.path FROM plays p JOIN items i ON i.id=p.item WHERE p.updated>$1", time.Now().Add(-2*time.Minute).Unix())
 	if err != nil {
 		return errors.New("无法检查播放状态")
 	}
