@@ -9,6 +9,7 @@ dist/
 app-data/
 app-backups/
 postgres-data/
+pansou-cache/
 update-control/
 secrets/
 *.dump

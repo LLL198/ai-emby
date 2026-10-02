@@ -88,6 +88,7 @@ const logNames = {
   intro_credits: "片头片尾",
   tmdb: "TMDB",
   scraper: "刮削",
+  tracking: "追新索引",
   telegram: "Telegram Bot",
   scan: "扫描媒体",
   update: "更新媒体",

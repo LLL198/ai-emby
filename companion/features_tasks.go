@@ -27,7 +27,7 @@ type featureTask struct {
 var featureFailureCount = regexp.MustCompile(`失败\s+(\d+)`)
 
 func featureTaskCategory(category string) bool {
-	return category == "scan" || category == "update" || category == "probe" || category == "scraper" || strings.HasPrefix(category, "library-") || category == "import" || category == "cover" || category == "cloud-strm" || category == "rename"
+	return category == "scan" || category == "update" || category == "probe" || category == "scraper" || strings.HasPrefix(category, "library-") || category == "import" || category == "cover" || category == "cloud-strm" || category == "rename" || category == "tracking"
 }
 
 func (a *App) featurePersistActivities() {
@@ -62,6 +62,9 @@ func (a *App) featureSaveActivity(entry activityEntry, source string) error {
 		phase = "读取目录"
 	} else if entry.State == "running" {
 		phase = "处理文件"
+		if entry.Category == "tracking" {
+			phase = "搜索资源"
+		}
 	} else if entry.State == "cleaning" {
 		phase = "整理索引"
 	}
@@ -214,6 +217,9 @@ func (a *App) featureTaskAction(w http.ResponseWriter, r *http.Request) {
 		}
 		if task.Category == "cloud-strm" {
 			key = "cloud:" + task.ItemID
+		}
+		if task.Category == "tracking" {
+			key = "tracking:" + task.ID
 		}
 		a.features.mu.Lock()
 		cancel := a.features.jobs[key]

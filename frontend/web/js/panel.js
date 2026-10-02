@@ -24,11 +24,12 @@ const Panel = (() => {
     20: ['import','资料导入','CONTENT'],
     21: ['access','访问与网络','SYSTEM'],
     22: ['covers','封面展示','CONTENT'],
-    23: ['cloud','网盘挂载','CONTENT']
+    23: ['cloud','网盘挂载','CONTENT'],
+    24: ['tracking','追新索引','CONTENT']
   };
   const groups = [
     ['工作空间', [['控制台','dashboard',12]]],
-    ['内容管理', [['媒体库','media',0,[0,2]],['网盘挂载','network',23],['每库设置','settings',16],['封面展示','media',22],['资料导入','refresh',20],['文件管理','files','files']]],
+    ['内容管理', [['媒体库','media',0,[0,2]],['网盘挂载','network',23],['追新索引','refresh',24],['每库设置','settings',16],['封面展示','media',22],['资料导入','refresh',20],['文件管理','files','files']]],
     ['处理任务', [['任务中心','sort',14],['定时任务','refresh',15],['元数据刮削','scraper',8],['媒体信息','info',3],['实时日志','info','logs']]],
     ['播放管理', [['播放与记录','chapter',17],['缓存管理','files',18],['播放增强','chapter',9,[9,10]]]],
     ['系统设置', [['基础设置','settings',4],['外部服务','network',6,[6,7,11]],['用户与权限','users',1],['登录设备','users',19],['访问与网络','network',21],['API 密钥','api',5],['系统与更新','refresh',13]]]

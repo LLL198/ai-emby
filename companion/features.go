@@ -12,18 +12,24 @@ import (
 )
 
 type featureState struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	mu         sync.Mutex
-	jobs       map[string]context.CancelFunc
-	wg         sync.WaitGroup
-	playMu     sync.Mutex
-	plays      map[string]featurePlaybackSample
-	cacheMu    sync.Mutex
-	transcodes map[string]*featureTranscode
+	ctx           context.Context
+	cancel        context.CancelFunc
+	mu            sync.Mutex
+	jobs          map[string]context.CancelFunc
+	wg            sync.WaitGroup
+	playMu        sync.Mutex
+	plays         map[string]featurePlaybackSample
+	cacheMu       sync.Mutex
+	transcodes    map[string]*featureTranscode
+	trackingMu    sync.Mutex
+	trackingBusy  bool
+	trackingQueue chan []string
 }
 
 const featureSchema = `
+CREATE TABLE IF NOT EXISTS feature_tracking_subscriptions(id TEXT PRIMARY KEY,data TEXT NOT NULL,created BIGINT NOT NULL,last_search BIGINT NOT NULL DEFAULT 0,next_search BIGINT NOT NULL DEFAULT 0,state TEXT NOT NULL DEFAULT 'idle',error TEXT NOT NULL DEFAULT '',last_count BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS feature_tracking_resources(id TEXT PRIMARY KEY,subscription TEXT NOT NULL REFERENCES feature_tracking_subscriptions(id) ON DELETE CASCADE,cloud TEXT NOT NULL,data TEXT NOT NULL,fingerprint TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',first_seen BIGINT NOT NULL,updated BIGINT NOT NULL,last_seen BIGINT NOT NULL);
+CREATE INDEX IF NOT EXISTS feature_tracking_resources_list ON feature_tracking_resources(subscription,status,updated DESC,id);
 CREATE TABLE IF NOT EXISTS feature_file_roots(id TEXT PRIMARY KEY,name TEXT NOT NULL,path TEXT NOT NULL UNIQUE,host_path TEXT NOT NULL DEFAULT '',read_only BOOLEAN NOT NULL DEFAULT false,created BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS feature_media_issues(id TEXT PRIMARY KEY, source TEXT NOT NULL, path TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL, proposed TEXT NOT NULL DEFAULT '', directory BOOLEAN NOT NULL DEFAULT false, kind TEXT NOT NULL DEFAULT '', item_id TEXT NOT NULL DEFAULT '', ignored BOOLEAN NOT NULL DEFAULT false, created BIGINT NOT NULL, updated BIGINT NOT NULL, UNIQUE(source,path));
 CREATE INDEX IF NOT EXISTS feature_media_issues_pending ON feature_media_issues(ignored,updated DESC,id);
@@ -87,12 +93,18 @@ func (a *App) initFeatures() error {
 	a.features.jobs = map[string]context.CancelFunc{}
 	a.features.plays = map[string]featurePlaybackSample{}
 	a.features.transcodes = map[string]*featureTranscode{}
+	a.features.trackingQueue = make(chan []string, 1)
+	if _, err := a.db.Exec("UPDATE feature_tracking_subscriptions SET state='interrupted',error='服务重启，等待下次搜索' WHERE state='running'"); err != nil {
+		return err
+	}
 	_, err := a.db.Exec("UPDATE feature_tasks SET state='interrupted' WHERE state IN ('waiting','queued','running','counting','cleaning','paused')")
 	if err != nil {
 		return err
 	}
 	a.features.wg.Add(1)
 	go func() { defer a.features.wg.Done(); a.featureBackground(a.features.ctx) }()
+	a.features.wg.Add(1)
+	go func() { defer a.features.wg.Done(); a.trackingBackground(a.features.ctx) }()
 	return nil
 }
 
@@ -141,6 +153,8 @@ func (a *App) featureRoute(w http.ResponseWriter, r *http.Request, user User) bo
 		return true
 	}
 	switch {
+	case strings.HasPrefix(path, "/admin/features/tracking"):
+		a.trackingAPI(w, r)
 	case strings.HasPrefix(path, "/admin/features/file-roots"):
 		a.managedFileRootsAPI(w, r)
 	case strings.HasPrefix(path, "/admin/features/local-files"):

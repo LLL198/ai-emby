@@ -1,5 +1,28 @@
 name: ${COMPOSE_PROJECT_NAME:-ai-emby}
 services:
+  pansou:
+    image: ghcr.io/fish2018/pansou@sha256:8d09a3f09aa9d0654a75a4b616d7b1f95f605e4ec2148366505b26e6e24fc7cc
+    profiles: [pansou]
+    restart: unless-stopped
+    environment:
+      PORT: '8888'
+      CHANNELS: tgsearchers7,Aliyun_4K_Movies,yunpanx,Quark_Movies,Lsp115,yunpan139,regengguangya,guangyapan_episode
+      ENABLED_PLUGINS: pansearch,quarksoo,quarktv,hunhepan,duoduo,ouge,wanou,xiaoyu,yunso,yunsou,qqpd,panlian
+      CACHE_ENABLED: 'true'
+      CACHE_PATH: /app/cache
+      CACHE_TTL: '60'
+      ASYNC_PLUGIN_ENABLED: 'true'
+      ASYNC_RESPONSE_TIMEOUT: '8'
+      ASYNC_MAX_BACKGROUND_WORKERS: '12'
+      ASYNC_MAX_BACKGROUND_TASKS: '60'
+    volumes:
+      - ./pansou-cache:/app/cache
+    healthcheck:
+      test: [CMD, wget, -q, --spider, 'http://localhost:8888/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
   postgres:
     image: postgres:17-bookworm
     restart: unless-stopped

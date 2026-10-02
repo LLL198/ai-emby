@@ -5,7 +5,8 @@ function stopConsolePolling() {
   consoleController?.abort();
   consoleController = null;
 }
-function adminSection(n) {
+function adminSection(n, route = true) {
+  if(typeof Features!=="undefined")Features.ensureSections();
   stopConsolePolling();
   mediaGeneration++;
   mediaQueueRequest++;
@@ -29,28 +30,13 @@ function adminSection(n) {
   document
     .querySelectorAll(".admin-section")
     .forEach((x, i) => (x.hidden = i !== n));
-  document.querySelectorAll("#drawer button").forEach((b) => {
-    if (
-      (n === 0 && b.getAttribute("onclick") === "mediaPage()") ||
-      b.getAttribute("onclick") === `adminSection(${n})`
-    )
-      b.setAttribute("aria-current", "page");
-    else b.removeAttribute("aria-current");
-  });
-  if (document.body.classList.contains("drawer-open")) {
-    toggleDrawer(false);
-  }
-  if ([4, 6, 7, 9, 10, 11].includes(n)) $("#drawer .drawer-submenu").open = true;
-  if (n === 3) run(loadMediaSettings)();
-  if (n === 4) run(loadEnhancements)();
-  if (n === 5) run(loadKeys)();
-  if (n === 6) run(loadTMDBSettings)();
-  if (n === 7) run(loadTelegramSettings)();
-  if (n === 8) run(loadScraperSettings)();
-  if (n === 9) run(loadSubtitleSettings)();
-  if (n === 10) run(loadIntroSettings)();
-  if (n === 11) run(loadProxySettings)();
+  Panel.activate(n, route);
+  toggleDrawer(false);
+  if (n === 13) Panel.system();
+  const loaders={3:loadMediaSettings,4:loadEnhancements,5:loadKeys,6:loadTMDBSettings,7:loadTelegramSettings,8:loadScraperSettings,9:loadSubtitleSettings,10:loadIntroSettings,11:loadProxySettings};
+  if(loaders[n])Panel.loadModule(n,loaders[n]);
   if (n === 12) run(loadConsole)();
+  if(n>=14 && typeof Features!=="undefined")run(()=>Features.load(n))();
 }
 async function folderPicker(id, path = "/media", after = "") {
   let dialog = $("#folder-picker");
@@ -90,7 +76,7 @@ async function folderPicker(id, path = "/media", after = "") {
   $("#folder-select").onclick = run(async () => {
     await api("/admin/library-folders", "POST", { ID: id, Path: b.Path });
     dialog.close();
-    await admin();
+    await admin(0);
     toast("媒体文件夹已添加，后台更新索引中");
   });
 }
@@ -102,6 +88,7 @@ const logNames = {
   intro_credits: "片头片尾",
   tmdb: "TMDB",
   scraper: "刮削",
+  tracking: "追新索引",
   telegram: "Telegram Bot",
   scan: "扫描媒体",
   update: "更新媒体",
@@ -158,7 +145,7 @@ function renderScraperLog(x) {
 
   const error = scraperLogText(x.Error || '');
 
-  return `<article class="log-entry"><strong>${esc(x.Name)}</strong> · ${esc(logStates[x.State] || x.State)}<p>${esc(new Date(x.Updated || x.Started).toLocaleString())}${x.Total ? ` · ${x.Done}/${x.Total}` : ''}</p><p>${esc(current)}</p>${error ? `<p role="status">失败原因：${esc(error)}</p>` : ''}</article>`;
+  return `<article class="log-entry" ${x.Error||x.State==='error'?'data-error="true"':''}><strong>${esc(x.Name)}</strong> · ${esc(logStates[x.State] || x.State)}<p>${esc(new Date(x.Updated || x.Started).toLocaleString())}${x.Total ? ` · ${x.Done}/${x.Total}` : ''}</p><p>${esc(current)}</p>${error ? `<p role="status">失败原因：${esc(error)}</p>` : ''}</article>`;
 }
 function scanPercent(x) {
   return x.State === "complete"
@@ -187,7 +174,12 @@ function closeLogs() {
 }
 function showLogs() {
   if (!user?.Policy?.IsAdministrator) return;
-  $("#logs").showModal();
+  if(!$("#logs").open)$("#logs").showModal();
+  const select=$("#log-category");
+  select.innerHTML=Object.entries(logNames).map(([k,n])=>`<option value="${k}">${n}</option>`).join("");
+  select.onchange=()=>logTab(select.value);
+  $("#log-search").oninput=Panel.filterLogs;
+  $("#log-errors").onchange=Panel.filterLogs;
   logTab(logCategory);
 }
 function logTab(category) {
@@ -197,12 +189,7 @@ function logTab(category) {
   pause.disabled = true;
   clearTimeout(logTimer);
   const generation = ++logGeneration;
-  $(".log-tabs").innerHTML = Object.entries(logNames)
-    .map(
-      ([k, n]) =>
-        `<button type="button" class="secondary log-tab" aria-selected="${k === category}" onclick="logTab('${k}')">${n}</button>`,
-    )
-    .join("");
+  $("#log-category").value = category;
   refreshLogs(generation);
 }
 async function refreshLogs(generation) {
@@ -248,7 +235,7 @@ async function refreshLogs(generation) {
         .map((x) => {
           if (x.Category === 'scraper') return renderScraperLog(x);
           const pct = scanPercent(x);
-          return `<article class="log-entry"><strong>${esc(x.Name)}</strong> · ${esc(logStates[x.State] || x.State)}<p>${esc(new Date(x.Started).toLocaleString())}</p>${["scan", "update"].includes(x.Category) ? `<progress max="100" value="${pct}"></progress><span>${pct}% · ${x.Done}/${x.Total} 部/集</span><p>${x.Current === "清理已删除条目" ? '<span class="inline-icon" title="清理已删除条目" aria-label="清理已删除条目"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l-6 10M8 11l7 4-4 7-9-5Z"/></svg></span>' : esc(x.Current)}</p>` : ""}${x.Category === "probe" && x.Name === "批量提取媒体信息" ? `<p>当前：${esc(x.Current || "等待开始")}</p><p>完成：${x.Done}${x.Total ? ` / ${x.Total}` : ""}</p>` : ""}${x.Category === "error" && x.Current ? `<p>当前：${esc(x.Current)}</p>` : ""}${x.Category === "subtitle" && x.Current ? `<p>${esc(x.Current)}</p>` : ""}${x.Category === "playback" && x.State !== "login" ? `<p>${x.Online ? "🟢 在线播放" : "离线 / 已停止"} · ${x.RunTimeTicks ? x.Progress.toFixed(1) + "%" : "已播放 " + Math.floor(x.PositionTicks / 1e7) + " 秒（总时长未知）"}<br>用户ID：${esc(x.UserID)}<br>视频ID：${esc(x.ItemID)}<br>用户名：${esc(x.Username)}<br>IP：${esc(x.IP)}<br>设备：${esc(x.Device)}<br>客户端：${esc(x.Client)}<br>请求视频：${esc(x.Name)}</p>` : ""}${x.State === "login" ? `<p>用户名：${esc(x.Username)} · 客户端：${esc(x.Client)} · 设备：${esc(x.Device)}</p>` : ""}${x.Category === "warning" ? `<p>用户名：${esc(x.Username || "未知")} · IP：${esc(x.IP)} · 设备：${esc(x.Device)}</p>` : ""}${["proxy", "redirect"].includes(x.Category) ? `<pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px">${esc(x.Current)}</pre>` : ""}${x.Error ? `<p role="alert">${esc(x.Error)}</p>` : ""}</article>`;
+          return `<article class="log-entry" ${x.Error||x.State==='error'?'data-error="true"':''}><strong>${esc(x.Name)}</strong> · ${esc(logStates[x.State] || x.State)}<p>${esc(new Date(x.Started).toLocaleString())}</p>${["scan", "update"].includes(x.Category) ? `<progress max="100" value="${pct}"></progress><span>${pct}% · ${x.Done}/${x.Total} 部/集</span><p>${x.Current === "清理已删除条目" ? '<span class="inline-icon" title="清理已删除条目" aria-label="清理已删除条目"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3l-6 10M8 11l7 4-4 7-9-5Z"/></svg></span>' : esc(x.Current)}</p>` : ""}${x.Category === "probe" && x.Name === "批量提取媒体信息" ? `<p>当前：${esc(x.Current || "等待开始")}</p><p>完成：${x.Done}${x.Total ? ` / ${x.Total}` : ""}</p>` : ""}${x.Category === "error" && x.Current ? `<p>当前：${esc(x.Current)}</p>` : ""}${x.Category === "subtitle" && x.Current ? `<p>${esc(x.Current)}</p>` : ""}${x.Category === "playback" && x.State !== "login" ? `<p>${x.Online ? "在线播放" : "离线 / 已停止"} · ${x.RunTimeTicks ? x.Progress.toFixed(1) + "%" : "已播放 " + Math.floor(x.PositionTicks / 1e7) + " 秒（总时长未知）"}<br>用户ID：${esc(x.UserID)}<br>视频ID：${esc(x.ItemID)}<br>用户名：${esc(x.Username)}<br>IP：${esc(x.IP)}<br>设备：${esc(x.Device)}<br>客户端：${esc(x.Client)}<br>请求视频：${esc(x.Name)}</p>` : ""}${x.State === "login" ? `<p>用户名：${esc(x.Username)} · 客户端：${esc(x.Client)} · 设备：${esc(x.Device)}</p>` : ""}${x.Category === "warning" ? `<p>用户名：${esc(x.Username || "未知")} · IP：${esc(x.IP)} · 设备：${esc(x.Device)}</p>` : ""}${["proxy", "redirect"].includes(x.Category) ? `<pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px">${esc(x.Current)}</pre>` : ""}${x.Error ? `<p role="alert">${esc(x.Error)}</p>` : ""}</article>`;
         })
         .join("") || "<p>暂无记录</p>";
     const content = $("#log-content");
@@ -259,8 +246,10 @@ async function refreshLogs(generation) {
         content.innerHTML = logHTML;
         content.dataset.rendered = logHTML;
         content.scrollTop = top;
+        Panel.filterLogs();
       }
     }
+    Panel.filterLogs();
   } catch (e) {
     if (generation === logGeneration)
       $("#log-status").textContent = "日志读取失败：" + e.message;
@@ -324,7 +313,7 @@ async function initializeAdmin(generation) {
   adminLibs = libs;
   fmUsers = users;
   $("#app").innerHTML =
-    `<section class="panel admin-section"></section><section class="panel admin-section" hidden><h2>用户管理</h2><details><summary>用户列表</summary>${users.map((x) => `<details class="user-entry"><summary>${esc(x.Name)}${x.FirstAdmin ? " · 首位管理员" : ""}</summary><div class="row" data-user="${x.Id}"><label>同时播放设备上限 <input class="max" type="number" min="1" max="100" value="${x.MaxDevices}"></label><label><input class="allow switch" role="switch" type="checkbox" ${x.Policy.EnableMediaPlayback ? "checked" : ""}>允许播放</label><button class="saveuser" data-id="${x.Id}" data-admin="${x.Policy.IsAdministrator}">保存</button><button class="resetpw" data-id="${x.Id}">修改用户密码</button>${!x.Policy.IsAdministrator && x.Id !== user.Id ? `<button class="danger deluser" data-id="${x.Id}">删除用户</button>` : ""}</div></details>`).join("")}</details><details><summary>添加用户</summary><form id="adduser" class="form"><input name="name" placeholder="用户名" required><input name="pw" type="password" placeholder="密码（可留空）"><input name="max" type="number" min="1" max="100" value="2"><button>添加用户</button></form></details><p>设备名额按播放心跳维持，停止播放后释放。</p></section><section class="panel admin-section" hidden><h2>媒体库排序</h2><p>按住 ☰ 拖动调整，支持鼠标和触屏；调整后保存，首页及客户端媒体库使用相同顺序。</p><div id="order"></div><button id="saveOrder">保存排序</button></section><section class="panel admin-section" hidden><h2>提取媒体信息设置</h2><div id="media-loading" role="status" aria-label="正在加载媒体信息设置" hidden></div><div id="media-content" hidden><form id="media-settings"></form><div id="media-automation"></div><form id="media-concurrency" class="media-concurrency-section"><div class="media-concurrency-row"><label class="media-concurrency-label">媒体信息提取并发 <input class="media-concurrency-input" name="Concurrency" type="number" inputmode="numeric" min="1" max="16" required></label><button type="submit">保存</button></div></form><p id="media-queue" aria-live="polite"></p></div></section><section class="panel admin-section" hidden><h2>增强功能</h2><form id="enhancements"></form></section><section class="panel admin-section" hidden><div class="bar"><h2>API管理</h2><button class="secondary icon-button round-add" title="新建API密钥" aria-label="新建API密钥" onclick="createKey()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div><div id="api-keys"></div></section><section class="panel admin-section" hidden><div class="fm-toolbar"><h2>TMDB 管理</h2></div><form id="tmdb-settings" class="form"></form></section><section class="panel admin-section" hidden><h2>Telegram Bot</h2><form id="telegram-settings" class="fm-form telegram-form"></form></section><section class="panel admin-section" hidden><h2>刮削管理</h2><div id="scraper-settings" class="tmdb-settings-form"></div></section><section class="panel admin-section" hidden><h2>字幕增强</h2><form id="subtitle-settings" class="form"></form></section><section class="panel admin-section" hidden><h2>片头片尾</h2><form id="intro-settings" class="tmdb-settings-form"></form></section><section class="panel admin-section" hidden><h2>代理设置</h2><form id="proxy-settings" class="tmdb-settings-form"></form></section><section class="panel admin-section" hidden><h2>控制台</h2><div id="admin-console" aria-live="polite"></div></section>`;
+    `<section class="panel admin-section"></section><section class="panel admin-section" hidden><h2>用户管理</h2><details><summary>用户列表</summary>${users.map((x) => `<details class="user-entry"><summary>${esc(x.Name)}${x.FirstAdmin ? " · 首位管理员" : ""}</summary><div class="row" data-user="${x.Id}"><label>同时播放设备上限 <input class="max" type="number" min="1" max="100" value="${x.MaxDevices}"></label><label><input class="allow switch" role="switch" type="checkbox" ${x.Policy.EnableMediaPlayback ? "checked" : ""}>允许播放</label><button class="saveuser" data-id="${x.Id}" data-admin="${x.Policy.IsAdministrator}">保存</button><button class="resetpw" data-id="${x.Id}">修改用户密码</button>${!x.Policy.IsAdministrator && x.Id !== user.Id ? `<button class="danger deluser" data-id="${x.Id}">删除用户</button>` : ""}</div></details>`).join("")}</details><details><summary>添加用户</summary><form id="adduser" class="form"><input name="name" placeholder="用户名" required><input name="pw" type="password" placeholder="密码（可留空）"><input name="max" type="number" min="1" max="100" value="2"><button>添加用户</button></form></details><p>停止播放后释放设备名额。</p></section><section class="panel admin-section" hidden><h2>媒体库排序</h2><p>拖动 ☰ 调整顺序后保存。</p><div id="order"></div><button id="saveOrder">保存排序</button></section><section class="panel admin-section" hidden><h2>提取媒体信息设置</h2><div id="media-loading" role="status" aria-label="正在加载媒体信息设置" hidden></div><div id="media-content" hidden><form id="media-settings"></form><div id="media-automation"></div><form id="media-concurrency" class="media-concurrency-section"><div class="media-concurrency-row"><label class="media-concurrency-label">媒体信息提取并发 <input class="media-concurrency-input" name="Concurrency" type="number" inputmode="numeric" min="1" max="16" required></label><button type="submit">保存</button></div></form><p id="media-queue" aria-live="polite"></p></div></section><section class="panel admin-section" hidden><h2>增强功能</h2><form id="enhancements"></form></section><section class="panel admin-section" hidden><div class="bar"><h2>API管理</h2><button class="text-icon-button" type="button" onclick="createKey()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>新建密钥</span></button></div><div id="api-keys"></div></section><section class="panel admin-section" hidden><div class="fm-toolbar"><h2>TMDB 管理</h2></div><form id="tmdb-settings" class="form"></form></section><section class="panel admin-section" hidden><h2>Telegram Bot</h2><form id="telegram-settings" class="fm-form telegram-form"></form></section><section class="panel admin-section" hidden><h2>刮削管理</h2><div id="scraper-settings" class="tmdb-settings-form"></div></section><section class="panel admin-section" hidden><h2>字幕增强</h2><form id="subtitle-settings" class="form"></form></section><section class="panel admin-section" hidden><h2>片头片尾</h2><form id="intro-settings" class="tmdb-settings-form"></form></section><section class="panel admin-section" hidden><h2>代理设置</h2><form id="proxy-settings" class="tmdb-settings-form"></form></section><section class="panel admin-section" hidden><h2>控制台</h2><div id="admin-console" aria-live="polite"></div></section><section class="panel admin-section" hidden></section>`;
   function bind(sel, fn) {
     document
       .querySelectorAll(sel)
@@ -412,7 +401,8 @@ async function loadEnhancements() {
   favoritesPromise = Promise.resolve(favoritesEnabled);
   const f = $("#enhancements");
   if (!f) return;
-  f.innerHTML = `<label class="row">服务器显示名称<input name="serverName" required maxlength="128" value="${esc(c.ServerName)}"></label><div class="favorite-cover-control"><label class="toggle-label"><input class="switch" role="switch" name="favorites" type="checkbox" ${c.EnableFavorites ? "checked" : ""}>开启收藏功能</label><button type="button" class="secondary favorite-cover-add">上传封面</button><button type="button" class="secondary favorite-cover-remove" disabled>移除封面</button></div><p>在我的媒体库显示“播放收藏”。关闭后保留每位用户的收藏数据。</p><label class="toggle-label"><input class="switch" role="switch" name="episodeCount" type="checkbox" ${c.ShowEpisodeCount !== false ? "checked" : ""}>海报显示剧集集数角标</label><p>默认开启，Web 显示总集数；客户端通过标准 Emby 集数与未看集数字段展示角标。</p><label class="toggle-label"><input class="switch" role="switch" name="hide" type="checkbox" ${c.HideMissingActorImages ? "checked" : ""}>隐藏没有图片的演员信息</label><p>默认开启：隐藏没有照片的演员；关闭后显示演员姓名和照片占位。保存后重新打开影视简介生效。</p><label class="toggle-label"><input class="switch" role="switch" name="mergeFolder" type="checkbox" ${c.MergeVersionsInFolder ? "checked" : ""}>媒体文件夹内合并多版本</label><label class="toggle-label"><input class="switch" role="switch" name="mergeLibraries" type="checkbox" ${c.MergeVersionsAcrossLibraries ? "checked" : ""}>跨媒体库合并多版本</label><p>默认开启。按 TMDB 编号识别影片，电视剧区分季、集；无编号的电影按片名和年份匹配。关闭跨库合并时，仅合并同一媒体文件夹内的版本。播放旁的版本按钮可选择版本，播放中选择会从头切换。</p><label class="toggle-label"><input class="switch" role="switch" name="initials" type="checkbox" ${c.SearchByInitials ? "checked" : ""}>按照首字母搜索视频</label><p>默认开启，支持中文片名和部分拼音首字母匹配。例如输入“流浪”、ll 或 lldq 均可搜索“流浪地球”，ll 也会返回其他匹配影片。</p><label class="toggle-label"><input class="switch" role="switch" name="watchEnabled" type="checkbox" ${c.WatchEnabled ? "checked" : ""}>监听文件变动自动刷新路径</label><label class="row">媒体变动延时（秒）<input name="watchDelay" type="number" min="10" max="86400" required value="${c.WatchDelaySeconds ?? 30}"></label><p>文件变动合并处理并刷新本地元数据，默认30秒，最小10秒。与刮削管理共用队列；两处均开启时由刮削管理接管。</p><fieldset><legend>播放模式</legend><fieldset class="enhancement-suboption" data-nanshare-fast><label class="toggle-label"><input class="switch" role="switch" name="nanShareFastPath" type="checkbox" ${c.NanShareFastPath ? "checked" : ""}>快速路径</label><p>开启后限时获取 STRM 源地址的重定向；失败直接返回原始 STRM。关闭时直接重定向，不额外请求。</p><label class="row">等待上限（秒）<input name="fastPathWaitSeconds" type="number" inputmode="numeric" min="1" max="20" step="1" required value="${c.FastPathWaitSeconds ?? 5}"></label><p>1-20 秒，默认 5 秒。成功立即返回，不会固定等满。</p></fieldset></fieldset><label class="toggle-label"><input class="switch" role="switch" name="proxyDebug" type="checkbox" ${c.ProxyDebug ? "checked" : ""}>反代调试</label><p><small>开发者专用</small></p><p>默认关闭。开启并保存后，在右上角实时日志的“反代日志”查看客户端请求和响应。</p><button>保存设置</button>`;
+  f.innerHTML = `<label class="row">服务器显示名称<input name="serverName" required maxlength="128" value="${esc(c.ServerName)}"></label><div class="favorite-cover-control"><label class="toggle-label"><input class="switch" role="switch" name="favorites" type="checkbox" ${c.EnableFavorites ? "checked" : ""}>开启收藏功能</label><button type="button" class="secondary favorite-cover-add">上传封面</button><button type="button" class="secondary favorite-cover-remove" disabled>移除封面</button></div><p>关闭收藏不会删除收藏数据。</p><label class="toggle-label"><input class="switch" role="switch" name="episodeCount" type="checkbox" ${c.ShowEpisodeCount !== false ? "checked" : ""}>海报显示剧集集数角标</label><label class="toggle-label"><input class="switch" role="switch" name="hide" type="checkbox" ${c.HideMissingActorImages ? "checked" : ""}>隐藏没有图片的演员信息</label><label class="toggle-label"><input class="switch" role="switch" name="mergeFolder" type="checkbox" ${c.MergeVersionsInFolder ? "checked" : ""}>媒体文件夹内合并多版本</label><label class="toggle-label"><input class="switch" role="switch" name="mergeLibraries" type="checkbox" ${c.MergeVersionsAcrossLibraries ? "checked" : ""}>跨媒体库合并多版本</label><p>播放中切换版本会从头播放。</p><label class="toggle-label"><input class="switch" role="switch" name="initials" type="checkbox" ${c.SearchByInitials ? "checked" : ""}>按照首字母搜索视频</label><label class="toggle-label"><input class="switch" role="switch" name="watchEnabled" type="checkbox" ${c.WatchEnabled ? "checked" : ""}>监听文件变动自动刷新路径</label><label class="row">媒体变动延时（秒）<input name="watchDelay" type="number" min="10" max="86400" required value="${c.WatchDelaySeconds ?? 30}"></label><p>与刮削监控共用队列，均启用时由刮削接管。</p><fieldset><legend>播放模式</legend><fieldset class="enhancement-suboption" data-nanshare-fast><label class="toggle-label"><input class="switch" role="switch" name="nanShareFastPath" type="checkbox" ${c.NanShareFastPath ? "checked" : ""}>快速路径</label><p>提前解析 STRM 重定向，失败时使用原地址。</p><label class="row">等待上限（秒，1–20）<input name="fastPathWaitSeconds" type="number" inputmode="numeric" min="1" max="20" step="1" required value="${c.FastPathWaitSeconds ?? 5}"></label></fieldset></fieldset><label class="toggle-label"><input class="switch" role="switch" name="proxyDebug" type="checkbox" ${c.ProxyDebug ? "checked" : ""}>反代调试</label><p>在实时日志的“反代日志”中查看请求与响应。</p><button>保存设置</button>`;
+  Panel.prepareForm("enhancements");
   f.querySelector(".favorite-cover-add").onclick = run(favoriteCoverDialog);
   f.querySelector(".favorite-cover-remove").onclick = run(removeFavoriteCover);
   api("/Users/me/FavoriteCover").then(state=>{
@@ -464,7 +454,7 @@ async function openMediaRootSettings(field) {
   const selected = new Set((data.Settings?.[field] || []).map(mediaRootKey));
   const summary = field === 'MonitorRoots' ? '<p class="media-root-summary" data-root-summary></p>' : '';
   fmDialog(field === 'BatchRoots' ? '批量提取目录' : '实时监控目录',
-    `${summary}<p>只选择当前媒体库的父目录，不展开子目录。媒体库目录变更后重新打开即可同步。</p><div class="media-root-list">${roots.length ? roots.map((root, i) => `<label class="media-root-option"><input type="checkbox" data-root-index="${i}" ${selected.has(mediaRootKey(root)) ? 'checked' : ''}><span>${esc(root.Name)} · ${esc(root.Root)}</span></label>`).join('') : '<p>当前没有可选的媒体库目录。</p>'}</div>`,
+    `${summary}<p>仅支持媒体库父目录。</p><div class="media-root-list">${roots.length ? roots.map((root, i) => `<label class="media-root-option"><input type="checkbox" data-root-index="${i}" ${selected.has(mediaRootKey(root)) ? 'checked' : ''}><span>${esc(root.Name)} · ${esc(root.Root)}</span></label>`).join('') : '<p>当前没有可选的媒体库目录。</p>'}</div>`,
     async () => {
       const dialog = $('#modal');
       const values = [...dialog.querySelectorAll('[data-root-index]:checked')]
@@ -489,7 +479,7 @@ async function openMediaRootSettings(field) {
 }
 function renderMediaAutomation(data, batchResult, generation) {
   const host = $('#media-automation');
-  host.innerHTML = `<div class="media-automation-line row"><span class="media-setting-label">批量提取媒体信息</span><div class="media-automation-actions"><button type="button" class="secondary icon-button media-automation-icon" data-batch-start title="开始批量提取" aria-label="开始批量提取">${mediaBatchIcon('start')}</button><button type="button" class="secondary icon-button media-automation-icon" data-batch-stop title="停止批量提取" aria-label="停止批量提取">${mediaBatchIcon('stop')}</button><button type="button" class="secondary icon-button media-automation-icon" data-batch-settings title="批量提取目录设置" aria-label="批量提取目录设置">${fmIcon('gear')}</button></div></div><p class="media-batch-action" data-batch-action role="status" aria-live="polite"></p><p class="media-batch-status" data-batch-status role="status" aria-live="polite"></p><div class="media-automation-line row"><label class="tmdb-switch-row"><input class="switch" role="switch" type="checkbox" data-monitor ${data.Settings?.MonitorEnabled ? 'checked' : ''}><span class="media-setting-label">实时监控入库</span></label><button type="button" class="secondary icon-button media-automation-icon" data-monitor-settings title="实时监控目录设置" aria-label="实时监控目录设置">${fmIcon('gear')}</button></div><p class="media-automation-help">实时监控仅处理选中的媒体库父目录；已有完整信息会跳过。</p>`;
+  host.innerHTML = `<div class="media-automation-line row"><span class="media-setting-label">批量提取媒体信息</span><div class="media-automation-actions"><button type="button" class="secondary text-icon-button media-automation-icon" data-batch-start title="开始批量提取" aria-label="开始批量提取">${mediaBatchIcon('start')} 开始提取</button><button type="button" class="secondary text-icon-button media-automation-icon" data-batch-stop title="停止批量提取" aria-label="停止批量提取">${mediaBatchIcon('stop')} 停止提取</button><button type="button" class="secondary text-icon-button media-automation-icon" data-batch-settings title="批量提取目录设置" aria-label="批量提取目录设置">${fmIcon('gear')} 选择批量目录</button></div></div><p class="media-batch-action" data-batch-action role="status" aria-live="polite"></p><p class="media-batch-status" data-batch-status role="status" aria-live="polite"></p><div class="media-automation-line row"><label class="tmdb-switch-row"><input class="switch" role="switch" type="checkbox" data-monitor ${data.Settings?.MonitorEnabled ? 'checked' : ''}><span class="media-setting-label">实时监控入库</span></label><button type="button" class="secondary text-icon-button media-automation-icon" data-monitor-settings title="实时监控目录设置" aria-label="实时监控目录设置">${fmIcon('gear')} 选择监控目录</button></div>`;
   const monitor = host.querySelector('[data-monitor]');
   monitor.onchange = run(async () => {
     monitor.disabled = true;
@@ -575,7 +565,7 @@ async function loadMediaSettings() {
           `<label class="toggle-label"><input class="switch" role="switch" type="checkbox" name="${k}" ${c[k] ? "checked" : ""}>${label}</label>`,
       )
       .join("") +
-    `<p>浏览简介立即返回已有信息，后台一次完整提取视频、音频和字幕信息，所有任务遵守媒体信息提取并发设置。开启下一集预加载时，播放开始后延迟在后台提取下一集；关闭后不再自动预加载。已有完整信息会跳过，同一任务合并去重，播放不等待提取。视频由客户端直连 CDN；仅后台提取产生少量媒体读取流量。</p><p>持久化关闭：影视文件删除后，自动清理对应媒体信息。开启：保留媒体信息供重新入库复用。</p><label class="row">媒体信息保存目录 <input name="Directory" value="${esc(c.Directory)}" required style="flex:1"><button type="button" class="secondary icon-button" title="恢复媒体信息" aria-label="恢复媒体信息" onclick="restoreMediaDialog()"><svg viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 2 8M3 3v7h7M12 7v5l3 2"/></svg></button></label><p><small>要将神医助手或者Mediainfokeeper媒体信息放入应用的媒体信息目录中。</small></p><p>统一保存到数据目录下；更换目录会迁移已有媒体信息。</p>`;
+    `<p>关闭持久化后，媒体删除时一并清理信息。</p><label class="row">媒体信息保存目录 <input name="Directory" value="${esc(c.Directory)}" required style="flex:1"><button type="button" class="secondary icon-button" title="恢复媒体信息" aria-label="恢复媒体信息" onclick="restoreMediaDialog()"><svg viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 2 8M3 3v7h7M12 7v5l3 2"/></svg></button></label><p>更换目录会迁移已有信息。</p>`;
   const concurrencyForm = $("#media-concurrency");
   const concurrency = concurrencyForm.elements.Concurrency;
   concurrency.value = c.Concurrency;
@@ -603,6 +593,7 @@ async function loadMediaSettings() {
   concurrency.addEventListener("input", validate);
   validate();
   renderMediaAutomation(automation, batchResult, generation);
+  Panel.prepareMedia();
   const queue = $("#media-queue");
   queue.textContent = queueResult.status === "fulfilled"
     ? mediaQueueText(queueResult.value)
@@ -747,17 +738,28 @@ function fmDialog(title, html, save, action = "保存", actionsVariant = "") {
     }
   }) : e => e.preventDefault();
 }
-async function admin() {
+async function admin(n = 12, folderID = '') {
   if (!user?.Policy?.IsAdministrator) return;
-  if (location.hash !== '#admin') history.pushState({page:'admin'}, '', '#admin');
+  closeLogs();
   view = "admin";
   nav();
   $("#app").replaceChildren(UI.LoadingSkeleton());
   const generation = ++adminGeneration;
-  await initializeAdmin(generation);
+  try {
+    await initializeAdmin(generation);
+  } catch(error) {
+    if(view!=="admin"||generation!==adminGeneration)return;
+    const message=UI.el('section',{class:'panel-load-error',role:'alert'});
+    message.innerHTML=`<h2>面板暂时无法加载</h2><p>${esc(error.message)}</p>`;
+    message.append(UI.el('button',{type:'button',onclick:run(()=>admin(n,folderID))},'重新加载'));
+    $("#app").replaceChildren(message);
+    return;
+  }
   if (view !== "admin" || generation !== adminGeneration) return;
-  mediaPage();
+  mediaPage(false, false);
   renderUsers();
+  adminSection(n, !folderID);
+  if(n===0&&folderID)folderPage(folderID);
   clearTimeout(fmTimer);
   pollScan();
 }
@@ -776,11 +778,11 @@ function libraryStatus(x) {
     ] + (x.Error ? "：" + x.Error : "");
   return `<span class="library-status ${state}" role="img" tabindex="0" aria-label="${esc(label)}" title="${esc(label)}">${state === "error" ? "!" : state === "busy" ? "↻" : state === "interrupted" ? "!" : "●"}</span>`;
 }
-function mediaPage(add = false) {
+function mediaPage(add = false, route = true) {
   fmLibrary = "";
-  adminSection(0);
+  adminSection(0, route);
   const section = document.querySelectorAll(".admin-section")[0];
-  section.innerHTML = `<div class="section-heading"><h2>媒体库管理</h2><button class="secondary icon-button" aria-label="媒体库设置" title="媒体库设置" onclick="run(librarySettingsDialog)()">${fmIcon("gear")}</button></div><p id="library-settings-status" class="muted library-settings-status"></p><div class="fm-toolbar minimal-toolbar"><div class="toolbar-actions"><button class="secondary icon-button round-add" title="新建媒体库" aria-label="新建媒体库" onclick="newLibrary()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><button class="secondary icon-button " title="刷新全部媒体库" aria-label="刷新全部媒体库" onclick="run(scanAllMedia)()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1"/></svg></button><button class="secondary icon-button" title="暂停刷新" aria-label="暂停刷新" onclick="run(()=>controlScan(true))()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg></button><button class="secondary icon-button" title="恢复刷新" aria-label="恢复刷新" onclick="run(()=>controlScan(false))()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7Z"/></svg></button></div><div class="scan-circle" title="扫描进度" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span>0%</span></div></div><div class="fm-list">${adminLibs.map((x) => `<div class="fm-row">${fmIcon("library")}<div class="fm-name${x.Hidden ? " library-hidden" : ""}"><button onclick="folderPage('${x.Id}')" ${x.Hidden ? 'aria-label="打开隐藏媒体库"' : ""}><span class="library-name" ${x.Hidden ? 'aria-hidden="true"' : ""}>${esc(x.Name)}</span></button>${x.Hidden ? '<span class="hidden-indicator" aria-label="已隐藏">' + fmIcon("hidden") + "</span>" : ""}</div>${libraryStatus(x)}${fmMenu(fmButton("全量扫描", `await scanMedia('${x.Id}','scan')`, false, "scan") + fmButton("刷新扫描", `await scanMedia('${x.Id}','update')`, false, "refresh") + fmButton("添加媒体文件夹", `await pickFolder('${x.Id}')`, false, "folder") + fmButton("插入媒体封面", `await uploadCover('${x.Id}')`, false, "image") + fmButton(x.Hidden ? "取消隐藏媒体库" : "隐藏媒体库", `await toggleLibraryHidden('${x.Id}')`, false, x.Hidden ? "eye" : "hidden") + fmButton("重命名媒体库", `renameLibrary('${x.Id}')`, false, "rename") + fmButton("删除媒体库", `await deleteLibrary('${x.Id}')`, true, "trash"))}</div>`).join("") || '<p class="empty">暂无媒体库，点击新建媒体库开始。</p>'}</div>`;
+  section.innerHTML = `<div class="section-heading"><h2>媒体库管理</h2><button class="secondary text-icon-button" aria-label="媒体库设置" title="媒体库设置" onclick="run(librarySettingsDialog)()">${fmIcon("gear")} 扫描与定时设置</button></div><p id="library-settings-status" class="muted library-settings-status"></p><div class="fm-toolbar minimal-toolbar"><div class="toolbar-actions"><button class="text-icon-button" type="button" onclick="newLibrary()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>新建媒体库</span></button><button class="secondary text-icon-button" type="button" onclick="run(scanAllMedia)()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1"/></svg><span>刷新全部媒体库</span></button><button class="secondary text-icon-button" type="button" onclick="run(()=>controlScan(true))()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><span>暂停刷新</span></button><button class="secondary text-icon-button" type="button" onclick="run(()=>controlScan(false))()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7Z"/></svg><span>恢复刷新</span></button></div><div class="scan-circle" title="扫描进度" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span>0%</span></div></div><div class="fm-list">${adminLibs.map((x) => `<div class="fm-row">${fmIcon("library")}<div class="fm-name${x.Hidden ? " library-hidden" : ""}"><button onclick="folderPage('${x.Id}')" ${x.Hidden ? 'aria-label="打开隐藏媒体库"' : ""}><span class="library-name" ${x.Hidden ? 'aria-hidden="true"' : ""}>${esc(x.Name)}</span></button>${x.Hidden ? '<span class="hidden-indicator" aria-label="已隐藏">' + fmIcon("hidden") + "</span>" : ""}</div>${libraryStatus(x)}${fmMenu(fmButton("全量扫描", `await scanMedia('${x.Id}','scan')`, false, "scan") + fmButton("刷新扫描", `await scanMedia('${x.Id}','update')`, false, "refresh") + fmButton("添加媒体文件夹", `await pickFolder('${x.Id}')`, false, "folder") + fmButton("插入媒体封面", `await uploadCover('${x.Id}')`, false, "image") + fmButton(x.Hidden ? "取消隐藏媒体库" : "隐藏媒体库", `await toggleLibraryHidden('${x.Id}')`, false, x.Hidden ? "eye" : "hidden") + fmButton("重命名媒体库", `renameLibrary('${x.Id}')`, false, "rename") + fmButton("删除媒体库", `await deleteLibrary('${x.Id}')`, true, "trash"))}</div>`).join("") || '<p class="empty">暂无媒体库，点击新建媒体库开始。</p>'}</div>`;
   void refreshLibrarySettingsStatus();
   if (add) newLibrary();
 }
@@ -789,7 +791,7 @@ async function refreshLibrarySettingsStatus() {
   if (!el) return;
   try {
     const settings = await api("/admin/library-settings");
-    if (el.isConnected) el.textContent = "定时任务：" + (settings.Schedule.Enabled ? "开启" : "关闭") + " · 同时扫描：" + settings.ScanConcurrency + " · 同时更新：" + settings.UpdateConcurrency;
+    if (el.isConnected) el.textContent = "定时任务：" + (settings.Schedule.Enabled ? "开启" : "关闭") + " · 同时扫描：" + settings.ScanConcurrency + " · 同时更新：" + settings.UpdateConcurrency + " · 单库并发：" + settings.FileConcurrency;
   } catch (_) {
     if (el.isConnected) el.textContent = "媒体库设置状态读取失败";
   }
@@ -872,6 +874,8 @@ async function librarySettingsDialog() {
       <h3>媒体库并发设置</h3>
       <label>同时扫描上限<input name="scanConcurrency" type="number" min="1" max="64" required value="${settings.ScanConcurrency}"></label>
       <label>同时更新上限<input name="updateConcurrency" type="number" min="1" max="64" required value="${settings.UpdateConcurrency}"></label>
+	  <label>单库扫描并发<input name="fileConcurrency" type="number" min="1" max="32" required value="${settings.FileConcurrency ?? 8}"></label>
+	  <p>单库并发用于手动扫描与刷新；新任务生效。</p>
       <p>超额任务排队；降低上限不会中断正在运行的任务。</p>
     </section>`, async () => {
       const fields = $("#modal form").elements;
@@ -883,6 +887,7 @@ async function librarySettingsDialog() {
         },
         ScanConcurrency: Number(fields.scanConcurrency.value),
         UpdateConcurrency: Number(fields.updateConcurrency.value),
+		FileConcurrency: Number(fields.fileConcurrency.value),
       });
       await refreshLibrarySettingsStatus();
       toast("媒体库设置已保存", {type:"success"});
@@ -910,9 +915,10 @@ function folderPage(id) {
   fmLibrary = id;
   const lib = adminLibs.find((x) => x.Id === id);
   if (!lib) return;
-  adminSection(0);
+  adminSection(0, false);
+  Panel.libraryDetails(lib);
   document.querySelectorAll(".admin-section")[0].innerHTML =
-    `<button class="secondary icon-button " title="媒体列表" aria-label="媒体列表" onclick="mediaPage()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button><div class="fm-toolbar"><h2><span class="${lib.Hidden ? "library-hidden" : ""}"><span class="library-name">${esc(lib.Name)}</span></span></h2><button class="secondary icon-button round-add" title="新建媒体文件夹" aria-label="新建媒体文件夹" onclick="run(()=>pickFolder('${id}'))()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><div class="scan-circle" title="扫描进度" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span>0%</span></div></div><div class="fm-list">${(lib.Locations || []).map((p, i) => `<div class="fm-row">${fmIcon("folder")}<div class="fm-name">${esc(p.split("/").pop() || "media")}<small>${esc(p)}</small></div>${fmMenu(fmButton("修改目录", `await pickFolder('${id}',${i})`) + fmButton("移除目录", `await removeFolder('${id}',${i})`, true))}</div>`).join("") || '<p class="empty">暂无媒体文件夹</p>'}</div>`;
+    `<button type="button" class="secondary text-icon-button" onclick="mediaPage()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg> 返回媒体库</button><div class="fm-toolbar"><h2><span class="${lib.Hidden ? "library-hidden" : ""}"><span class="library-name">${esc(lib.Name)}</span></span></h2><button class="secondary icon-button round-add" title="新建媒体文件夹" aria-label="新建媒体文件夹" onclick="run(()=>pickFolder('${id}'))()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><div class="scan-circle" title="扫描进度" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span>0%</span></div></div><div class="fm-list">${(lib.Locations || []).map((p, i) => `<div class="fm-row">${fmIcon("folder")}<div class="fm-name">${esc(p.split("/").pop() || "media")}<small>${esc(p)}</small></div>${fmMenu(fmButton("修改目录", `await pickFolder('${id}',${i})`) + fmButton("移除目录", `await removeFolder('${id}',${i})`, true))}</div>`).join("") || '<p class="empty">暂无媒体文件夹</p>'}</div>`;
 }
 async function pickFolder(id, index) {
   const old =
@@ -1010,7 +1016,7 @@ function renderUsers() {
         : b.LastLoginDate - a.LastLoginDate,
   );
   document.querySelectorAll(".admin-section")[1].innerHTML =
-    `<div class="fm-toolbar"><h2>用户管理</h2><button class="secondary icon-button round-add" title="新建用户" aria-label="新建用户" onclick="editUser()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select aria-label="排序" onchange="fmSort=this.value;renderUsers()"><option value="recent" ${fmSort === "recent" ? "selected" : ""}>最近登录优先</option><option value="oldest" ${fmSort === "oldest" ? "selected" : ""}>最久未登录优先</option><option value="name" ${fmSort === "name" ? "selected" : ""}>按名称排序</option></select></div><div class="fm-list">${list.map((x) => `<div class="fm-row">${fmIcon("user")}<div class="fm-name">${esc(x.Name)}<small>${x.FirstAdmin ? "首位管理员 · " : ""}${x.Policy.EnableMediaPlayback ? "允许播放" : "禁止播放"} · ${x.MaxDevices} 台设备</small></div><time class="fm-login" title="${x.LastLoginDate ? esc(new Date(x.LastLoginDate * 1000).toLocaleString()) : "从未登录"}">${loginAge(x.LastLoginDate)}</time>${fmMenu(fmButton("修改用户名和密码", `editUser('${x.Id}','identity')`) + fmButton("修改用户权限", `editUser('${x.Id}','permissions')`) + (!x.Policy.IsAdministrator && x.Id !== user.Id ? fmButton("删除用户", `await deleteUser('${x.Id}')`, true) : ""))}</div>`).join("")}</div>`;
+    `<div class="fm-toolbar"><h2>用户管理</h2><button class="text-icon-button" type="button" onclick="editUser()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>新建用户</span></button><select aria-label="排序" onchange="fmSort=this.value;renderUsers()"><option value="recent" ${fmSort === "recent" ? "selected" : ""}>最近登录优先</option><option value="oldest" ${fmSort === "oldest" ? "selected" : ""}>最久未登录优先</option><option value="name" ${fmSort === "name" ? "selected" : ""}>按名称排序</option></select></div><div class="fm-list">${list.map((x) => `<div class="fm-row">${fmIcon("user")}<div class="fm-name">${esc(x.Name)}<small>${x.FirstAdmin ? "首位管理员 · " : ""}${x.Policy.EnableMediaPlayback ? "允许播放" : "禁止播放"} · ${x.MaxDevices} 台设备</small></div><time class="fm-login" title="${x.LastLoginDate ? esc(new Date(x.LastLoginDate * 1000).toLocaleString()) : "从未登录"}">${loginAge(x.LastLoginDate)}</time>${fmMenu(fmButton("修改用户名和密码", `editUser('${x.Id}','identity')`) + fmButton("修改用户权限", `editUser('${x.Id}','permissions')`) + (!x.Policy.IsAdministrator && x.Id !== user.Id ? fmButton("删除用户", `await deleteUser('${x.Id}')`, true) : ""))}</div>`).join("")}</div>`;
 }
 async function refreshUsers() {
   fmUsers = await api("/admin/users");
@@ -1041,10 +1047,9 @@ function editUser(id, mode) {
         });
         if (id === user.Id) {
           user.Name = f.get("name");
-          sessionStorage.user = JSON.stringify(user);
+          saveCurrentSession();
           if (f.get("pw")) {
-            token = "";
-            sessionStorage.clear();
+            clearCurrentSession();
             login();
             toast("密码已修改，请重新登录");
             return;
@@ -1140,7 +1145,7 @@ async function loadServerName() {
   serverName=name;
   const logo=document.querySelector(".logo");
   if(logo)logo.textContent=name;
-  document.title=name+" · 影库";
+  document.title=(view==="admin"?document.querySelector(".page-heading h1")?.textContent||"管理面板":view==="files"?"文件管理":name)+" · "+(view==="admin"||view==="files"?name:"影库");
   if(view==="login")renderLoginMark();
 }
 
@@ -1259,6 +1264,9 @@ async function posterMenu(el, extraActions = []) {
   const close = action => async () => { sheet.close(); await action(); };
   // Settings and favorite details may fail or be slow; they must not block the menu.
   if (user?.Policy?.IsAdministrator) {
+    actions.push({label:"编辑媒体资料",action:close(()=>Features.metadata(id))});
+    actions.push({label:"管理图片",action:close(()=>Features.artwork(id))});
+    if(["Movie","Series"].includes(el.dataset.type))actions.push({label:"重新识别",action:close(()=>Features.identify(id))});
     actions.push({label:"重命名", action:close(() => {
       fmDialog("重命名显示名称", `<label>显示名称<input name="name" required maxlength="256" value="${esc(name)}"></label>`, async f => {
         await api("/admin/media-item", "PUT", {ID:id, Name:f.get("name")});
@@ -1268,6 +1276,7 @@ async function posterMenu(el, extraActions = []) {
     if (["Movie", "Series"].includes(el.dataset.type))
       actions.push({label:"刮削元数据", action:close(() => openPosterScraper(id))});
   }
+  actions.push({label:"加入合集",action:close(()=>Features.addToCollection(id))});
   if (favorite !== null) actions.push({label:favorite ? "取消收藏" : "收藏", icon:"star", action:close(async () => {
     await api(`/emby/Users/${encodeURIComponent(user.Id)}/FavoriteItems/${encodeURIComponent(id)}`, favorite ? "DELETE" : "POST");
     el.dataset.favorite = String(!favorite);
@@ -1358,8 +1367,9 @@ async function loadTelegramSettings() {
     <div class="telegram-field"><label for="telegram-chat">User / Chat ID</label><a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer">获取 User ID ↗</a></div>
     <input id="telegram-chat" name="chat" maxlength="128" value="${esc(c.telegram_chat_id)}" autocomplete="off">
     <div class="telegram-notify"><label class="toggle-label">启用通知<input class="switch" name="notify" role="switch" type="checkbox" ${c.telegram_notify_enabled ? "checked" : ""}></label><button type="button" class="secondary icon-button" data-notifications title="通知类型" aria-label="选择通知类型">${fmIcon("gear")}</button></div>
-    <p>先与机器人开始对话。测试发送会保存当前设置；留空 Token 会保留已保存的值。</p>
+    <p>先与机器人开始对话；测试发送会保存设置，Token 留空保留。</p>
     <div class="bar form-actions"><button type="button" class="secondary" data-test>测试发送</button><button type="submit">保存设置</button></div>`;
+  Panel.prepareForm("telegram-settings");
   let newMedia = c.telegram_notify_new_media, playback = c.telegram_notify_playback;
   const toggle = () => {
     f.elements.notify.disabled = !f.elements.enabled.checked;
@@ -1403,8 +1413,9 @@ async function loadSubtitleSettings() {
     <label class="tmdb-switch-row"><input class="switch" role="switch" name="beside" type="checkbox" ${c.SaveBesideMedia ? 'checked' : ''}><span>外挂字幕保存到视频所在目录</span></label>
     <div class="tmdb-field tmdb-token-field"><label for="secret-assrt">ASSRT Token</label>${secretField('assrt', 'ASSRT Token', '输入 ASSRT API Token')}</div>
     <label class="tmdb-field tmdb-inline-field"><span>字幕缓存目录</span><input name="directory" value="${esc(c.Directory)}" required></label>
-    <p class="tmdb-help">字幕服务由 <a href="https://assrt.net" target="_blank" rel="noopener noreferrer">assrt.net</a> 提供。优先简体中文，其次繁体中文；没有可信中文候选时跳过。后台下载完成后，客户端重新请求媒体信息即可发现字幕。</p>
+    <p class="tmdb-help">字幕服务：<a href="https://assrt.net" target="_blank" rel="noopener noreferrer">assrt.net</a>；无可信候选时跳过。</p>
     <div class="tmdb-actions"><button>保存</button><button type="button" class="danger" id="clear-subtitles">清除字幕缓存</button></div>`;
+  Panel.prepareForm("subtitle-settings");
   const secret = bindSecretField(f.elements.assrt, '/admin/subtitle/secret', 'ASSRT Token', c.TokenConfigured);
   f.onsubmit = run(async e => {
     e.preventDefault();
@@ -1430,8 +1441,9 @@ async function loadIntroSettings() {
     <label class="tmdb-field tmdb-inline-field"><span>最小有效样本</span><input name="samples" type="number" min="2" max="20" required value="${c.MinSamples}"></label>
     <label class="tmdb-field tmdb-inline-field"><span>候选误差（秒）</span><input name="tolerance" type="number" min="1" max="120" required value="${c.ToleranceSeconds}"></label>
     <label class="tmdb-field tmdb-inline-field"><span>片头片尾数据目录</span><input name="directory" type="text" required value="${esc(c.Directory)}"></label>
-    <p class="tmdb-help">仅从剧集播放和跳转行为学习。同一季多集候选稳定后，向客户端返回标准章节标记。片头自动跳过使用 Emby 的 AutoSkip 模式；片尾是否自动跳过取决于客户端，Emby 原生客户端通常显示“下一集”按钮。</p>
+    <p class="tmdb-help">自动跳过需要客户端支持。</p>
     <div class="tmdb-actions"><button>保存</button><button type="button" class="danger" data-clear>清除学习记录</button></div>`;
+  Panel.prepareForm("intro-settings");
   f.onsubmit=run(async e=>{e.preventDefault();await api('/admin/intro-credits','PUT',{Enabled:f.elements.enabled.checked,AutoIntro:f.elements.intro.checked,AutoCredits:f.elements.credits.checked,AutoSkipIntro:f.elements.skipIntro.checked,AutoSkipCredits:f.elements.skipCredits.checked,Directory:f.elements.directory.value,WindowMinutes:Number(f.elements.window.value),MinSamples:Number(f.elements.samples.value),ToleranceSeconds:Number(f.elements.tolerance.value)});toast('片头片尾设置已保存')});
   f.querySelector('[data-clear]').onclick=run(async()=>{if(!await confirmDialog('清除学习记录','确定清除全部已确认的片头片尾标记和当前学习记录吗？','清除学习记录'))return;await api('/admin/intro-credits/records','DELETE');toast('学习记录已清除')});
 }
@@ -1445,8 +1457,9 @@ async function loadProxySettings() {
     <label class="tmdb-field tmdb-inline-field"><span>用户名（可选）</span><input name="username" autocomplete="off" value="${esc(c.Username)}"></label>
     <label class="tmdb-field tmdb-inline-field"><span>密码（可选）</span><input name="password" type="password" autocomplete="new-password" placeholder="${c.PasswordConfigured?'已设置，留空保留':'留空则不使用密码'}"></label>
     <fieldset><legend>代理范围</legend>${scopes.map(([key,label])=>`<label class="tmdb-switch-row"><input class="switch" role="switch" type="checkbox" name="scope-${key}" ${c.Scopes?.[key]?'checked':''}><span>${label}</span></label>`).join('')}</fieldset>
-    <p class="tmdb-help">仅影响服务主动发出的外部 API 请求。播放源和视频流继续使用原有连接。</p>
+    <p class="tmdb-help">代理仅用于外部 API，不代理视频流。</p>
     <div class="tmdb-actions"><button>保存</button><button type="button" class="secondary" data-test>测试连接</button></div><p data-result role="status" aria-live="polite"></p>`;
+  Panel.prepareForm("proxy-settings");
   f.elements.type.value=c.Type||'HTTP';
   const values=()=>({Enabled:f.elements.enabled.checked,Type:f.elements.type.value,URL:f.elements.url.value,Username:f.elements.username.value,Password:f.elements.password.value,Scopes:Object.fromEntries(scopes.map(([key])=>[key,f.elements[`scope-${key}`].checked]))});
   f.onsubmit=run(async e=>{e.preventDefault();const saved=await api('/admin/proxy-settings','PUT',values());f.elements.password.value='';f.elements.password.placeholder=saved.PasswordConfigured?'已设置，留空保留':'留空则不使用密码';toast('代理设置已保存',{type:'success'})});
@@ -1459,11 +1472,42 @@ async function loadConsole() {
   const controller = new AbortController();
   consoleController = controller;
   try {
-    const data = await api('/admin/dashboard', 'GET', undefined, {signal:controller.signal});
+    const [data, scraper, queue] = await Promise.all([
+      api('/admin/dashboard', 'GET', undefined, {signal:controller.signal}),
+      api('/admin/scraper', 'GET', undefined, {signal:controller.signal}).catch(()=>null),
+      api('/admin/media-info/status', 'GET', undefined, {signal:controller.signal}).catch(()=>null)
+    ]);
     if (controller.signal.aborted || !host.isConnected || host.closest('.admin-section').hidden || view !== 'admin') return;
-    const duration = seconds => `${Math.floor(seconds/86400)}天 ${Math.floor(seconds%86400/3600)}小时`;
-    const stat = (label, value, note='') => `<div class="dashboard-stat"><span>${label}</span><strong>${value}</strong>${note ? `<small>${note}</small>` : ''}</div>`;
-    host.innerHTML = `<div class="dashboard-status"><span class="dashboard-status-dot" aria-hidden="true"></span>服务正常 · 运行 ${duration(data.uptimeSeconds)}</div><div class="dashboard-grid">${stat('电影',data.movieCount)}${stat('电视剧',data.seriesCount)}${stat('剧集',data.episodeCount)}${stat('用户',data.userCount)}</div><div class="dashboard-grid">${stat('CPU',`${Number(data.cpuPercent||0).toFixed(1)}%`,'AI Emby 进程')}${stat('内存',`${Math.round(data.memoryBytes/1048576)} MB`,'AI Emby 进程占用')}${stat('运行时长',duration(data.uptimeSeconds))}${stat('正在播放',data.activePlaybackCount)}</div><section class="dashboard-playing"><h3>正在播放</h3>${data.activePlayback.length ? data.activePlayback.map(x => `<article class="dashboard-playing-item"><div><strong>${esc(x.username||'未知用户')}</strong><span>${esc(x.mediaName||'未知媒体')}</span></div><small>${esc([x.device,x.client].filter(Boolean).join(' · '))}</small><div class="dashboard-playing-progress"><progress max="100" value="${Math.max(0,Math.min(100,Number(x.progressPercent)||0))}"></progress><span>${Math.round(x.progressPercent||0)}%</span></div></article>`).join('') : '<p class="dashboard-empty">当前没有正在播放</p>'}</section>`;
+    const duration = seconds => seconds>=86400?`${Math.floor(seconds/86400)}天 ${Math.floor(seconds%86400/3600)}小时`:seconds>=3600?`${Math.floor(seconds/3600)}小时 ${Math.floor(seconds%3600/60)}分钟`:`${Math.floor(seconds/60)}分钟`;
+    const count = value => Number(value||0).toLocaleString('zh-CN');
+    const stat = (label, value, note='', icon='', kind='') => `<div class="dashboard-stat ${kind}">${icon?`<div class="stat-heading"><span>${label}</span><span class="stat-icon" aria-hidden="true">${drawerIcon(icon)}</span></div>`:`<span>${label}</span>`}<strong>${value}</strong>${note?`<small>${note}</small>`:''}</div>`;
+    const scraperState = !scraper?'unavailable':scraper.Paused?'paused':scraper.Planning||scraper.Running?'running':'idle';
+    host.innerHTML = `
+      <div class="dashboard-grid">
+        ${stat('电影',count(data.movieCount),'','media','stat-movies')}
+        ${stat('电视剧',count(data.seriesCount),'','chapter','stat-series')}
+        ${stat('剧集',count(data.episodeCount),'','sort','stat-episodes')}
+        ${stat('用户',count(data.userCount),'','users','stat-users')}
+      </div>
+      <div class="runtime-heading"><h3 class="overview-subheading">服务状态</h3><div class="dashboard-status"><span class="dashboard-status-dot" aria-hidden="true"></span>服务正常</div></div>
+      <div class="dashboard-grid dashboard-runtime">
+        ${stat('CPU 使用率（进程）',`${Number(data.cpuPercent||0).toFixed(1)}%`)}
+        ${stat('内存占用（进程）',`${Math.round(data.memoryBytes/1048576)} MB`)}
+        ${stat('运行时长',duration(data.uptimeSeconds))}
+        ${stat('正在播放',count(data.activePlaybackCount))}
+      </div>
+      <div class="overview-columns">
+        <section class="task-overview"><div class="card-heading"><h3>任务中心</h3></div>
+          <button type="button" class="task-row" onclick="navigateAdminSection(8)"><span class="task-icon" aria-hidden="true">${drawerIcon('scraper')}</span><span class="task-copy">元数据刮削<small>${scraper?`并发 ${scraper.Settings?.Concurrency||1} · 元数据与图片`:'状态暂不可用'}</small></span><strong data-state="${scraperState}">${scraper?scraper.Planning?'正在扫描':scraper.Running?scraper.Paused?'已暂停':'正在刮削':'空闲':'—'}</strong><span class="task-arrow" aria-hidden="true">›</span></button>
+          <button type="button" class="task-row" onclick="navigateAdminSection(3)"><span class="task-icon" aria-hidden="true">${drawerIcon('info')}</span><span class="task-copy">媒体信息提取<small>${queue?`等待 ${queue.ProbeWaiting} · 并发 ${queue.ProbeConcurrency}`:'状态暂不可用'}</small></span><strong data-state="${queue?.ProbeRunning?'running':'idle'}">${queue?`运行 ${queue.ProbeRunning}`:'—'}</strong><span class="task-arrow" aria-hidden="true">›</span></button>
+        </section>
+        <section class="quick-links"><div class="card-heading"><h3>快捷开始</h3></div>
+          <button type="button" onclick="navigateAdminSection(0)">${drawerIcon('media')}管理媒体库 <span aria-hidden="true">↗</span></button>
+          <button type="button" onclick="filesPage('')">${drawerIcon('files')}浏览媒体文件 <span aria-hidden="true">↗</span></button>
+          <button type="button" onclick="showLogs()">${drawerIcon('sort')}查看实时日志 <span aria-hidden="true">↗</span></button>
+        </section>
+      </div>
+      <section class="dashboard-playing"><h3>正在播放</h3>${data.activePlayback.length?data.activePlayback.map(x=>`<article class="dashboard-playing-item"><div><strong>${esc(x.username||'未知用户')}</strong><span>${esc(x.mediaName||'未知媒体')}</span></div><small>${esc([x.device,x.client].filter(Boolean).join(' · '))}</small><div class="dashboard-playing-progress"><progress max="100" value="${Math.max(0,Math.min(100,Number(x.progressPercent)||0))}"></progress><span>${Math.round(x.progressPercent||0)}%</span></div></article>`).join(''):`<p class="dashboard-empty">${drawerIcon('media')}当前没有正在播放</p>`}</section>`;
   } catch (e) { if (!controller.signal.aborted && host.isConnected) host.textContent = '控制台读取失败：' + e.message; }
   if (consoleController === controller) consoleController = null;
   if (!controller.signal.aborted && host.isConnected && !host.closest('.admin-section').hidden && view === 'admin') consoleTimer = setTimeout(loadConsole, 3000);
