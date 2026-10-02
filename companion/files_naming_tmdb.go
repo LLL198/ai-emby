@@ -27,6 +27,19 @@ func namingSameFile(before, after fs.FileInfo) bool {
 	return before != nil && after != nil && os.SameFile(before, after) && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
 }
 
+var errNamingContainerDirectory = errors.New("分类或多作品目录保持原名，继续处理其中的媒体文件")
+
+func namingAuxiliaryDirectory(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "extras", "extrafanart", "extrathumbs", "sample", "samples", "subs", "subtitles", "trailers", "featurettes", "字幕", "花絮", "预告片":
+		return true
+	}
+	return false
+}
+
 func namingDirectoryKind(root *os.Root, path string, allowBare bool, entries []fs.DirEntry) (string, error) {
 	if entries == nil {
 		var err error
@@ -35,33 +48,50 @@ func namingDirectoryKind(root *os.Root, path string, allowBare bool, entries []f
 			return "auto", err
 		}
 	}
-	media := 0
+	episodes, movies, seasons, otherDirectories := 0, 0, 0, 0
+	works := map[string]bool{}
 	for _, entry := range entries {
 		if entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
 		if entry.IsDir() {
 			if _, ok := namingSeason(entry.Name()); ok {
-				return "tv", nil
+				seasons++
+			} else if !namingAuxiliaryDirectory(entry.Name()) {
+				otherDirectories++
 			}
 			continue
 		}
 		if !featureMediaExtension(entry.Name()) {
 			continue
 		}
-		media++
 		stem, _ := namingSplit(entry.Name())
-		if _, ok := namingEpisode(stem, allowBare); ok {
-			return "tv", nil
+		identity := namingTitle(entry.Name())
+		if episode, ok := namingEpisode(stem, allowBare); ok {
+			episodes++
+			identity.Title = scraperSearchIdentity(stem[:episode.Start]).Title
+		} else {
+			movies++
+		}
+		if identity.TMDBID != "" {
+			works["tmdb:"+identity.TMDBID] = true
+		} else if title := scraperTitleKey(identity.Title); title != "" {
+			works[fmt.Sprintf("%s|%d", title, identity.Year)] = true
 		}
 	}
-	if media == 1 {
+	if otherDirectories > 0 || len(works) > 1 || movies > 0 && (episodes > 0 || seasons > 0) {
+		return "auto", errNamingContainerDirectory
+	}
+	if episodes > 0 || seasons > 0 {
+		return "tv", nil
+	}
+	if movies == 1 || movies > 1 && len(works) == 1 {
 		return "movie", nil
 	}
-	if media == 0 {
+	if movies == 0 {
 		return "auto", errors.New("未找到媒体文件或季目录，请进入具体作品目录")
 	}
-	return "auto", nil
+	return "auto", errNamingContainerDirectory
 }
 
 type namingTMDBResult struct {

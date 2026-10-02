@@ -328,6 +328,26 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 			plan.Rows = append(plan.Rows, row)
 			continue
 		}
+		directoryKind := ""
+		if b.Mode == "auto" && fi.IsDir() {
+			if _, season := namingSeason(fi.Name()); !season {
+				inferredKind, err := namingDirectoryKind(root, path, b.Bare, scope.Entries[path])
+				if err != nil {
+					row.Reason = err.Error()
+					if errors.Is(err, errNamingContainerDirectory) || row.Reason == "未找到媒体文件或季目录，请进入具体作品目录" {
+						row.Status, row.New = "unchanged", path
+					}
+					plan.Rows = append(plan.Rows, row)
+					continue
+				}
+				if (b.Kind == "movie" || b.Kind == "tv") && b.Kind != inferredKind {
+					row.Reason = "作品目录内容与指定类型冲突，请核对电影或剧集类型"
+					plan.Rows = append(plan.Rows, row)
+					continue
+				}
+				directoryKind = inferredKind
+			}
+		}
 		request := b
 		matchReason := ""
 		if b.Mode != "regex" && (b.TMDB != "" || b.AutoTMDB == nil || *b.AutoTMDB) {
@@ -338,20 +358,8 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 				continue
 			}
 			if !source.SeasonDirectory {
-				if fi.IsDir() && (source.Kind == "auto" || b.Title == "" && b.TMDB == "") {
-					inferredKind, err := namingDirectoryKind(root, path, b.Bare, scope.Entries[path])
-					if err != nil {
-						row.Reason = err.Error()
-						plan.Rows = append(plan.Rows, row)
-						continue
-					}
-					if source.Kind == "auto" {
-						source.Kind = inferredKind
-					} else if inferredKind != "auto" && source.Kind != inferredKind {
-						row.Reason = "作品目录内容与指定类型冲突，请核对电影或剧集类型"
-						plan.Rows = append(plan.Rows, row)
-						continue
-					}
+				if source.Kind == "auto" && directoryKind != "" {
+					source.Kind = directoryKind
 				}
 				filesMu.RUnlock()
 				filesLocked = false
@@ -617,7 +625,10 @@ func namingSidecars(root *os.Root, entries []fs.DirEntry, old, next string) []na
 			if err != nil || !fi.Mode().IsRegular() {
 				continue
 			}
-			moves = append(moves, namingMove{Old: p, New: filepath.Join(filepath.Dir(next), pair[1]+suffix), Info: fi})
+			destination := filepath.Join(filepath.Dir(next), pair[1]+suffix)
+			if p != destination || old == next {
+				moves = append(moves, namingMove{Old: p, New: destination, Info: fi})
+			}
 			break
 		}
 	}
@@ -667,9 +678,19 @@ func namingConflicts(root *os.Root, rows []namingRow) {
 		if row.Status != "ready" {
 			continue
 		}
-		for _, m := range row.Moves {
+		rowPaths := map[string]int{}
+		for moveIndex, m := range row.Moves {
 			for _, p := range []string{m.Old, m.New} {
-				claimed[strings.ToLower(p)] = append(claimed[strings.ToLower(p)], i)
+				key := strings.ToLower(p)
+				if previous, exists := rowPaths[key]; exists {
+					if previous != moveIndex {
+						rows[i].Status = "conflict"
+						rows[i].Reason = "关联文件的源文件或目标名称重叠"
+					}
+					continue
+				}
+				rowPaths[key] = moveIndex
+				claimed[key] = append(claimed[key], i)
 			}
 			if m.Old == m.New {
 				rows[i].Status = "conflict"
@@ -930,15 +951,23 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 	a.filesChanged(paths)
 	mapping := namingPathMapping(moves)
 	destinations := map[string]string{}
+	sources := map[string]string{}
 	for _, row := range plan.Rows {
 		full := mapping.rebase(filepath.Join(fileRoot(), row.Old))
 		if relative, err := filepath.Rel(fileRoot(), full); err == nil {
-			destinations[row.ID] = relative
+			sources[row.ID] = relative
+			if selected[row.ID] || row.Status == "unchanged" {
+				destinations[row.ID] = relative
+			} else if row.New != "" {
+				if target, err := filepath.Rel(fileRoot(), mapping.rebase(filepath.Join(fileRoot(), row.New))); err == nil {
+					destinations[row.ID] = target
+				}
+			}
 		}
 	}
 	a.namingProgressUpdate(plan.Progress, user.ID, "完成", len(moves), len(moves), "")
 	_, nextScopeVersion, _ := a.namingScraperRoots()
-	respond(w, M{"ok": true, "renamed": len(rows), "files": len(moves), "journal": journal, "journalWarning": journalErr != nil, "scanQueued": true, "destinations": destinations, "scopeVersion": nextScopeVersion})
+	respond(w, M{"ok": true, "renamed": len(rows), "files": len(moves), "journal": journal, "journalWarning": journalErr != nil, "scanQueued": true, "destinations": destinations, "sources": sources, "scopeVersion": nextScopeVersion})
 }
 
 func (a *App) namingJournal(key string, moves []namingMove, status, message string) (string, error) {

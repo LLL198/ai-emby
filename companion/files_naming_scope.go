@@ -62,7 +62,7 @@ func namingCollect(ctx context.Context, root *os.Root, base string, selected map
 			}
 			return nil
 		}
-		if include && request.Mode != "sequence" && (!request.Recursive || request.Folders) {
+		if include && request.Mode != "sequence" && (request.Folders || request.Kind == "directory") {
 			if err := add(path); err != nil {
 				return err
 			}
