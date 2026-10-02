@@ -27,10 +27,13 @@ func namingSameFile(before, after fs.FileInfo) bool {
 	return before != nil && after != nil && os.SameFile(before, after) && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime())
 }
 
-func namingDirectoryKind(root *os.Root, path string, allowBare bool) (string, error) {
-	entries, err := namingEntries(root, path)
-	if err != nil {
-		return "auto", err
+func namingDirectoryKind(root *os.Root, path string, allowBare bool, entries []fs.DirEntry) (string, error) {
+	if entries == nil {
+		var err error
+		entries, err = namingEntries(root, path)
+		if err != nil {
+			return "auto", err
+		}
 	}
 	media := 0
 	for _, entry := range entries {

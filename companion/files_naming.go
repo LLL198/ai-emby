@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,8 +23,10 @@ import (
 )
 
 type namingState struct {
-	mu    sync.Mutex
-	plans map[string]*namingPlan
+	mu         sync.Mutex
+	plans      map[string]*namingPlan
+	progressMu sync.Mutex
+	progress   map[string]namingProgress
 }
 type namingRequest struct {
 	Path          string   `json:"path"`
@@ -36,6 +37,9 @@ type namingRequest struct {
 	Year          int      `json:"year"`
 	TMDB          string   `json:"tmdb"`
 	AutoTMDB      *bool    `json:"autoTMDB"`
+	Recursive     bool     `json:"recursive"`
+	Folders       bool     `json:"folders"`
+	Progress      string   `json:"progress"`
 	OriginalTitle string   `json:"-"`
 	Season        *int     `json:"season"`
 	Bare          bool     `json:"bare"`
@@ -60,14 +64,27 @@ type namingRow struct {
 	Moves     []namingMove `json:"moves"`
 }
 type namingPlan struct {
-	ID      string      `json:"id"`
-	Rows    []namingRow `json:"rows"`
-	Created time.Time   `json:"created"`
-	Owner   string      `json:"-"`
+	ID          string      `json:"id"`
+	Rows        []namingRow `json:"rows"`
+	Created     time.Time   `json:"created"`
+	Owner       string      `json:"-"`
+	Root        string      `json:"root"`
+	Recursive   bool        `json:"recursive"`
+	Directories int         `json:"directories"`
+	Scanned     int         `json:"scanned"`
+	Progress    string      `json:"progress"`
 }
 
 func (a *App) namingAPI(w http.ResponseWriter, r *http.Request, user User) {
+	if r.URL.Path == "/admin/features/naming/progress" {
+		a.namingProgressAPI(w, r, user)
+		return
+	}
 	if !featureMethod(w, r, http.MethodPost) {
+		return
+	}
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		fail(w, 500, "无法准备长时间命名任务")
 		return
 	}
 	switch r.URL.Path {
@@ -86,12 +103,12 @@ func namingEntries(root *os.Root, dir string) ([]fs.DirEntry, error) {
 		return nil, err
 	}
 	defer f.Close()
-	entries, err := f.ReadDir(10001)
+	entries, err := f.ReadDir(500001)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
-	if len(entries) > 10000 {
-		return nil, errors.New("当前目录超过 10000 项，请选择更小的目录")
+	if len(entries) > 500000 {
+		return nil, errNamingDirectoryTooLarge
 	}
 	return entries, nil
 }
@@ -138,8 +155,8 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 		fail(w, 400, "无效作品类型")
 		return
 	}
-	if len(b.Paths) > 500 || len(b.Title) > 512 || len(b.Template) > 512 || len(b.Pattern) > 512 || len(b.Replacement) > 512 {
-		fail(w, 400, "一次最多预览 500 项，输入不得过长")
+	if len(b.Paths) > 500 || len(b.Title) > 512 || len(b.Template) > 512 || len(b.Pattern) > 512 || len(b.Replacement) > 512 || len(b.Progress) > 80 {
+		fail(w, 400, "一次最多选择 500 个入口文件或文件夹，输入不得过长")
 		return
 	}
 	if b.Year != 0 && (b.Year < 1800 || b.Year > 2199) || b.Season != nil && (*b.Season < 0 || *b.Season > 999) {
@@ -149,6 +166,13 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 	if b.Mode == "sequence" && (b.Start < 1 || b.Start > 9999 || b.Width < 1 || b.Width > 4 || b.Kind != "tv" || b.Season == nil || strings.TrimSpace(b.Title) == "") {
 		fail(w, 400, "顺序编号需要作品名、明确的季号、1–9999 起始编号和 1–4 补位长度")
 		return
+	}
+	if b.Mode == "sequence" && b.Recursive {
+		fail(w, 400, "顺序编号请进入具体季目录操作，不能跨子目录重排集号")
+		return
+	}
+	if b.Progress == "" {
+		b.Progress = id()
 	}
 	var re *regexp.Regexp
 	if b.Mode == "regex" {
@@ -193,11 +217,6 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 		fail(w, 400, "请选择目录")
 		return
 	}
-	entries, err := namingEntries(root, dir)
-	if err != nil {
-		featureError(w, err)
-		return
-	}
 	selected := map[string]bool{}
 	for _, path := range b.Paths {
 		p, e := fileName(path)
@@ -211,32 +230,57 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 		}
 		selected[p] = true
 	}
-	files := []string{}
-	for _, e := range entries {
-		p := filepath.Join(dir, e.Name())
-		if e.Type()&os.ModeSymlink != 0 || !e.IsDir() && !featureMediaExtension(e.Name()) {
-			continue
+	scanJob := a.newActivity("rename", b.Progress, "扫描规范命名")
+	a.changeActivity(scanJob, func(entry *activityEntry) { entry.State = "counting"; entry.Current = "读取目录" })
+	previewComplete := false
+	defer func() {
+		if previewComplete {
+			a.finishActivity(scanJob, nil)
+		} else {
+			err := r.Context().Err()
+			if err == nil {
+				err = errors.New("扫描或匹配未完成")
+			}
+			a.finishActivity(scanJob, err)
+			a.namingProgressUpdate(b.Progress, user.ID, "已停止", 0, 0, err.Error())
 		}
-		if b.Mode == "sequence" && e.IsDir() {
-			continue
-		}
-		if len(selected) > 0 && !selected[p] {
-			continue
-		}
-		files = append(files, p)
-	}
-	if len(files) > 500 {
-		fail(w, 400, "当前目录超过 500 个媒体项目，请先勾选需要处理的文件")
+	}()
+	scope, err := namingCollect(r.Context(), root, dir, selected, b, func(found int, current string) {
+		a.namingProgressUpdate(b.Progress, user.ID, "扫描目录", found, 0, current)
+		a.changeActivity(scanJob, func(entry *activityEntry) { entry.Done = found; entry.Current = "读取目录：" + current })
+	})
+	if err != nil {
+		featureError(w, err)
 		return
 	}
-	sort.SliceStable(files, func(i, j int) bool { return namingNatural(files[i], files[j]) })
-	plan := &namingPlan{ID: id(), Owner: user.ID, Created: time.Now(), Rows: []namingRow{}}
+	files := scope.Files
+	plan := &namingPlan{ID: id(), Owner: user.ID, Created: time.Now(), Rows: []namingRow{}, Root: dir, Recursive: b.Recursive, Directories: scope.Directories, Scanned: scope.Visited, Progress: b.Progress}
+	protected := []string{}
+	if a.db != nil {
+		for _, library := range a.libraries() {
+			protected = append(protected, library["Locations"].([]string)...)
+		}
+	}
+	a.changeActivity(scanJob, func(entry *activityEntry) {
+		entry.State = "running"
+		entry.Total = len(files)
+		entry.Done = 0
+		entry.Current = "匹配作品"
+	})
 	resolver := namingTMDBResolver{app: a, settings: a.tmdbSettings(), cache: map[string]namingTMDBResult{}}
+	sidecars := map[string]map[string][]fs.DirEntry{}
 	for i, path := range files {
 		if err := r.Context().Err(); err != nil {
 			return
 		}
 		row := namingRow{ID: strconv.Itoa(i), Old: path, Status: "review", Moves: []namingMove{}}
+		a.namingProgressUpdate(b.Progress, user.ID, "匹配作品", i, len(files), path)
+		a.changeActivity(scanJob, func(entry *activityEntry) { entry.Done = i; entry.Current = "匹配作品：" + path })
+		if reason := scope.Errors[path]; reason != "" {
+			row.Reason = reason
+			plan.Rows = append(plan.Rows, row)
+			continue
+		}
 		fi, e := fileCheck(root, path)
 		if e != nil {
 			row.Reason = "源文件不可用"
@@ -244,6 +288,19 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 			continue
 		}
 		row.Directory = fi.IsDir()
+		if fi.IsDir() {
+			full := filepath.Join(fileRoot(), path)
+			for _, location := range protected {
+				if full == location || strings.HasPrefix(location, full+string(filepath.Separator)) {
+					row.Status, row.New, row.Reason = "unchanged", path, "媒体库根目录保持原名，继续处理其中的文件"
+					break
+				}
+			}
+			if row.Status == "unchanged" {
+				plan.Rows = append(plan.Rows, row)
+				continue
+			}
+		}
 		if b.Mode == "sequence" && fi.IsDir() {
 			row.Reason = "顺序编号只处理媒体文件"
 			plan.Rows = append(plan.Rows, row)
@@ -260,7 +317,7 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 			}
 			if !source.SeasonDirectory {
 				if fi.IsDir() && (source.Kind == "auto" || b.Title == "" && b.TMDB == "") {
-					inferredKind, err := namingDirectoryKind(root, path, b.Bare)
+					inferredKind, err := namingDirectoryKind(root, path, b.Bare, scope.Entries[path])
 					if err != nil {
 						row.Reason = err.Error()
 						plan.Rows = append(plan.Rows, row)
@@ -310,7 +367,15 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 			plan.Rows = append(plan.Rows, row)
 			continue
 		}
-		row.New = filepath.Join(dir, next)
+		parent := filepath.Dir(path)
+		entries := []fs.DirEntry{}
+		if !fi.IsDir() {
+			if _, ok := sidecars[parent]; !ok {
+				sidecars[parent] = namingSidecarIndex(scope.Entries[parent])
+			}
+			entries = namingRelatedEntries(sidecars[parent], path)
+		}
+		row.New = filepath.Join(parent, next)
 		if row.New == path {
 			row.Status = "unchanged"
 			row.Reason = "名称已符合当前规则"
@@ -327,7 +392,7 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 			plan.Rows = append(plan.Rows, row)
 			continue
 		}
-		if p, e := fileName(row.New); e != nil || filepath.Dir(p) != dir {
+		if p, e := fileName(row.New); e != nil || filepath.Dir(p) != parent {
 			row.Reason = "新名称包含非法路径"
 			plan.Rows = append(plan.Rows, row)
 			continue
@@ -360,8 +425,15 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 		fail(w, 429, "命名预览过多，请稍后重试")
 		return
 	}
+	plan.Created = time.Now()
 	a.naming.plans[plan.ID] = plan
 	a.naming.mu.Unlock()
+	previewComplete = true
+	a.namingProgressUpdate(b.Progress, user.ID, "预览完成", len(files), len(files), "")
+	a.changeActivity(scanJob, func(entry *activityEntry) {
+		entry.Done = len(files)
+		entry.Current = fmt.Sprintf("已扫描 %d 个目录，识别 %d 个媒体项目", scope.Directories, len(files))
+	})
 	respond(w, plan)
 }
 
@@ -648,8 +720,8 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 		}
 		selected[key] = true
 	}
-	if len(selected) == 0 || len(selected) > 500 {
-		fail(w, 400, "请选择 1–500 个可改名项目")
+	if len(selected) == 0 || len(selected) > namingMaxItems {
+		fail(w, 400, fmt.Sprintf("请选择 1–%d 个可改名项目", namingMaxItems))
 		return
 	}
 	rows := []namingRow{}
@@ -669,6 +741,7 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 		fail(w, 400, "选择包含未知项目")
 		return
 	}
+	namingSortMoves(moves)
 	filesMu.Lock()
 	defer filesMu.Unlock()
 	a.features.mu.Lock()
@@ -706,9 +779,14 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 		fail(w, 409, err.Error())
 		return
 	}
-	// A separate context lets an accepted batch finish even if its browser closes.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	// Keep accepted work running if the browser disconnects; stop on service shutdown.
+	parentContext := a.features.ctx
+	if parentContext == nil {
+		parentContext = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parentContext)
 	defer cancel()
+	a.namingProgressUpdate(plan.Progress, user.ID, "准备改名", 0, len(moves), "迁移作品、收藏和观看记录")
 	tx, err := a.namingCatalog(ctx, moves)
 	if err != nil {
 		fail(w, 409, err.Error())
@@ -730,7 +808,7 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 			break
 		}
 		fi, e := fileCheck(root, m.Old)
-		if e != nil || !os.SameFile(m.Info, fi) || fi.Size() != m.Info.Size() || !fi.ModTime().Equal(m.Info.ModTime()) {
+		if e != nil || !os.SameFile(m.Info, fi) || !fi.IsDir() && (fi.Size() != m.Info.Size() || !fi.ModTime().Equal(m.Info.ModTime())) {
 			err = errors.New("执行期间源文件已变化")
 			break
 		}
@@ -738,6 +816,7 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 			break
 		}
 		completed = append(completed, m)
+		a.namingProgressUpdate(plan.Progress, user.ID, "改名", len(completed), len(moves), m.Old+" → "+m.New)
 		a.changeActivity(job, func(e *activityEntry) {
 			e.Done = len(completed)
 			e.Current = filepath.Base(m.Old) + " → " + filepath.Base(m.New)
@@ -751,6 +830,7 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 			_ = tx.Rollback()
 		}
 		rollbackErrors := []string{}
+		reverted := map[int]bool{}
 		for i := len(completed) - 1; i >= 0; i-- {
 			fi, e := fileCheck(root, completed[i].New)
 			if e != nil || !os.SameFile(completed[i].Info, fi) {
@@ -759,6 +839,24 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 			}
 			if e = namingRename(root, completed[i], true); e != nil {
 				rollbackErrors = append(rollbackErrors, completed[i].New)
+			} else {
+				reverted[i] = true
+			}
+		}
+		remaining := []namingMove{}
+		for i, move := range completed {
+			if !reverted[i] {
+				remaining = append(remaining, move)
+			}
+		}
+		if len(remaining) > 0 {
+			rollbackErrors = nil
+			mapping := namingPathMapping(remaining)
+			for _, move := range remaining {
+				full := mapping.rebase(filepath.Join(fileRoot(), move.Old))
+				if relative, err := filepath.Rel(fileRoot(), full); err == nil {
+					rollbackErrors = append(rollbackErrors, relative)
+				}
 			}
 		}
 		for _, move := range moves {
@@ -781,6 +879,7 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 			a.filesChanged(paths)
 		}
 		_, _ = a.namingJournal(plan.ID, moves, "failed", message)
+		a.namingProgressUpdate(plan.Progress, user.ID, "已停止", len(completed), len(moves), message)
 		a.finishActivity(job, errors.New(message))
 		delete(a.naming.plans, plan.ID)
 		fail(w, 500, message)
@@ -790,7 +889,16 @@ func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
 	delete(a.naming.plans, plan.ID)
 	a.finishActivity(job, nil)
 	a.filesChanged(paths)
-	respond(w, M{"ok": true, "renamed": len(rows), "files": len(moves), "journal": journal, "journalWarning": journalErr != nil, "scanQueued": true})
+	mapping := namingPathMapping(moves)
+	destinations := map[string]string{}
+	for _, row := range plan.Rows {
+		full := mapping.rebase(filepath.Join(fileRoot(), row.Old))
+		if relative, err := filepath.Rel(fileRoot(), full); err == nil {
+			destinations[row.ID] = relative
+		}
+	}
+	a.namingProgressUpdate(plan.Progress, user.ID, "完成", len(moves), len(moves), "")
+	respond(w, M{"ok": true, "renamed": len(rows), "files": len(moves), "journal": journal, "journalWarning": journalErr != nil, "scanQueued": true, "destinations": destinations})
 }
 
 func (a *App) namingJournal(key string, moves []namingMove, status, message string) (string, error) {
@@ -827,19 +935,6 @@ func (a *App) namingJournal(key string, moves []namingMove, status, message stri
 		return "", err
 	}
 	return path, nil
-}
-
-func namingRebase(path string, moves []namingMove) string {
-	for _, m := range moves {
-		old, next := filepath.Join(fileRoot(), m.Old), filepath.Join(fileRoot(), m.New)
-		if path == old {
-			return next
-		}
-		if m.Info.IsDir() && strings.HasPrefix(path, old+string(filepath.Separator)) {
-			return next + strings.TrimPrefix(path, old)
-		}
-	}
-	return path
 }
 
 func (a *App) namingCatalog(ctx context.Context, moves []namingMove) (*sql.Tx, error) {
@@ -881,11 +976,12 @@ func (a *App) namingCatalog(ctx context.Context, moves []namingMove) (*sql.Tx, e
 		Old, New string
 	}
 	records := []record{}
+	mapping := namingPathMapping(moves)
 	ids := map[string]string{}
 	seen := map[string]bool{}
-	for _, m := range moves {
+	for _, m := range namingCatalogMoves(moves) {
 		old := filepath.Join(fileRoot(), m.Old)
-		rows, err := tx.QueryContext(ctx, "SELECT to_jsonb(i) FROM items i WHERE path=$1 OR ($2 AND left(path,length($1)+1)=$1||'/') ORDER BY path LIMIT 2001", old, m.Info.IsDir())
+		rows, err := tx.QueryContext(ctx, "SELECT to_jsonb(i) FROM items i WHERE path=$1 OR ($2 AND left(path,length($1)+1)=$1||'/') ORDER BY path LIMIT 200001", old, m.Info.IsDir())
 		if err != nil {
 			return nil, errors.New("无法读取作品记录")
 		}
@@ -908,19 +1004,19 @@ func (a *App) namingCatalog(ctx context.Context, moves []namingMove) (*sql.Tx, e
 			}
 			seen[oldID] = true
 			path, _ := data["path"].(string)
-			path = namingRebase(path, moves)
+			path = mapping.rebase(path)
 			newID := digest(path)[:32]
 			ids[oldID] = newID
 			data["id"], data["path"] = newID, path
 			for _, field := range []string{"poster", "url"} {
 				if p, ok := data[field].(string); ok {
-					data[field] = namingRebase(p, moves)
+					data[field] = mapping.rebase(p)
 				}
 			}
 			records = append(records, record{data, oldID, newID})
-			if len(records) > 2000 {
+			if len(records) > 200000 {
 				rows.Close()
-				return nil, errors.New("改名涉及超过 2000 条作品记录，请缩小选择范围")
+				return nil, errors.New("改名涉及超过 200000 条作品记录，请选择更小的文件夹")
 			}
 		}
 		err = rows.Err()
