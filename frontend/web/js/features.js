@@ -701,87 +701,115 @@ const Features = (() => {
       });
     });
   }
+  const discoveryFacet = (key, label, values = []) => `<div class="discovery-field"><span>${esc(label)}</span><details class="discovery-facet" data-facet="${key}"><summary aria-label="选择${esc(label)}"><span data-facet-value>全部</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><div class="discovery-facet-menu"><input type="search" data-facet-search placeholder="搜索${esc(label)}" aria-label="搜索${esc(label)}" autocomplete="off"><div class="discovery-facet-options">${values.map(value => `<label class="discovery-facet-option"><input type="checkbox" name="${key}" value="${esc(value)}"><span>${esc(value)}</span></label>`).join('')}<p class="discovery-facet-empty" ${values.length ? 'hidden' : ''}>${values.length ? '没有匹配选项' : '暂无选项'}</p></div><div class="discovery-facet-footer"><span data-facet-count>未选择</span><button type="button" class="text-button" data-facet-clear>清空</button></div></div></details></div>`;
+  document.addEventListener('pointerdown', event => {
+    document.querySelectorAll('.discovery-facet[open]').forEach(facet => {
+      if (!facet.contains(event.target)) facet.open = false;
+    });
+  });
   async function discover() {
     view = "browse";
     nav();
     history.replaceState({}, "", "#discover");
     const serial = ++discoveryRequest;
     $("#app").innerHTML =
-      `<section class="feature-discovery"><div class="feature-dialog-heading"><h1>发现</h1><button class="secondary" onclick="browseRoot()">返回影库</button></div><form class="feature-filter"></form><div class="grid feature-discovery-grid"></div><div class="feature-actions feature-pagination"></div></section>`;
+      `<section class="feature-discovery"><div class="feature-dialog-heading"><h1>发现</h1><button class="secondary" onclick="browseRoot()">返回影库</button></div><form class="feature-filter" aria-label="作品筛选"></form><div class="discovery-results-heading"><span data-discovery-status role="status">正在加载…</span></div><div class="grid feature-discovery-grid" aria-busy="true"></div><div class="feature-actions feature-pagination"></div></section>`;
     const [facets, views] = await Promise.all([
       api("/features/facets"),
       api.getViews(),
     ]);
     if (serial !== discoveryRequest || !$("#app .feature-filter")) return;
     const form = $("#app .feature-filter");
-    form.innerHTML = `${field("Search", "搜索", "", "search")}${select("Library", "媒体库", "", [["", "全部"], ...(views.Items || []).filter((x) => facets.Libraries.includes(x.Id)).map((x) => [x.Id, x.Name])])}${select(
-      "Type",
-      "类型",
-      "",
-      [
-        ["", "全部"],
-        ["Movie", "电影"],
-        ["Series", "剧集"],
-      ],
-    )}${select("Year", "年份", "", [["", "全部"], ...facets.Years.map((x) => [x, x])])}${select(
-      "Sort",
-      "排序",
-      "",
-      [
-        ["", "添加时间"],
-        ["name", "名称"],
-        ["year", "年份"],
-        ["rating", "评分"],
-        ["premiere", "首映日期"],
-      ],
-    )}${select("Order", "顺序", "Descending", [
-      ["Descending", "降序"],
-      ["Ascending", "升序"],
-    ])}${[
-      ["Genre", "类型", facets.Genres],
-      ["Country", "地区", facets.Countries],
-      ["Tag", "标签", facets.Tags],
-    ]
-      .map(([key, label, values]) =>
-        select(
-          key,
-          label,
-          "",
-          values.map((x) => [x, x]),
-        ).replace("<select ", `<select multiple size="3" `),
-      )
-      .join("")}<button>筛选</button>`;
-    let start = 0;
+    form.innerHTML = `<div class="discovery-filter-primary"><div class="discovery-search-field">${field("Search", "搜索", "", "search", 'placeholder="搜索作品名称" autocomplete="off"')}</div>${select("Library", "媒体库", "", [["", "全部媒体库"], ...(views.Items || []).filter(x => facets.Libraries.includes(x.Id)).map(x => [x.Id, x.Name])])}${select("Type", "作品类型", "", [["", "全部"], ["Movie", "电影"], ["Series", "剧集"]])}</div><div class="discovery-filter-secondary">${select("Year", "年份", "", [["", "全部"], ...facets.Years.map(x => [x, x])])}${select("Sort", "排序", "", [["", "添加时间"], ["name", "名称"], ["year", "年份"], ["rating", "评分"], ["premiere", "首映日期"]])}${select("Order", "顺序", "Descending", [["Descending", "降序"], ["Ascending", "升序"]])}${discoveryFacet("Genre", "题材", facets.Genres)}${discoveryFacet("Country", "地区", facets.Countries)}${discoveryFacet("Tag", "标签", facets.Tags)}</div><div class="discovery-filter-footer"><div class="discovery-filter-chips" aria-label="当前筛选条件"></div><div class="discovery-filter-actions"><button type="button" class="secondary" data-discovery-reset>重置</button><button type="submit" data-discovery-apply>筛选作品</button></div></div>`;
+    const chips = form.querySelector('.discovery-filter-chips');
+    const updateFacets = () => {
+      form.querySelectorAll('.discovery-facet').forEach(facet => {
+        const selected = [...facet.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
+        const summary = facet.querySelector('summary');
+        const value = selected.length ? selected.length === 1 ? selected[0] : `已选 ${selected.length} 项` : '全部';
+        facet.querySelector('[data-facet-value]').textContent = value;
+        facet.querySelector('[data-facet-count]').textContent = selected.length ? `已选 ${selected.length} 项` : '未选择';
+        summary.classList.toggle('has-selection', selected.length > 0);
+        summary.title = selected.join('、');
+        summary.setAttribute('aria-label', '选择' + facet.parentElement.firstElementChild.textContent + '，' + value);
+      });
+      chips.replaceChildren();
+      for (const input of form.elements) {
+        if (!['Search', 'Library', 'Type', 'Year', 'Genre', 'Country', 'Tag'].includes(input.name) || !input.value || input.type === 'checkbox' && !input.checked) continue;
+        const value = input.tagName === 'SELECT' ? input.selectedOptions[0].textContent : input.value;
+        const chip = UI.el('button', {type:'button',class:'discovery-filter-chip','aria-label':`移除筛选：${value}`}, [UI.el('span',{},value), UI.el('span',{'aria-hidden':'true'},'×')]);
+        chip.onclick = () => { if(input.type === 'checkbox') input.checked=false; else input.value=''; updateFacets(); };
+        chips.append(chip);
+      }
+    };
+    form.querySelectorAll('.discovery-facet').forEach(facet => {
+      const search = facet.querySelector('[data-facet-search]');
+      const filterOptions = () => {
+        const query = search.value.trim().toLocaleLowerCase();
+        let visible = 0;
+        facet.querySelectorAll('.discovery-facet-option').forEach(option => {
+          option.hidden = !option.textContent.toLocaleLowerCase().includes(query);
+          if(!option.hidden) visible++;
+        });
+        facet.querySelector('.discovery-facet-empty').hidden = visible > 0;
+      };
+      search.oninput = filterOptions;
+      search.onkeydown = event => {if(event.key === 'Enter') event.preventDefault();};
+      facet.addEventListener('toggle', () => {
+        if(facet.open) form.querySelectorAll('.discovery-facet').forEach(other => {if(other !== facet) other.open=false;});
+      });
+      facet.addEventListener('focusout', event => {
+        if(event.relatedTarget && !facet.contains(event.relatedTarget)) facet.open=false;
+      });
+      facet.addEventListener('keydown', event => {
+        if(event.key === 'Escape') {event.preventDefault();event.stopPropagation();facet.open=false;facet.querySelector('summary').focus();}
+      });
+      facet.querySelector('[data-facet-clear]').onclick = () => {
+        facet.querySelectorAll('input[type="checkbox"]').forEach(input => {input.checked=false;});
+        updateFacets();
+      };
+    });
+    form.addEventListener('change', updateFacets);
+    form.querySelector('[name="Search"]').addEventListener('input', updateFacets);
+    let start = 0, applied = new URLSearchParams(new FormData(form));
     const fetchPage = async () => {
-      const request = ++discoveryRequest,
-        params = new URLSearchParams(new FormData(form));
+      const request = ++discoveryRequest, params = new URLSearchParams(applied);
       params.set("Start", start);
       params.set("Limit", "48");
-      const result = await api("/features/catalog?" + params);
-      if (request !== discoveryRequest || !form.isConnected) return;
-      const grid = $(".feature-discovery-grid");
-      grid.replaceChildren(
-        ...result.Items.map((x) => UI.PosterCard(x, (item) => detail(item.Id))),
-      );
-      if (!result.Items.length)
-        grid.innerHTML = '<p class="empty">没有符合条件的作品</p>';
-      bindPosterMenus();
-      const controls = $(".feature-pagination");
-      controls.innerHTML = `<button class="secondary" data-prev ${start === 0 ? "disabled" : ""}>上一页</button><span>${start + 1}–${start + result.Items.length} / ${result.TotalRecordCount}</span><button class="secondary" data-next ${start + 48 >= result.TotalRecordCount ? "disabled" : ""}>下一页</button>`;
-      controls.querySelector("[data-prev]").onclick = run(async () => {
-        start = Math.max(0, start - 48);
-        await fetchPage();
-      });
-      controls.querySelector("[data-next]").onclick = run(async () => {
-        start += 48;
-        await fetchPage();
-      });
+      const host = form.closest('.feature-discovery');
+      const grid = host.querySelector('.feature-discovery-grid');
+      const status = host.querySelector('[data-discovery-status]');
+      const button = form.querySelector('[data-discovery-apply]');
+      grid.setAttribute('aria-busy','true');status.textContent='正在加载…';button.disabled=true;
+      try {
+        const result = await api("/features/catalog?" + params);
+        if (request !== discoveryRequest || !form.isConnected) return;
+        grid.replaceChildren(...result.Items.map(x => UI.PosterCard(x, item => detail(item.Id))));
+        if (!result.Items.length) grid.innerHTML = '<p class="empty">没有符合条件的作品</p>';
+        bindPosterMenus();
+        status.textContent = `共 ${Number(result.TotalRecordCount).toLocaleString()} 部作品`;
+        const controls = host.querySelector('.feature-pagination');
+        controls.innerHTML = `<button class="secondary" data-prev ${start === 0 ? "disabled" : ""}>上一页</button><span>${result.Items.length ? start + 1 : 0}–${start + result.Items.length} / ${result.TotalRecordCount}</span><button class="secondary" data-next ${start + 48 >= result.TotalRecordCount ? "disabled" : ""}>下一页</button>`;
+        controls.querySelector('[data-prev]').onclick = run(async () => {start=Math.max(0,start-48);await fetchPage();});
+        controls.querySelector('[data-next]').onclick = run(async () => {start+=48;await fetchPage();});
+      } catch(error) {
+        if(request === discoveryRequest && form.isConnected) status.textContent='读取失败：'+error.message;
+        throw error;
+      } finally {
+        if(request === discoveryRequest && form.isConnected) {grid.setAttribute('aria-busy','false');button.disabled=false;}
+      }
     };
-    form.onsubmit = run(async (e) => {
-      e.preventDefault();
-      start = 0;
-      await fetchPage();
+    form.onsubmit = run(async event => {
+      event.preventDefault();
+      form.querySelectorAll('.discovery-facet').forEach(facet => {facet.open=false;});
+      applied=new URLSearchParams(new FormData(form));start=0;await fetchPage();
     });
+    form.querySelector('[data-discovery-reset]').onclick = run(async () => {
+      form.reset();
+      form.querySelectorAll('.discovery-facet').forEach(facet => {facet.open=false;facet.querySelector('[data-facet-search]').dispatchEvent(new Event('input'));});
+      updateFacets();applied=new URLSearchParams(new FormData(form));start=0;await fetchPage();
+    });
+    updateFacets();
     await fetchPage();
   }
   async function collections(id = "") {
