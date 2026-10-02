@@ -674,6 +674,11 @@ func namingNFOConflict(root *os.Root, moves []namingMove) string {
 
 func namingConflicts(root *os.Root, rows []namingRow) {
 	claimed := map[string][]int{}
+	skip := func(index int, reason string) {
+		if rows[index].Status != "conflict" {
+			rows[index].Status, rows[index].Reason = "skipped", reason
+		}
+	}
 	for i, row := range rows {
 		if row.Status != "ready" {
 			continue
@@ -684,8 +689,7 @@ func namingConflicts(root *os.Root, rows []namingRow) {
 				key := strings.ToLower(p)
 				if previous, exists := rowPaths[key]; exists {
 					if previous != moveIndex {
-						rows[i].Status = "conflict"
-						rows[i].Reason = "关联文件的源文件或目标名称重叠"
+						skip(i, "关联文件名称重叠，已跳过改名")
 					}
 					continue
 				}
@@ -693,21 +697,21 @@ func namingConflicts(root *os.Root, rows []namingRow) {
 				claimed[key] = append(claimed[key], i)
 			}
 			if m.Old == m.New {
-				rows[i].Status = "conflict"
-				rows[i].Reason = "关联文件目标重叠"
+				skip(i, "源文件与目标相同，已跳过改名")
 				continue
 			}
-			if _, err := root.Lstat(m.New); err == nil || !errors.Is(err, fs.ErrNotExist) {
+			if _, err := root.Lstat(m.New); err == nil {
+				skip(i, "目标名称已存在，已跳过改名")
+			} else if !errors.Is(err, fs.ErrNotExist) {
 				rows[i].Status = "conflict"
-				rows[i].Reason = "目标已存在或不可访问，禁止覆盖"
+				rows[i].Reason = "目标路径不可访问，请检查目录权限"
 			}
 		}
 	}
 	for _, indices := range claimed {
 		if len(indices) > 1 {
 			for _, i := range indices {
-				rows[i].Status = "conflict"
-				rows[i].Reason = "多个项目的源文件或目标名称重叠，请调整模板或选择范围"
+				skip(i, "源文件或目标名称重叠，已跳过改名")
 			}
 		}
 	}

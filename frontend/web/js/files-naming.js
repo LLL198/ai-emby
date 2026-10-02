@@ -1,6 +1,6 @@
 const FileNaming = (() => {
   const endpoint = "/admin/features/naming/";
-  const labels = {ready:"可改名", unchanged:"已规范", review:"待确认", conflict:"有冲突", renamed:"已改名"};
+  const labels = {ready:"可改名", unchanged:"已规范", review:"待确认", conflict:"有冲突", skipped:"已跳过", renamed:"已改名"};
   const presets = {
     tv:"{title} - S{season:2}E{episode:2}",
     movie:"{title} ({year})"
@@ -34,7 +34,7 @@ const FileNaming = (() => {
     const bare = UI.el("input",{type:"checkbox"});
     const autoTMDB = UI.el("input",{type:"checkbox",checked:true});
     const recursive = UI.el("input",{type:"checkbox",checked:true});
-    const folders = UI.el("input",{type:"checkbox"});
+    const folders = UI.el("input",{type:"checkbox",checked:true});
     const template = UI.el("input",{type:"text","aria-label":"命名模板",placeholder:"留空使用推荐格式，自动保留扩展名",maxlength:512,autocomplete:"off"});
     const pattern = UI.el("input",{type:"text","aria-label":"匹配正则",placeholder:"例如 EP(\\d+)",autocomplete:"off",maxlength:512});
     const replacement = UI.el("input",{type:"text","aria-label":"替换内容",placeholder:"例如 E${1}；留空表示删除匹配",autocomplete:"off",maxlength:512});
@@ -221,7 +221,7 @@ const FileNaming = (() => {
       selectAll.dataset.namingReady=String(ready.length>0);
       selectAll.disabled=busy||!plan||ready.length===0;
       selectAll.onchange=()=>{chosen.clear();if(selectAll.checked)ready.forEach(row=>chosen.add(row.id));renderRows();updateButtons();};
-      summary.append(UI.el("label",{},[selectAll,UI.el("span",{},renamed?`已改名 ${renamed} / ${displayPlan.rows.length}`:`可改名 ${ready.length} / ${displayPlan.rows.length}`)]),UI.el("small",{},`扫描 ${displayPlan.directories||1} 个目录 · 待确认或冲突 ${displayPlan.rows.filter(row=>["review","conflict"].includes(row.status)).length}`));
+      summary.append(UI.el("label",{},[selectAll,UI.el("span",{},renamed?`已改名 ${renamed} / ${displayPlan.rows.length}`:`可改名 ${ready.length} / ${displayPlan.rows.length}`)]),UI.el("small",{},`扫描 ${displayPlan.directories||1} 个目录 · 已跳过 ${displayPlan.rows.filter(row=>row.status==="skipped").length} · 待确认或冲突 ${displayPlan.rows.filter(row=>["review","conflict"].includes(row.status)).length}`));
       const table=UI.el("table",{class:"naming-table"});
       table.append(UI.el("thead",{},UI.el("tr",{},[UI.el("th",{},"选择"),UI.el("th",{},"原名称"),UI.el("th",{},"新名称"),UI.el("th",{},"识别依据")] )));
       const tbody=UI.el("tbody");
@@ -286,7 +286,7 @@ const FileNaming = (() => {
         if(automatic) {
           selectedPlan.rows.forEach(row=>{if(selectedIDs.has(row.id))row.status="renamed";else if(data.sources?.[row.id])row.old=data.sources[row.id];if(data.destinations?.[row.id])row.new=data.destinations[row.id];});
           renderRows(selectedPlan);
-          feedback.textContent+=` 已规范 ${selectedPlan.rows.filter(row=>row.status==="unchanged").length} 项，跳过 ${selectedPlan.rows.filter(row=>["review","conflict"].includes(row.status)).length} 项。`;
+          feedback.textContent+=` 已规范 ${selectedPlan.rows.filter(row=>row.status==="unchanged").length} 项，跳过 ${selectedPlan.rows.filter(row=>["review","conflict","skipped"].includes(row.status)).length} 项。`;
         } else results.replaceChildren(UI.el("p",{class:"empty"},"本批改名已完成。"));
         toast(`已改名 ${data.renamed} 项`);
         await refresh();

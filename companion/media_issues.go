@@ -71,7 +71,7 @@ func (a *App) namingStoreIssues(ctx context.Context, plan *namingPlan, request n
 	for _, row := range plan.Rows {
 		if (row.Status == "review" || row.Status == "conflict") && !(row.Directory && row.Reason == "未找到媒体文件或季目录，请进入具体作品目录") {
 			issues = append(issues, mediaIssue{Path: row.Old, Status: row.Status, Reason: row.Reason, Proposed: row.New, Directory: row.Directory})
-		} else if row.Status == "unchanged" && request.Mode == "auto" || row.Status == "renamed" || row.Directory && row.Reason == "未找到媒体文件或季目录，请进入具体作品目录" {
+		} else if row.Status == "unchanged" && request.Mode == "auto" || row.Status == "renamed" || row.Status == "skipped" || row.Directory && row.Reason == "未找到媒体文件或季目录，请进入具体作品目录" {
 			resolved = append(resolved, row.Old)
 		}
 	}
