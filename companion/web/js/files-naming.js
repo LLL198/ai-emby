@@ -266,7 +266,7 @@ const FileNaming = (() => {
           feedback.textContent=automatic?"处理完成：已规范的项目保持原名，其余跳过原因见下方。":"预览已生成，检查新名称后执行。";
           if(automatic){plan=null;await onComplete({renamed:0,scopeVersion:data.scopeVersion});}
         }
-      } catch(error) { if(sequence===requestNumber)feedback.textContent=error.message; }
+      } catch(error) { if(sequence===requestNumber){feedback.textContent=error.name==='AbortError'?'已停止准备工作':error.message;onError(error);} }
       finally {stopProgress();previewAbort=null;busy=false;updateButtons();}
     };
     async function applyPlan(automatic=false) {
