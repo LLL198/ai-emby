@@ -232,7 +232,7 @@ async function loadScraperSettings() {
     details.hidden=operation.value!=='scrape';
     host.querySelector('[data-preview-title]').textContent=operation.value==='scrape'?'任务预览':'规范命名';
     emptyPreview();
-    status.textContent=operation.value==='scrape'?'请先扫描生成计划。':operation.value==='both'?'使用上方目录范围，命名完成后自动刮削。':'使用上方目录范围进行规范命名。';
+    status.textContent=operation.value==='scrape'?'等待扫描':operation.value==='both'?'使用当前处理范围，命名完成后自动刮削。':'使用当前处理范围进行规范命名。';
     controls();
   };
   enabled.onchange = run(async () => {
@@ -519,7 +519,7 @@ async function loadScraperSettings() {
       status.textContent = plan.Pending + plan.Overwrite ? '扫描完成，可以开始刮削' : '扫描完成，没有待刮削内容';
       // Bound DOM work for large libraries; full item/file progress remains in Activity.
       details.innerHTML = `<div class="scraper-plan-stats">${[['媒体项目', plan.TotalObjects ?? plan.Objects.length], ['待写入文件', plan.Pending], ['覆盖文件', plan.Overwrite], ['已有 / 跳过', plan.Skipped]].map(([label, value]) => `<div><span>${label}</span><strong>${esc(value ?? 0)}</strong></div>`).join('')}</div><div class="scraper-plan-heading"><strong>媒体明细</strong><span>前 ${Math.min(100, plan.Objects.length)} 项${plan.Disabled ? ` · 分类关闭 ${esc(plan.Disabled)}` : ''}${failed ? ` · 路径异常 ${esc(failed)}` : ''}</span></div><div class="scraper-plan-list">${plan.Objects.slice(0, 100).map(object => `<div class="scraper-plan-item"><div><strong>${esc(object.Name)}</strong><span>${esc(object.Disabled ? '分类关闭' : object.Error || object.Targets.map(target => `${contentName(object.Kind, target.Content)}：${({ create: '待刮削', skip: '跳过', overwrite: '覆盖' })[target.Action] || target.Action}`).join('，'))}</span></div><span class="scraper-kind-badge">${esc(({Movie:'电影',Series:'电视剧',Season:'季',Episode:'单集'})[object.Kind] || object.Kind)}</span></div>`).join('') || '<p class="scraper-list-empty">当前范围没有媒体项目</p>'}</div>`;
-    } catch (e) { if (!scanCancelled) { status.textContent = '任务扫描未完成：' + e.message; } }
+    } catch (e) { if (!scanCancelled) { emptyPreview(); details.querySelector('strong').textContent = '扫描未完成'; status.textContent = '任务扫描未完成：' + e.message; } }
     finally { busy = false; taskActive = false; controls(); }
   });
   cancelButton.onclick = run(async () => {
@@ -527,7 +527,7 @@ async function loadScraperSettings() {
     if(namingUI?.applying)return;
     scanCancelled=true;namingUI?.cancel();
     if(taskActive)await api('/admin/scraper/cancel', 'POST', {});
-    taskActive=false;plan=null;status.textContent='已停止后续处理，已完成的改名保留';controls();
+    taskActive=false;plan=null;emptyPreview();status.textContent='已停止后续处理，已完成的改名保留';controls();
   });
   start.onclick = run(async () => {
     if (!plan) return;
