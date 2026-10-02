@@ -5,7 +5,7 @@ const FilesPage = (() => {
   const join = (a,b) => [a,b].filter(Boolean).join("/");
   const size = (n) => { if (!n) return "—"; const units=["B","KB","MB","GB","TB"]; let i=0,v=n; while(v>=1024&&i<units.length-1){v/=1024;i++} return `${v.toFixed(i?1:0)} ${units[i]}`; };
   const authHeaders = () => ({"X-Emby-Token":token,"X-Emby-Authorization":`Emby Client="AI Emby Web", Device="Browser", DeviceId="${device}", Version="1.0"`});
-  async function request(path, options={}) { const requestToken=token; const res=await fetch(path,{...options,headers:{...authHeaders(),...(options.headers||{})}}); if(!res.ok){let b;try{b=await res.json()}catch{};if(res.status===401&&b?.error!=="license_required")handleExpiredSession(requestToken);const e=new Error(b?.Message||b?.message||b?.error||`HTTP ${res.status}`);e.status=res.status;throw e} const ct=res.headers.get("content-type")||""; return ct.includes("json")?res.json():res; }
+  async function request(path, options={}, raw=false) { const requestToken=token; const res=await fetch(path,{...options,headers:{...authHeaders(),...(options.headers||{})}}); if(!res.ok){let b;try{b=await res.json()}catch{};if(res.status===401&&b?.error!=="license_required")handleExpiredSession(requestToken);const e=new Error(b?.Message||b?.message||b?.error||`HTTP ${res.status}`);e.status=res.status;throw e} if(raw)return res;const ct=res.headers.get("content-type")||""; return ct.includes("json")?res.json():res; }
   const currentRoot = () => state.roots.find(root => root.id === state.root);
   const readOnly = () => !!currentRoot()?.readOnly;
   const endpoint = (suffix = "", query = {}, root = state.root) => "/admin/features/local-files" + suffix + "?" + new URLSearchParams({...query, root});
@@ -171,7 +171,7 @@ const FilesPage = (() => {
     menu.addEventListener('keydown', e=>{if(e.key==='Escape'){menu.open=false;summary.focus();}});
     return menu;
   }
-  async function download(item){const res=await request(endpoint("/download",{path:item.path},item.root));const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=item.name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+  async function download(item){const res=await request(endpoint("/download",{path:item.path},item.root),{},true);const blob=await res.blob();const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=item.name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}
   function pickUpload(){const root=state.root,path=state.path;const input=document.createElement("input");input.type="file";input.multiple=true;input.onchange=run(async()=>{for(const f of input.files){toast(`正在上传 ${f.name}`);await request(endpoint("/upload",{path},root),{method:"POST",headers:{"X-File-Name":encodeURIComponent(f.name),"Content-Type":"application/octet-stream"},body:f})}toast("上传完成");if(state.root===root)await load()});input.click()}
   async function open(path){if(!user?.Policy?.IsAdministrator){toast("文件管理仅限管理员");return browseRoot()}const replace=location.hash.startsWith("#files");closeLogs();view="files";nav();document.title="文件管理 · "+serverName;document.body.dataset.panelSection="files";state.search="";state.directoryPath="";state.root=path!==undefined?"media":routeRoot();await loadRoots();if(!currentRoot()){state.root="media";path="";toast("路径入口已移除，已返回媒体目录");}await load(path??routePath(),false);if(view==="files")setRoute(replace)}
   return {open,load,routePath};
