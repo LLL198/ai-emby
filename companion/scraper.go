@@ -175,9 +175,9 @@ func (a *App) scraperAdmin(w http.ResponseWriter, r *http.Request, path string) 
 		}
 		if query.Has("file") {
 			var err error
-			scope, err = a.scraperFileScope(query.Get("file"))
+			scope, err = a.scraperManagedFileScope(query.Get("file"), query.Get("root"))
 			if err != nil {
-				fail(w, http.StatusBadRequest, "目标路径不可刮削")
+				fail(w, http.StatusBadRequest, "目标路径不可刮削："+err.Error())
 				return
 			}
 		}

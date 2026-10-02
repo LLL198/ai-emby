@@ -1,8 +1,9 @@
 // Shared manual planning/start/polling used by settings and the locked file dialog.
 const ScraperManual = {
-  async plan({ file, itemID, manualRecognition, alive = () => true, onTask = () => {} } = {}) {
+  async plan({ file, root, itemID, manualRecognition, alive = () => true, onTask = () => {} } = {}) {
     const query = new URLSearchParams({async: 'true'});
     if (file !== undefined) query.set('file', file);
+    if (root !== undefined) query.set('root', root);
     const response = await api('/admin/scraper/plan?' + query, 'POST', {itemID, manualRecognition});
     onTask(response.TaskID || response.ID);
     if (response.ID) return response;
@@ -66,7 +67,7 @@ async function openFileScraper(item, poster = false) {
       } : undefined;
       if (poster && (!manualRecognition.Title || !/^[0-9]*$/.test(manualRecognition.TMDBID))) throw Error('请填写片名和有效 TMDB ID');
       plan = await ScraperManual.plan({
-        ...(poster ? {itemID:item.id, manualRecognition} : {file:item.path}),
+        ...(poster ? {itemID:item.id, manualRecognition} : {file:item.path, root:item.root}),
         alive:()=>dialog.open, onTask:id=>{taskID=id; poll();}
       });
       if (dialog.open) status.textContent = `媒体 ${plan.TotalObjects ?? plan.Objects.length} · 待刮削 ${plan.Pending} · 覆盖 ${plan.Overwrite} · 跳过 ${plan.Skipped}`;

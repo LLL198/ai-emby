@@ -37,6 +37,7 @@ services:
       BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
       MEDIA_INFO_ROOT: /app/data
       FILE_MANAGER_ROOT: /media
+      FILE_MANAGER_PATH_MAPPINGS: ${FILE_MANAGER_PATH_MAPPINGS:-[]}
       MEDIA_ROOTS: ${MEDIA_ROOTS:-/media}
     volumes:
       - ./app-data:/app/data

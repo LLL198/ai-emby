@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"os"
 	"path/filepath"
 )
 
@@ -59,16 +58,27 @@ func (a *App) scraperFileScope(path string) (*scraperFileScope, error) {
 }
 
 func (a *App) scraperFileScopeIn(path string, libraries []M) (*scraperFileScope, error) {
+	return a.scraperFileScopeAt(path, fileRoot(), libraries)
+}
+
+func (a *App) scraperManagedFileScope(path, key string) (*scraperFileScope, error) {
+	root, err := a.managedFileRoot(key)
+	if err != nil {
+		return nil, err
+	}
+	if root.ReadOnly {
+		return nil, errors.New("这个路径设为只读，不能写入刮削文件")
+	}
+	return a.scraperFileScopeAt(path, root.Path, a.libraries())
+}
+
+func (a *App) scraperFileScopeAt(path, managerRoot string, libraries []M) (*scraperFileScope, error) {
 	name, err := fileName(path)
 	if err != nil {
 		return nil, err
 	}
 
-	managerRoot := os.Getenv("FILE_MANAGER_ROOT")
-	if managerRoot == "" {
-		managerRoot = "/media"
-	}
-	root, err := os.OpenRoot(managerRoot)
+	root, err := scraperLibraryRoot(managerRoot)
 	if err != nil {
 		return nil, err
 	}
