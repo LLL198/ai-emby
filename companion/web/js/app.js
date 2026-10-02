@@ -143,7 +143,7 @@ function nav(){
  $("#hamburger")?.remove();$("#drawer")?.remove();$("#drawer-backdrop")?.remove();
  if((view==="admin"||view==="files")&&user?.Policy?.IsAdministrator){document.querySelector("header").insertAdjacentHTML("afterbegin",'<button id="hamburger" aria-label="展开功能菜单" aria-expanded="false"><span></span><span></span><span></span></button>');const drawer=renderAdminDrawer(view);document.body.insertAdjacentHTML("beforeend",drawer);$("#drawer").addEventListener("click",e=>{if(e.target.closest("button")){toggleDrawer(false)}});$("#hamburger").onclick=()=>{toggleDrawer($("#hamburger").getAttribute("aria-expanded")!=="true")}}
 }
-function serverDisplayName(value){const name=typeof value==="string"?value.trim():"";return !name||/^(?:go[ -]?emby|maca)$/i.test(name)?"AI Emby":name}
+function serverDisplayName(value){const name=typeof value==="string"?value.trim():"";return name||"AI Emby"}
 let serverName="AI Emby",loginMarkTimer=null;
 function stopLoginMark(){clearTimeout(loginMarkTimer);loginMarkTimer=null}
 function renderLoginMark(){

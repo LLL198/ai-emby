@@ -125,7 +125,12 @@ func main() {
 	coreTarget, _ := url.Parse(coreURL)
 	scraperTarget, _ := url.Parse(scraperURL)
 	coreProxy := httputil.NewSingleHostReverseProxy(coreTarget)
-	coreProxy.ModifyResponse = func(response *http.Response) error { return featureFilterResponse(sessionDB, response) }
+	coreProxy.ModifyResponse = func(response *http.Response) error {
+		if err := brandingResponse(sessionDB, response); err != nil {
+			return err
+		}
+		return featureFilterResponse(sessionDB, response)
+	}
 	scraperProxy := httputil.NewSingleHostReverseProxy(scraperTarget)
 	listen := os.Getenv("LISTEN")
 	if listen == "" {

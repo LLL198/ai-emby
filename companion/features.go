@@ -28,6 +28,7 @@ type featureState struct {
 
 const featureSchema = `
 CREATE TABLE IF NOT EXISTS feature_tracking_subscriptions(id TEXT PRIMARY KEY,data TEXT NOT NULL,created BIGINT NOT NULL,last_search BIGINT NOT NULL DEFAULT 0,next_search BIGINT NOT NULL DEFAULT 0,state TEXT NOT NULL DEFAULT 'idle',error TEXT NOT NULL DEFAULT '',last_count BIGINT NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS feature_tracking_imports(subscription TEXT PRIMARY KEY REFERENCES feature_tracking_subscriptions(id) ON DELETE CASCADE,data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS feature_tracking_resources(id TEXT PRIMARY KEY,subscription TEXT NOT NULL REFERENCES feature_tracking_subscriptions(id) ON DELETE CASCADE,cloud TEXT NOT NULL,data TEXT NOT NULL,fingerprint TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',first_seen BIGINT NOT NULL,updated BIGINT NOT NULL,last_seen BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS feature_tracking_resources_list ON feature_tracking_resources(subscription,status,updated DESC,id);
 CREATE TABLE IF NOT EXISTS feature_file_roots(id TEXT PRIMARY KEY,name TEXT NOT NULL,path TEXT NOT NULL UNIQUE,host_path TEXT NOT NULL DEFAULT '',read_only BOOLEAN NOT NULL DEFAULT false,created BIGINT NOT NULL);
@@ -86,6 +87,9 @@ func (a *App) initFeatures() error {
 		time.Sleep(time.Second)
 	}
 	if _, err := a.db.DB.Exec(featureSchema); err != nil {
+		return err
+	}
+	if err := a.migrateServerName(); err != nil {
 		return err
 	}
 	a.features.ctx, a.features.cancel = context.WithCancel(context.Background())

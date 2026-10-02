@@ -147,13 +147,16 @@ func parseScanFile(cache *scanCache, lib, kind string, work scanWork) scanResult
 }
 
 func (a *App) runConcurrentScan(lib string, incremental, allowEmpty bool, scopes []string) {
+	_ = a.runConcurrentScanResult(a.scanner.ctx, lib, incremental, allowEmpty, scopes)
+}
+
+func (a *App) runConcurrentScanResult(parent context.Context, lib string, incremental, allowEmpty bool, scopes []string) (scanErr error) {
 	defer a.finishConcurrentScan(lib)
 	category := "scan"
 	if incremental || len(scopes) > 0 {
 		category = "update"
 	}
 	job := a.newActivity(category, lib, "扫描媒体库")
-	var scanErr error
 	defer func() {
 		a.finishActivity(job, scanErr)
 		if scanErr == nil && a.features.ctx != nil {
@@ -164,6 +167,8 @@ func (a *App) runConcurrentScan(lib string, incremental, allowEmpty bool, scopes
 	defer release()
 	ctx, cancel := context.WithCancel(a.scanner.ctx)
 	defer cancel()
+	stopParent := context.AfterFunc(parent, cancel)
+	defer stopParent()
 	workerCtx, stopWorkers := context.WithCancel(ctx)
 	defer stopWorkers()
 	if err := a.waitConcurrentScan(ctx, job); err != nil {
@@ -353,6 +358,7 @@ func (a *App) runConcurrentScan(lib string, incremental, allowEmpty bool, scopes
 			entry.Current = fmt.Sprintf("扫描完成 · 并发 %d · 更新 %d", status.Concurrency, changed)
 		})
 	}
+	return
 }
 
 func idGeneration(job string) string { return "parallel-" + job }

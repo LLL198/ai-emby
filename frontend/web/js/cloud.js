@@ -243,5 +243,5 @@ const CloudMounts = (() => {
   }
   async function poll() {if(!still?.())return;const b=await api(base+'/tasks');if(!still())return;data.Tasks=b.Tasks;renderTasks(data.Tasks)}
   function schedule() {clearTimeout(pollTimer);if(!still?.())return;pollTimer=setTimeout(async()=>{try{await poll()}catch{}finally{schedule()}},4000)}
-  return {load};
+  return {load,directoryField,bindDirectoryPicker};
 })();

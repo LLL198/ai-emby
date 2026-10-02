@@ -25,6 +25,7 @@ type trackingSubscription struct {
 	Year, Minutes                    int
 	CloudTypes, Include, Exclude     []string
 	Enabled                          bool
+	AutoImport                       trackingImportConfig
 }
 type trackingRecord struct {
 	trackingSubscription
@@ -32,6 +33,8 @@ type trackingRecord struct {
 	State, Error                       string
 	LastCount, NewCount, ResourceCount int
 	Owned                              string
+	ImportCloud, ImportMount           string
+	Import                             trackingImportState
 }
 type trackingResource struct {
 	ID, Subscription, Cloud, Title, URL, Password, Source, Published, Status string
@@ -257,6 +260,12 @@ func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if err := a.trackingValidateImport(&b); err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		resetImport := b.AutoImport.Reselect
+		b.AutoImport.Reselect = false
 		if b.ID == "" {
 			var count int
 			if err = a.db.QueryRow("SELECT COUNT(*) FROM feature_tracking_subscriptions").Scan(&count); err != nil {
@@ -283,6 +292,12 @@ func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			featureError(w, err)
 			return
+		}
+		if resetImport {
+			if _, err = a.db.Exec("DELETE FROM feature_tracking_imports WHERE subscription=?", b.ID); err != nil {
+				featureError(w, err)
+				return
+			}
 		}
 		respond(w, b)
 	case "/admin/features/tracking/run":
@@ -317,6 +332,8 @@ func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, M{"Queued": len(ids)})
+	case "/admin/features/tracking/import/options", "/admin/features/tracking/import/resource":
+		a.trackingImportAPI(w, r)
 	case "/admin/features/tracking/resources":
 		a.trackingResourcesAPI(w, r)
 	default:
@@ -354,6 +371,19 @@ func (a *App) trackingSubscriptions() ([]trackingRecord, error) {
 			return nil, err
 		}
 		s.Owned = a.trackingOwned(s.ItemID)
+		if s.AutoImport.Enabled {
+			if m, e := a.cloudMount(s.AutoImport.MountID); e == nil {
+				s.ImportCloud, s.ImportMount = trackingMountCloud(m.Driver), m.Name
+			}
+		}
+		s.Import, err = a.trackingImportState(s.ID)
+		if err != nil {
+			return nil, err
+		}
+		s.Import.PendingFiles, s.Import.PendingParent, s.Import.ConfigKey = nil, "", ""
+		if s.Import.PendingTask != "" {
+			s.Import.PendingTask = "pending"
+		}
 	}
 	return items, nil
 }
@@ -575,7 +605,7 @@ func trackingResourceURL(raw string) (string, bool) {
 		return "", false
 	}
 	u.Host = strings.ToLower(u.Host)
-	u.Fragment = ""
+	// Some providers put the share identifier in the URL fragment.
 	u.RawQuery = u.Query().Encode()
 	u.Path = strings.TrimRight(u.Path, "/")
 	return u.String(), true
@@ -671,7 +701,11 @@ func (a *App) trackingSearch(ctx context.Context, c trackingSettings, s tracking
 			return 0, 0, errors.New("追新索引写入失败，订阅可能已删除")
 		}
 	}
-	_, err = tx.ExecContext(ctx, "DELETE FROM feature_tracking_resources WHERE id IN (SELECT id FROM feature_tracking_resources WHERE subscription=$1 AND status<>'new' ORDER BY updated DESC,id OFFSET 2000)", s.ID)
+	pinned, pinErr := a.trackingImportState(s.ID)
+	if pinErr != nil {
+		return 0, 0, errors.New("追新入库状态读取失败")
+	}
+	_, err = tx.ExecContext(ctx, "DELETE FROM feature_tracking_resources WHERE id IN (SELECT id FROM feature_tracking_resources WHERE subscription=$1 AND status<>'new' AND id<>$2 AND id<>$3 ORDER BY updated DESC,id OFFSET 2000)", s.ID, s.AutoImport.ResourceID, pinned.ResourceID)
 	if err == nil {
 		err = tx.Commit()
 	}
@@ -779,6 +813,12 @@ func (a *App) trackingRun(parent context.Context, ids []string) {
 		}
 		a.changeActivity(task, func(v *activityEntry) { v.Current = "搜索 · " + s.Title; v.Done = index })
 		count, added, err := a.trackingSearch(ctx, c, s)
+		if s.AutoImport.Enabled && ctx.Err() == nil {
+			importErr := a.trackingAutoImport(ctx, s, task)
+			if importErr != nil {
+				failed++
+			}
+		}
 		now := time.Now().Unix()
 		state, reason := "complete", ""
 		if err != nil {
@@ -801,7 +841,7 @@ func (a *App) trackingRun(parent context.Context, ids []string) {
 	if ctx.Err() != nil {
 		a.finishActivity(task, ctx.Err())
 	} else if failed > 0 {
-		a.finishActivity(task, fmt.Errorf("%d 个订阅搜索失败，请在追新索引查看原因", failed))
+		a.finishActivity(task, fmt.Errorf("%d 项搜索或自动入库失败，请在追新索引查看原因", failed))
 	} else {
 		a.finishActivity(task, nil)
 	}
