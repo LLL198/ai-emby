@@ -310,11 +310,21 @@ func (a *App) cloudSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if b.Driver == "WebDav" {
+		if err := cloudWebDAVAddition(addition); err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+	}
 	s.MountPath = cloudStoragePath(m, "/")
 	s.Addition = featureJSON(addition)
 	s.WebProxy = false
 	s.EnableSign = true
 	s.WebdavPolicy = "302_redirect"
+	if b.Driver == "WebDav" {
+		s.WebProxy = true
+		s.WebdavPolicy = "native_proxy"
+	}
 	if fresh {
 		var secret [32]byte
 		if _, err := rand.Read(secret[:]); err != nil {
@@ -479,6 +489,10 @@ func (a *App) cloudResolve(w http.ResponseWriter, r *http.Request) {
 	expected, _ := hex.DecodeString(cloudSign(m, p))
 	if err != nil || !hmac.Equal(provided, expected) {
 		fail(w, 403, "播放链接签名无效")
+		return
+	}
+	if m.Driver == "WebDav" {
+		a.cloudWebDAVStream(w, r, m, p)
 		return
 	}
 	var link struct {

@@ -119,7 +119,7 @@ type cloudDriver struct {
 	Additional []cloudField `json:"additional"`
 }
 
-var cloudDrivers = map[string]string{"139Yun": "移动云盘", "115 Cloud": "115 云盘", "115 Open": "115 开放平台", "Quark": "夸克网盘", "GuangYaPan": "光鸭云盘"}
+var cloudDrivers = map[string]string{"139Yun": "移动云盘", "115 Cloud": "115 云盘", "115 Open": "115 开放平台", "Quark": "夸克网盘", "GuangYaPan": "光鸭云盘", "WebDav": "WebDAV"}
 
 func cloudSensitive(key string) bool {
 	key = strings.ToLower(key)

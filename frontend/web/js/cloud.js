@@ -1,6 +1,7 @@
 const CloudMounts = (() => {
   const base = '/admin/features/cloud';
   const labels = {
+    address:'WebDAV 地址', root_folder_path:'根目录路径', vendor:'服务类型', tls_insecure_skip_verify:'跳过证书校验',
     authorization:'Authorization', username:'登录账号', password:'密码', sms_code:'短信验证码', mail_cookies:'移动邮箱 Cookie',
     cookie:'Cookie', qrcode_token:'二维码登录令牌', qrcode_source:'登录设备', root_folder_id:'根目录 ID', root_path:'根目录路径',
     access_token:'Access Token', refresh_token:'Refresh Token', phone_number:'手机号码', captcha_token:'验证码令牌',
@@ -15,6 +16,7 @@ const CloudMounts = (() => {
     '115 Cloud':['cookie','root_folder_id'],
     '115 Open':['access_token','refresh_token','root_folder_id'],
     Quark:['cookie','root_folder_id','use_transcoding_address'],
+    WebDav:['address','username','password','root_folder_path'],
     GuangYaPan:['client_id','phone_number','captcha_token','send_code','verify_code','access_token','refresh_token','root_path'],
   };
   const tips = {
@@ -22,6 +24,7 @@ const CloudMounts = (() => {
     '115 Cloud':'填写已登录账号的 Cookie。115 的直链与播放客户端 User-Agent 绑定。',
     '115 Open':'使用 115 开放平台授权得到的 Access Token 和 Refresh Token。',
     Quark:'开启转码直链后使用夸克提供的视频地址；部分原画下载链接需要 Cookie，不能直接用于 302 播放。',
+    WebDav:'填写 WebDAV 地址、账号和密码，根目录默认 /。文件通过服务器读取，播放流量会经过 AI Emby。',
     GuangYaPan:'可使用 Token 登录；短信登录先填手机号和 Client ID，勾选发送短信后保存，再编辑挂载填写短信验证码。',
   };
   const sensitive = name => /token|cookie|password|authorization|verify_code|sms_code|device_sign|verification_id|username|phone_number/i.test(name);
@@ -45,7 +48,7 @@ const CloudMounts = (() => {
   function render() {
     host.innerHTML=`<div class="cloud-toolbar"><div><h2>我的网盘 <span class="cloud-count">${data.Mounts.length}</span></h2></div><div class="cloud-actions"><button type="button" class="secondary" data-refresh>刷新</button><button type="button" data-add>＋ 添加网盘</button></div></div>
       ${!data.EngineReady?'<p class="cloud-notice" role="status">网盘引擎正在连接，请稍后刷新。</p>':''}
-      ${data.Mounts.length ? `<div class="cloud-mount-grid">${data.Mounts.map((m,i)=>`<article class="cloud-mount ${m.ID===selected?.ID?'is-selected':''}" data-card="${i}"><button type="button" class="cloud-mount-select" data-select="${i}"><span class="cloud-drive-symbol" aria-hidden="true">${icon('folder')}</span><span><strong>${esc(m.Name)}</strong><small>${esc(data.Drivers[m.Driver]||m.Driver)}</small></span><span class="cloud-status ${m.Status==='已连接'?'is-connected':''}">${esc(m.Status)}</span></button><div class="cloud-mount-actions"><button type="button" class="secondary" data-edit="${i}">配置</button><button type="button" class="secondary" data-toggle="${i}">${m.Enabled?'暂停':'启用'}</button><button type="button" class="cloud-remove" data-delete="${i}" aria-label="移除 ${esc(m.Name)}">移除</button></div></article>`).join('')}</div>` : `<div class="cloud-empty">${icon('folder')}<h3>连接你的影视网盘</h3><p>移动云盘 · 115 · 夸克 · 光鸭</p><button type="button" data-empty-add>添加第一个网盘</button></div>`}
+      ${data.Mounts.length ? `<div class="cloud-mount-grid">${data.Mounts.map((m,i)=>`<article class="cloud-mount ${m.ID===selected?.ID?'is-selected':''}" data-card="${i}"><button type="button" class="cloud-mount-select" data-select="${i}"><span class="cloud-drive-symbol" aria-hidden="true">${icon('folder')}</span><span><strong>${esc(m.Name)}</strong><small>${esc(data.Drivers[m.Driver]||m.Driver)}</small></span><span class="cloud-status ${m.Status==='已连接'?'is-connected':''}">${esc(m.Status)}</span></button><div class="cloud-mount-actions"><button type="button" class="secondary" data-edit="${i}">配置</button><button type="button" class="secondary" data-toggle="${i}">${m.Enabled?'暂停':'启用'}</button><button type="button" class="cloud-remove" data-delete="${i}" aria-label="移除 ${esc(m.Name)}">移除</button></div></article>`).join('')}</div>` : `<div class="cloud-empty">${icon('folder')}<h3>连接你的影视网盘</h3><p>移动云盘 · 115 · 夸克 · 光鸭 · WebDAV</p><button type="button" data-empty-add>添加第一个网盘</button></div>`}
       <section class="cloud-browser" ${selected?'':'hidden'}><div class="cloud-browser-head"><h3>网盘文件</h3><button type="button" data-generate ${!selected?.Enabled?'disabled':''}>生成 STRM</button></div><div data-browser></div></section>
       <section class="cloud-task-section"><h3>生成记录</h3><div data-tasks></div></section><footer class="cloud-credits"><a href="/web/cloud-engine-notice.html" target="_blank" rel="noopener noreferrer">网盘组件许可与源码</a></footer>`;
     host.querySelector('[data-add]').onclick=run(()=>edit());host.querySelector('[data-empty-add]')?.addEventListener('click',run(()=>edit()));
@@ -75,7 +78,7 @@ const CloudMounts = (() => {
     const draw=async()=>{
       const ticket=++serial;schema=null;fields.innerHTML='<p role="status">读取账号配置…</p>';
       const s=await api(base+'/fields?'+new URLSearchParams({Driver:driver,ID:m?.ID||''}));if(ticket!==serial||!dialog.open)return;schema=s;
-      const items=s.Fields.filter(f=>f.name!=='verification_id');
+      const items=s.Fields.filter(f=>f.name!=='verification_id'&&!(driver==='WebDav'&&f.name==='tls_insecure_skip_verify'));
       const html=f=>{
         const saved=s.Saved.includes(f.name), name='account:'+f.name, title=labels[f.name]||f.name.replaceAll('_',' ');
         let value=s.Values[f.name] ?? (sensitive(f.name)?'':f.default);
@@ -84,10 +87,11 @@ const CloudMounts = (() => {
         if(f.type==='bool')return `<label class="feature-check cloud-option cloud-span"><span>${esc(title)}</span><input name="${esc(name)}" type="checkbox" ${value===true||value==='true'?'checked':''}></label>`;
         if(f.type==='select'){
           const options=f.options.split(',');if(value&&!options.includes(String(value)))options.unshift(String(value));
-          const names={personal_new:'个人空间（新版）',personal:'个人空间',family:'家庭空间',group:'群空间',share:'分享空间',asc:'升序',desc:'降序'};
+          const names={other:'通用 WebDAV',sharepoint:'SharePoint',personal_new:'个人空间（新版）',personal:'个人空间',family:'家庭空间',group:'群空间',share:'分享空间',asc:'升序',desc:'降序'};
           return `<label>${esc(title)}<select name="${esc(name)}" ${required}>${options.map(v=>`<option value="${esc(v)}" ${String(value)===v?'selected':''}>${esc(names[v]||v)}</option>`).join('')}</select></label>`;
         }
-        return field(name,title,value??'',sensitive(f.name)?'password':['number','float'].includes(f.type)?'number':'text',`${required} ${placeholder} autocomplete="off" ${['number','float'].includes(f.type)?'min="0" step="any"':''}`);
+        const addressHint=driver==='WebDav'&&f.name==='address'?'placeholder="https://dav.example.com/dav/"':'';
+        return field(name,title,value??'',sensitive(f.name)?'password':['number','float'].includes(f.type)?'number':'text',`${required} ${placeholder} ${addressHint} autocomplete="off" ${['number','float'].includes(f.type)?'min="0" step="any"':''}`);
       };
       const common=items.filter(f=>primary[driver]?.includes(f.name)), advanced=items.filter(f=>!primary[driver]?.includes(f.name));
       fields.innerHTML=`<h3>账号与目录</h3><p class="cloud-account-tip">${esc(tips[driver])}</p><div class="feature-grid">${common.map(html).join('')}</div>${advanced.length?`<details class="cloud-advanced"><summary>高级配置</summary><div class="feature-grid">${advanced.map(html).join('')}</div></details>`:''}`;
@@ -118,7 +122,7 @@ const CloudMounts = (() => {
     if(!selected?.Enabled)return;const m=selected,source=currentPath;
     const libs=await api('/admin/features/libraries');
     const suffix=m.Name.replace(/[\\/:*?"<>|\r\n]/g,'_');
-    fmDialog('生成 STRM',`<div class="feature-grid">${field('Source','网盘源目录',source,'text','required')}${field('Output','本地输出目录','/media/网盘/'+suffix,'text','required')}<label class="cloud-span">AI Emby 服务地址<input name="PublicURL" type="url" required value="${esc(data.PublicURL||location.origin)}" placeholder="https://emby.example.com"></label>${field('Limit','本次最多生成（0 为不限）',0,'number','min="0" max="100000" required')}${field('Concurrency','文件写入并发',4,'number','min="1" max="8" required')}<label class="cloud-span">完成后扫描<select name="Library"><option value="">只生成 STRM</option>${libs.map(l=>`<option value="${esc(l.Id)}">${esc(l.Name)}</option>`).join('')}</select></label><label class="feature-check"><input name="Recursive" type="checkbox" checked>包含子目录</label><label class="feature-check"><input name="Overwrite" type="checkbox">覆盖已有 STRM</label></div><div class="cloud-actions"><button type="button" class="secondary" data-local-picker>选择本地目录</button></div><p class="cloud-account-tip">保留源目录结构，只生成视频的 STRM。服务地址需能被播放设备访问，播放时获取网盘直链并 302 跳转。</p>`,async f=>{
+    fmDialog('生成 STRM',`<div class="feature-grid">${field('Source','网盘源目录',source,'text','required')}${field('Output','本地输出目录','/media/网盘/'+suffix,'text','required')}<label class="cloud-span">AI Emby 服务地址<input name="PublicURL" type="url" required value="${esc(data.PublicURL||location.origin)}" placeholder="https://emby.example.com"></label>${field('Limit','本次最多生成（0 为不限）',0,'number','min="0" max="100000" required')}${field('Concurrency','文件写入并发',4,'number','min="1" max="8" required')}<label class="cloud-span">完成后扫描<select name="Library"><option value="">只生成 STRM</option>${libs.map(l=>`<option value="${esc(l.Id)}">${esc(l.Name)}</option>`).join('')}</select></label><label class="feature-check"><input name="Recursive" type="checkbox" checked>包含子目录</label><label class="feature-check"><input name="Overwrite" type="checkbox">覆盖已有 STRM</label></div><div class="cloud-actions"><button type="button" class="secondary" data-local-picker>选择本地目录</button></div><p class="cloud-account-tip">${m.Driver==='WebDav'?'保留源目录结构，只生成视频的 STRM。WebDAV 由服务器携带认证读取，播放流量经过 AI Emby；账号密码不会写入 STRM。':'保留源目录结构，只生成视频的 STRM。服务地址需能被播放设备访问，播放时获取网盘直链并 302 跳转。'}</p>`,async f=>{
       await api(base+'/generate','POST',{ID:m.ID,Source:f.get('Source'),Output:f.get('Output'),PublicURL:f.get('PublicURL'),Library:f.get('Library'),Limit:Number(f.get('Limit')),Concurrency:Number(f.get('Concurrency')),Recursive:f.has('Recursive'),Overwrite:f.has('Overwrite')});
       toast('生成任务已启动');await poll();schedule();
     },'开始生成');
