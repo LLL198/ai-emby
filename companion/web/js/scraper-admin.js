@@ -90,14 +90,14 @@ async function loadScraperSettings() {
   let scanCancelled = false;
   let namingBusy=false,namingUI=null;
   let issuesUI=null;
-  let config = { ManualEnabled: false, MonitorAutoRefresh: true, ChineseMetadata: true, OriginalPosters: false, ...result.Settings }, plan = null, busy = false, taskActive = !!(result.Running || result.Planning);
+  let config = { MonitorAutoRefresh: true, ChineseMetadata: true, OriginalPosters: false, ...result.Settings }, plan = null, busy = false, taskActive = !!(result.Running || result.Planning);
   const kinds = { Series: '电视剧 Series', Movie: '电影 Movie', Season: '季 Season', Episode: '集 Episode' };
   const contents = { Series: ['NFO', 'Poster', 'Backdrop', 'Logo', 'Banner'], Movie: ['NFO', 'Poster', 'Backdrop', 'Logo', 'Disc', 'Banner'], Season: ['NFO', 'Poster', 'Banner'], Episode: ['NFO', 'Still'] };
   const contentName = (kind, value) => ({ NFO: 'NFO元数据', Poster: '海报', Backdrop: '背景图', Logo: 'Logo', Still: '缩略图', Disc: '光盘图（如有）', Banner: '横幅图（如有）' })[value] || value;
   host.innerHTML = `
     <div class="scraper-master"><div><span class="eyebrow">METADATA SERVICE</span><p>刮削服务</p></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="enabled" type="checkbox" ${config.Enabled?'checked':''}><span>启用刮削</span></label></div>
     <div data-scraper-pane="manual">
-      <section class="setting-card"><div class="card-heading with-control"><div><span class="step-label">01 / SCOPE</span><h3>选择任务范围</h3></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="manual" type="checkbox" ${config.ManualEnabled?'checked':''}><span>手动刮削</span></label></div><div class="scope-controls"><div><span data-scope-summary>手动刮削目录</span><button type="button" class="secondary text-icon-button" data-manual-scopes>${fmIcon('folder')} 选择目录 / 磁盘</button></div><div><span>执行并发</span><button type="button" class="secondary" data-concurrency>刮削并发</button></div></div></section>
+      <section class="setting-card"><div class="card-heading"><div><span class="step-label">01 / SCOPE</span><h3>选择任务范围</h3></div></div><div class="scope-controls"><div><span data-scope-summary>手动刮削目录</span><button type="button" class="secondary text-icon-button" data-manual-scopes>${fmIcon('folder')} 选择目录 / 磁盘</button></div><div><span>执行并发</span><button type="button" class="secondary" data-concurrency>刮削并发</button></div></div></section>
       <section class="setting-card"><div class="card-heading"><span class="step-label">02 / PLAN & RUN</span><h3>预览并开始</h3></div><div class="scraper-operation"><label>任务操作<select data-operation><option value="scrape">仅刮削</option><option value="name">仅规范命名</option><option value="both">规范命名后刮削</option></select></label></div><p data-policy class="policy-note"></p><div data-scrape-actions class="tmdb-actions"><button type="button" class="secondary" data-plan>扫描任务</button><button type="button" data-start disabled>开始刮削 ↗</button></div><div data-naming hidden></div><div class="tmdb-actions"><button type="button" class="secondary" data-cancel disabled>停止任务</button></div><p data-result class="task-status" role="status" aria-live="polite">${result.Running?'刮削正在运行，下方显示实时记录。':'请先扫描生成计划。'}</p><div data-details></div></section>
       <section class="setting-card"><details open data-live><summary>扫描与刮削记录</summary><p data-live-status role="status"></p><div data-live-entries></div></details></section>
     </div>
@@ -105,12 +105,6 @@ async function loadScraperSettings() {
     <div data-scraper-pane="monitor"><section class="setting-card"><div class="card-heading with-control"><div><h3>实时监控</h3></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor" type="checkbox" ${config.MonitorEnabled?'checked':''}><span>启用监控</span></label></div><div class="scope-controls"><div><span data-monitor-summary>监控目录</span><button type="button" class="secondary text-icon-button" data-monitor-settings>${fmIcon('folder')} 选择监控目录</button></div></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor-auto-refresh" type="checkbox" ${config.MonitorAutoRefresh?'checked':''}><span>自动刷新本地元数据</span></label><p class="tmdb-help">与文件监听共用队列，均启用时由刮削接管。</p></section></div>
     <div data-scraper-pane="settings"><section class="setting-card"><div class="card-heading"><h3>刮削器与优先级</h3></div><div data-scrapers></div><p class="tmdb-help">至少启用一个刮削器，按顺序补全缺失内容；Fanart.tv 需要 API Key。</p></section><section class="setting-card"><div class="card-heading"><h3>内容与写入策略</h3></div><button type="button" class="secondary text-icon-button" data-settings>${fmIcon('gear')} 配置刮削内容</button><p class="tmdb-help">已有 WebP 保留；保存设置后重新扫描生成计划。</p></section></div>`;
   Panel.prepareScraper(host);
-  const manual = host.querySelector('[name=manual]');
-  manual.onchange = run(async () => {
-    const next = { ...config, ManualEnabled: manual.checked };
-    try { await api('/admin/scraper', 'PUT', next); config = next; invalidate(); }
-    catch (e) { manual.checked = config.ManualEnabled; throw e; }
-  });
   const monitor = host.querySelector('[name=monitor]');
   const autoRefresh = host.querySelector('[name=monitor-auto-refresh]');
   const enabled = host.querySelector('[name=enabled]'), provider = host.querySelector('[data-scrapers]');
@@ -173,12 +167,11 @@ async function loadScraperSettings() {
   const operation=host.querySelector('[data-operation]');
   const controls = () => {
     const locked=busy||providerSaving||namingBusy;
-    scan.disabled = locked || taskActive || !config.Enabled || !config.ManualEnabled;
-    start.disabled = locked || taskActive || !config.Enabled || !config.ManualEnabled || !plan || !(plan.Pending + plan.Overwrite);
+    scan.disabled = locked || taskActive || !config.Enabled;
+    start.disabled = locked || taskActive || !config.Enabled || !plan || !(plan.Pending + plan.Overwrite);
     cancelButton.disabled = !(busy || taskActive || namingBusy) || !!namingUI?.applying;
     monitor.disabled = locked;
     autoRefresh.disabled = locked;
-    manual.disabled = locked;
     operation.disabled=locked||taskActive;
     host.querySelector('[data-monitor-settings]').disabled = locked;
     host.querySelector('[data-manual-scopes]').disabled = locked||taskActive;
@@ -476,7 +469,7 @@ async function loadScraperSettings() {
     $('#modal').classList.add('scraper-settings-sheet');
   };
   scan.onclick = run(async () => {
-    if (!config.Enabled || !config.ManualEnabled || busy) return;
+    if (!config.Enabled || busy) return;
     scanCancelled = false; busy = true; taskActive = true; plan = null; controls(); status.textContent = '扫描刮削任务…';
     try {
       plan = await ScraperManual.plan({alive: () => !scanCancelled && host.isConnected});
@@ -514,7 +507,7 @@ async function loadScraperSettings() {
     onBeforeRun:async()=>{
       const state=await api('/admin/scraper');
       if(state.Running||state.Planning||state.Settings.MonitorEnabled)throw Error('请先结束刮削任务并关闭实时刮削监控');
-      if(operation.value==='both'&&(!state.Settings.Enabled||!state.Settings.ManualEnabled))throw Error('请先开启刮削服务和手动刮削');
+      if(operation.value==='both'&&!state.Settings.Enabled)throw Error('请先开启刮削服务');
       config={...config,...state.Settings};scanCancelled=false;
     },
     onComplete:async data=>{

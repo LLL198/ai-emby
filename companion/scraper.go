@@ -104,7 +104,7 @@ func (a *App) scraperAdmin(w http.ResponseWriter, r *http.Request, path string) 
 				}
 				return "关闭"
 			}
-			reason := "设置已保存；刮削" + state(config.Enabled) + "；实时监控" + state(config.MonitorEnabled) + "；自动刷新" + state(config.MonitorAutoRefresh) + "；手动刮削" + state(config.ManualEnabled)
+			reason := "设置已保存；刮削" + state(config.Enabled) + "；实时监控" + state(config.MonitorEnabled) + "；自动刷新" + state(config.MonitorAutoRefresh)
 			a.scraperPhase("保存", scraperScope{}, MediaRecognition{}, config.Scraper, reason)
 			if previous.Enabled != config.Enabled || previous.MonitorEnabled != config.MonitorEnabled || previous.MonitorAutoRefresh != config.MonitorAutoRefresh {
 				a.scraperPhase("开关", scraperScope{}, MediaRecognition{}, config.Scraper, "刮削"+state(config.Enabled)+"；实时监控"+state(config.MonitorEnabled)+"；自动刷新"+state(config.MonitorAutoRefresh))
@@ -188,9 +188,9 @@ func (a *App) scraperAdmin(w http.ResponseWriter, r *http.Request, path string) 
 			return
 		}
 		config := a.scraperSettings()
-		if !config.Enabled || !config.ManualEnabled {
+		if !config.Enabled {
 			a.scraper.mu.Unlock()
-			fail(w, http.StatusConflict, "请先开启刮削和手动任务范围")
+			fail(w, http.StatusConflict, "请先开启刮削服务")
 			return
 		}
 		config.fileScope, config.itemID, config.manualRecognition, config.taskID = scope, request.ItemID, request.ManualRecognition, id()
@@ -250,7 +250,7 @@ func (a *App) scraperAdmin(w http.ResponseWriter, r *http.Request, path string) 
 		defer a.scraper.mu.Unlock()
 		config := a.scraperSettings()
 		plan := a.scraper.plan
-		if a.scraper.running || a.scraper.planning || plan == nil || plan.ID != request.ID || !config.Enabled || !config.ManualEnabled {
+		if a.scraper.running || a.scraper.planning || plan == nil || plan.ID != request.ID || !config.Enabled {
 			a.scraperPhase("失败", scraperScope{}, MediaRecognition{}, "", "启动被拒绝：总开关关闭、计划无效或任务运行中")
 			fail(w, http.StatusConflict, "计划无效或任务正在运行，请重新扫描刮削任务")
 			return

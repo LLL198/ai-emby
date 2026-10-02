@@ -512,7 +512,6 @@ type scraperConfig struct {
 	OriginalPosters    bool
 	MonitorEnabled     bool
 	MonitorAutoRefresh bool
-	ManualEnabled      bool
 	ManualScopes       []scraperScope
 	MonitorScopes      []scraperScope
 	Scraper            string

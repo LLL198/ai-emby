@@ -387,7 +387,6 @@ func (a *App) scraperAutoDirectory(ctx context.Context, discovery *scraperDiscov
 	a.scraper.cancel = cancel
 	a.scraper.mu.Unlock()
 
-	current.ManualEnabled = false
 	current.ManualScopes = nil
 	activityID := a.newActivity("scraper", "", "实时监控 · 自动刮削计划")
 	plan, err := a.buildScraperItems(workerCtx, current, items, activityID)
