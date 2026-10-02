@@ -155,7 +155,7 @@ const Panel = (() => {
     tabs(host,[['任务与队列',task],['提取设置',settings]],'媒体信息');
   }
   function prepareScraper(host) {
-    tabs(host,[['手动任务',host.querySelector('[data-scraper-pane="manual"]')],['实时监控',host.querySelector('[data-scraper-pane="monitor"]')],['刮削配置',host.querySelector('[data-scraper-pane="settings"]')]],'刮削');
+    tabs(host,[['手动任务',host.querySelector('[data-scraper-pane="manual"]')],['待处理',host.querySelector('[data-scraper-pane="issues"]')],['实时监控',host.querySelector('[data-scraper-pane="monitor"]')],['刮削配置',host.querySelector('[data-scraper-pane="settings"]')]],'刮削');
     const summary=host.querySelector('.scraper-master');host.prepend(summary);
   }
   async function loadModule(n, loader) {

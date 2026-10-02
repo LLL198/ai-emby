@@ -866,7 +866,15 @@ func (a *App) runScraper(ctx context.Context, plan *scraperPlan) error {
 	return err
 }
 
-func (a *App) scrapeObject(ctx context.Context, config scraperConfig, object scraperObject, provider Scraper, activityID string) error {
+func (a *App) scrapeObject(ctx context.Context, config scraperConfig, object scraperObject, provider Scraper, activityID string) (outcome error) {
+	var pendingIssue error
+	defer func() {
+		if outcome != nil {
+			a.scraperStoreIssue(ctx, object, outcome)
+		} else {
+			a.scraperStoreIssue(ctx, object, pendingIssue)
+		}
+	}()
 	if object.Error != "" {
 		return errors.New(object.Error)
 	}
@@ -991,6 +999,7 @@ func (a *App) scrapeObject(ctx context.Context, config scraperConfig, object scr
 		}
 		if errors.Is(err, errTMDBEpisodeNotFound) {
 			reason := target.Content + " · TMDB 无此单集，可能存在分集版本或编号差异；保留已有文件，请核对集数"
+			pendingIssue = errors.New(reason)
 			update(reason)
 			phase("跳过", reason)
 			return nil

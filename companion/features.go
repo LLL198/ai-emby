@@ -24,6 +24,8 @@ type featureState struct {
 }
 
 const featureSchema = `
+CREATE TABLE IF NOT EXISTS feature_media_issues(id TEXT PRIMARY KEY, source TEXT NOT NULL, path TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL, proposed TEXT NOT NULL DEFAULT '', directory BOOLEAN NOT NULL DEFAULT false, kind TEXT NOT NULL DEFAULT '', item_id TEXT NOT NULL DEFAULT '', ignored BOOLEAN NOT NULL DEFAULT false, created BIGINT NOT NULL, updated BIGINT NOT NULL, UNIQUE(source,path));
+CREATE INDEX IF NOT EXISTS feature_media_issues_pending ON feature_media_issues(ignored,updated DESC,id);
 CREATE TABLE IF NOT EXISTS feature_cloud_mounts(id TEXT PRIMARY KEY, name TEXT NOT NULL, driver TEXT NOT NULL, storage_id BIGINT NOT NULL DEFAULT 0, secret TEXT NOT NULL, enabled BIGINT NOT NULL DEFAULT 1, created BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS feature_tasks(id TEXT PRIMARY KEY, category TEXT NOT NULL, item TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, data TEXT NOT NULL, started BIGINT NOT NULL, updated BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS feature_tasks_updated ON feature_tasks(updated DESC);
@@ -136,6 +138,8 @@ func (a *App) featureRoute(w http.ResponseWriter, r *http.Request, user User) bo
 		return true
 	}
 	switch {
+	case path == "/admin/features/media-issues":
+		a.mediaIssuesAPI(w, r)
 	case strings.HasPrefix(path, "/admin/features/naming/"):
 		a.namingAPI(w, r, user)
 	case strings.HasPrefix(path, "/admin/features/cloud"):

@@ -88,6 +88,7 @@ async function loadScraperSettings() {
   if (!host) return;
   let scanCancelled = false;
   let namingBusy=false,namingUI=null;
+  let issuesUI=null;
   let config = { ManualEnabled: false, MonitorAutoRefresh: true, ChineseMetadata: true, OriginalPosters: false, ...result.Settings }, plan = null, busy = false, taskActive = !!(result.Running || result.Planning);
   const kinds = { Series: '电视剧 Series', Movie: '电影 Movie', Season: '季 Season', Episode: '集 Episode' };
   const contents = { Series: ['NFO', 'Poster', 'Backdrop', 'Logo', 'Banner'], Movie: ['NFO', 'Poster', 'Backdrop', 'Logo', 'Disc', 'Banner'], Season: ['NFO', 'Poster', 'Banner'], Episode: ['NFO', 'Still'] };
@@ -99,6 +100,7 @@ async function loadScraperSettings() {
       <section class="setting-card"><div class="card-heading"><span class="step-label">02 / PLAN & RUN</span><h3>预览并开始</h3></div><div class="scraper-operation"><label>任务操作<select data-operation><option value="scrape">仅刮削</option><option value="name">仅规范命名</option><option value="both">规范命名后刮削</option></select></label></div><p data-policy class="policy-note"></p><div data-scrape-actions class="tmdb-actions"><button type="button" class="secondary" data-plan>扫描任务</button><button type="button" data-start disabled>开始刮削 ↗</button></div><div data-naming hidden></div><div class="tmdb-actions"><button type="button" class="secondary" data-cancel disabled>停止任务</button></div><p data-result class="task-status" role="status" aria-live="polite">${result.Running?'刮削正在运行，下方显示实时记录。':'请先扫描生成计划。'}</p><div data-details></div></section>
       <section class="setting-card"><details open data-live><summary>扫描与刮削记录</summary><p data-live-status role="status"></p><div data-live-entries></div></details></section>
     </div>
+    <div data-scraper-pane="issues"><section class="setting-card"><div class="card-heading"><h3>待处理项目</h3></div><div data-media-issues></div></section></div>
     <div data-scraper-pane="monitor"><section class="setting-card"><div class="card-heading with-control"><div><h3>实时监控</h3></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor" type="checkbox" ${config.MonitorEnabled?'checked':''}><span>启用监控</span></label></div><div class="scope-controls"><div><span data-monitor-summary>监控目录</span><button type="button" class="secondary text-icon-button" data-monitor-settings>${fmIcon('folder')} 选择监控目录</button></div></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor-auto-refresh" type="checkbox" ${config.MonitorAutoRefresh?'checked':''}><span>自动刷新本地元数据</span></label><p class="tmdb-help">与文件监听共用队列，均启用时由刮削接管。</p></section></div>
     <div data-scraper-pane="settings"><section class="setting-card"><div class="card-heading"><h3>刮削器与优先级</h3></div><div data-scrapers></div><p class="tmdb-help">至少启用一个刮削器，按顺序补全缺失内容；Fanart.tv 需要 API Key。</p></section><section class="setting-card"><div class="card-heading"><h3>内容与写入策略</h3></div><button type="button" class="secondary text-icon-button" data-settings>${fmIcon('gear')} 配置刮削内容</button><p class="tmdb-help">已有 WebP 保留；保存设置后重新扫描生成计划。</p></section></div>`;
   Panel.prepareScraper(host);
@@ -502,6 +504,7 @@ async function loadScraperSettings() {
   const activePage=()=>host.isConnected&&view==='admin'&&!host.closest('.admin-section')?.hidden&&!host.querySelector('[data-scraper-pane="manual"]').hidden;
   namingUI=FileNaming.mount(host.querySelector('[data-naming]'),{
     useScraperScopes:true,
+    onPreview:()=>issuesUI?.refresh(),
     alive:activePage,
     onError:error=>{if(!scanCancelled)status.textContent='任务未继续：'+error.message;},
     label:()=>operation.value==='both'?'命名并刮削':'自动命名',
@@ -542,6 +545,11 @@ async function loadScraperSettings() {
       status.textContent='命名完成，刮削已开始。';controls();
     }
   });
+  issuesUI=ScraperIssues.mount(host.querySelector('[data-media-issues]'),count=>{
+    const pane=host.querySelector('[data-scraper-pane="issues"]');
+    const tab=host.querySelector(`[aria-controls="${pane.id}"]`);
+    if(tab)tab.textContent=count?`待处理 (${count})`:'待处理';
+  });
   const live = host.querySelector('[data-live]');
   let lastTaskStateCheck = 0;
   const poll = async () => {
@@ -568,3 +576,94 @@ async function loadScraperSettings() {
   poll();
   controls();
 }
+
+const ScraperIssues = (()=>{
+  const endpoint='/admin/features/media-issues';
+  const sourceNames={naming:'规范命名',scraper:'元数据刮削'};
+  const statusNames={review:'无法确定',conflict:'命名冲突',failed:'刮削失败'};
+  function select(label,values){return UI.el('select',{'aria-label':label},values.map(([value,name])=>UI.el('option',{value},name)));}
+  function mount(host,onCount=()=>{}){
+    let page=1,sequence=0,controller=null,timer=null,searchTimer=null;
+    const search=UI.el('input',{type:'search',placeholder:'搜索名称、路径或原因','aria-label':'搜索待处理项目'});
+    const source=select('任务来源',[['','全部来源'],['naming','规范命名'],['scraper','元数据刮削']]);
+    const status=select('问题类型',[['','全部问题'],['review','无法确定'],['conflict','命名冲突'],['failed','刮削失败']]);
+    const state=select('处理状态',[['','待处理'],['ignored','已忽略'],['all','全部状态']]);
+    const refresh=UI.el('button',{type:'button',class:'secondary'},'刷新');
+    const summary=UI.el('p',{class:'media-issues-summary',role:'status','aria-live':'polite'});
+    const list=UI.el('div',{class:'media-issues-list'});
+    const pagination=UI.el('div',{class:'media-issues-pagination'});
+    const filters=UI.el('div',{class:'media-issues-filters'},[search,source,status,state,refresh]);
+    host.replaceChildren(filters,summary,list,pagination);
+    const alive=()=>host.isConnected&&view==='admin'&&!host.closest('.admin-section')?.hidden;
+    const visible=()=>alive()&&!host.closest('[data-scraper-pane]')?.hidden;
+    function render(data){
+      summary.textContent=`待处理 ${data.pending} 项 · 当前筛选 ${data.total} 项`;
+      list.replaceChildren();
+      for(const issue of data.items){
+        const name=issue.path.split('/').at(-1);
+        const actions=UI.el('div',{class:'media-issue-actions'});
+        const open=UI.el('button',{type:'button',class:'secondary',onclick:()=>filesPage(issue.directory?issue.path:issue.path.split('/').slice(0,-1).join('/'))},'打开目录');
+        const fix=UI.el('button',{type:'button',class:'secondary',onclick:()=>{
+          const path=issue.path.split('/').slice(0,-1).join('/');
+          FileNaming.open(path,[issue.path],()=>load(true),{
+            initialKind:['Episode','Season','Series'].includes(issue.kind)?'tv':issue.kind==='Movie'?'movie':'auto',
+            onPreview:()=>load(true),
+            onBeforeRun:async()=>{
+              const task=await api('/admin/scraper');
+              if(task.Running||task.Planning||task.Settings.MonitorEnabled)throw Error('请先结束刮削任务并关闭实时刮削监控');
+            }
+          });
+        }},'修正命名');
+        actions.append(fix,open);
+        if(issue.source==='scraper')actions.append(UI.el('button',{type:'button',class:'secondary',onclick:()=>openFileScraper({path:'/'+issue.path,name})},'重试刮削'));
+        const ignore=UI.el('button',{type:'button',class:'secondary',onclick:run(async()=>{
+          ignore.disabled=true;
+          try {await api(endpoint,'PUT',{id:issue.id,ignored:!issue.ignored});await load(true);}
+          finally {ignore.disabled=false;}
+        })},issue.ignored?'恢复待处理':'忽略');
+        actions.append(ignore);
+        const badge=UI.el('span',{class:'media-issue-badge media-issue-badge--'+issue.status},issue.ignored?'已忽略':statusNames[issue.status]||issue.status);
+        const heading=UI.el('div',{class:'media-issue-heading'},[UI.el('strong',{},name),badge]);
+        const path=UI.el('p',{class:'media-issue-path'},'/media/'+issue.path);
+        const meta=UI.el('small',{class:'media-issue-meta'},`${sourceNames[issue.source]||issue.source} · ${issue.directory?'文件夹':'媒体文件'} · ${new Date(issue.updated/1e6).toLocaleString()}`);
+        const body=UI.el('div',{class:'media-issue-body'},[heading,path,UI.el('p',{class:'media-issue-reason'},issue.reason),meta]);
+        if(issue.proposed)body.append(UI.el('details',{class:'media-issue-proposed'},[UI.el('summary',{},'目标名称'),UI.el('p',{},issue.proposed)]));
+        list.append(UI.el('article',{class:'media-issue'},[body,actions]));
+      }
+      if(!data.items.length)list.append(UI.el('p',{class:'empty'},data.total?'此页没有项目，请返回上一页。':state.value==='ignored'?'没有已忽略的项目。':'没有符合条件的待处理项目。命名识别失败或刮削失败后会自动显示在这里。'));
+      const pages=Math.max(1,Math.ceil(data.total/data.pageSize));
+      const prev=UI.el('button',{type:'button',class:'secondary',onclick:()=>{page--;load(true);}},'上一页');prev.disabled=page<=1;
+      const next=UI.el('button',{type:'button',class:'secondary',onclick:()=>{page++;load(true);}},'下一页');next.disabled=page>=pages;
+      pagination.replaceChildren(prev,UI.el('span',{},`${page} / ${pages}`),next);
+      pagination.hidden=pages===1&&page===1;
+    }
+    async function load(full=visible()){
+      if(!host.isConnected)return;
+      const request=++sequence;controller?.abort();controller=new AbortController();refresh.disabled=true;
+      const query=new URLSearchParams({page,search:search.value.trim(),source:source.value,status:status.value,state:state.value});
+      if(!full)query.set('summary','true');
+      try {
+        const data=await api(endpoint+'?'+query,'GET',undefined,{signal:controller.signal});
+        if(request!==sequence||!host.isConnected)return;
+        onCount(data.pending);
+        if(full)render(data);
+      }catch(error){if(request===sequence&&error.name!=='AbortError')summary.textContent='待处理列表读取失败：'+error.message;}
+      finally{if(request===sequence)refresh.disabled=false;}
+    }
+    search.oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{page=1;load(true);},300);};
+    for(const input of [source,status,state])input.onchange=()=>{page=1;load(true);};
+    refresh.onclick=()=>load(true);
+    const pane=host.closest('[data-scraper-pane]');
+    const tab=document.getElementById(pane?.getAttribute('aria-labelledby'));
+    tab?.addEventListener('click',()=>load(true));
+    tab?.parentElement.addEventListener('keydown',()=>queueMicrotask(()=>{if(visible())load(true);}));
+    async function poll(){
+      if(!alive()){controller?.abort();clearTimeout(searchTimer);return;}
+      await load();
+      if(alive())timer=setTimeout(poll,10000);
+    }
+    poll();
+    return {refresh:()=>load(),dispose(){clearTimeout(timer);clearTimeout(searchTimer);controller?.abort();}};
+  }
+  return {mount};
+})();

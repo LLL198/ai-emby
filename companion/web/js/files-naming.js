@@ -27,6 +27,7 @@ const FileNaming = (() => {
     const mode = select("命名方式",[["auto","自动标准命名"],["regex","正则替换"],["sequence","顺序编号"]]);
     mode.value=initialMode;
     const kind = select("作品类型",[["auto","自动判断"],["tv","剧集 / 动漫 / 综艺"],["movie","电影"],["directory","仅文件夹"]]);
+    kind.value=options.initialKind||"auto";
     const title = UI.el("input",{type:"text","aria-label":"作品名称",placeholder:"留空则从文件和目录识别",autocomplete:"off",maxlength:160});
     const year = UI.el("input",{type:"number","aria-label":"发行年份",placeholder:"可选",min:1800,max:2199});
     const season = UI.el("input",{type:"number","aria-label":"季号",placeholder:"从季目录识别；不确定时填写",min:0,max:999});
@@ -261,6 +262,8 @@ const FileNaming = (() => {
         if(sequence!==requestNumber||!alive())return;
         plan=data;data.rows.filter(row=>row.status==="ready").forEach(row=>chosen.add(row.id));
         renderRows();
+        options.onPreview?.(data);
+        if(data.issuesWarning)toast('待处理记录未能保存，本次结果仍在预览中');
         if(automatic&&chosen.size){stopProgress();await applyPlan(true);}
         else {
           feedback.textContent=automatic?"处理完成：已规范的项目保持原名，其余跳过原因见下方。":"预览已生成，检查新名称后执行。";
@@ -296,5 +299,5 @@ const FileNaming = (() => {
     modeChanged();
     return {invalidate, setBusy(value){externalBusy=value;updateButtons();}, cancel(){if(applying)return false;previewAbort?.abort();return true;}, get applying(){return applying;}};
   }
-  return {open:(path,paths=[],refresh=()=>{})=>mount(null,{path,paths,refresh}),mount};
+  return {open:(path,paths=[],refresh=()=>{},options={})=>mount(null,{...options,path,paths,refresh}),mount};
 })();

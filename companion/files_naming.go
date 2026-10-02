@@ -66,16 +66,17 @@ type namingRow struct {
 	Moves     []namingMove `json:"moves"`
 }
 type namingPlan struct {
-	ID           string      `json:"id"`
-	Rows         []namingRow `json:"rows"`
-	Created      time.Time   `json:"created"`
-	Owner        string      `json:"-"`
-	Root         string      `json:"root"`
-	Recursive    bool        `json:"recursive"`
-	Directories  int         `json:"directories"`
-	Scanned      int         `json:"scanned"`
-	Progress     string      `json:"progress"`
-	ScopeVersion string      `json:"scopeVersion,omitempty"`
+	ID            string      `json:"id"`
+	Rows          []namingRow `json:"rows"`
+	Created       time.Time   `json:"created"`
+	Owner         string      `json:"-"`
+	Root          string      `json:"root"`
+	Recursive     bool        `json:"recursive"`
+	Directories   int         `json:"directories"`
+	Scanned       int         `json:"scanned"`
+	Progress      string      `json:"progress"`
+	ScopeVersion  string      `json:"scopeVersion,omitempty"`
+	IssuesWarning bool        `json:"issuesWarning,omitempty"`
 }
 
 func (a *App) namingAPI(w http.ResponseWriter, r *http.Request, user User) {
@@ -430,6 +431,9 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 		plan.Rows = append(plan.Rows, row)
 	}
 	namingConflicts(root, plan.Rows)
+	if err := a.namingStoreIssues(r.Context(), plan, b); err != nil {
+		plan.IssuesWarning = true
+	}
 	filesMu.RUnlock()
 	filesLocked = false
 	a.naming.mu.Lock()
@@ -1014,6 +1018,9 @@ func (a *App) namingCatalog(ctx context.Context, moves []namingMove) (*sql.Tx, e
 	records := []record{}
 	mapping := namingPathMapping(moves)
 	if err := namingRebaseScraperScopes(ctx, tx, mapping); err != nil {
+		return nil, err
+	}
+	if err := namingRebaseIssues(ctx, tx, moves, mapping); err != nil {
 		return nil, err
 	}
 	ids := map[string]string{}
