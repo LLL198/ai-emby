@@ -556,6 +556,15 @@ func (a *App) trackingAutoImport(ctx context.Context, s trackingSubscription, ac
 				if e = walk(f.ID, dest, accepted || match, depth+1); e != nil {
 					return e
 				}
+				if dest == target {
+					current, e := p.List(ctx, target, false)
+					if e != nil {
+						return e
+					}
+					for _, saved := range current {
+						byName[saved.Name] = saved
+					}
+				}
 				continue
 			}
 			if !cloudVideos[strings.ToLower(path.Ext(f.Name))] || (!accepted && !trackingTitleMatch(f.Name, s) && !trackingTitleMatch(resource.Title, s)) {

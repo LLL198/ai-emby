@@ -10,13 +10,18 @@ import (
 	"strings"
 )
 
+func brandingPath(path string) bool {
+	path = strings.TrimPrefix(strings.TrimRight(strings.ToLower(path), "/"), "/emby")
+	return path == "/system/info/public" || path == "/system/info" || path == "/admin/enhancements" || path == "/manifest.json" || path == "/web/manifest.json"
+}
+
 func brandingResponse(db *sql.DB, response *http.Response) error {
 	if response.StatusCode != http.StatusOK || response.Request == nil {
 		return nil
 	}
 	path := strings.TrimRight(strings.ToLower(response.Request.URL.Path), "/")
 	path = strings.TrimPrefix(path, "/emby")
-	if path != "/system/info/public" && path != "/system/info" && path != "/admin/enhancements" && path != "/manifest.json" && path != "/web/manifest.json" {
+	if !brandingPath(response.Request.URL.Path) {
 		return nil
 	}
 	content, err := io.ReadAll(response.Body)

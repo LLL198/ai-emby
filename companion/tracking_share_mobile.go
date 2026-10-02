@@ -331,6 +331,9 @@ func (p *trackingMobileShare) Wait(ctx context.Context, task string) error {
 			}
 			return nil
 		}
+		if status := trackingNumber(batch, "taskStatus"); status == 3 || status == 4 {
+			return errTrackingTransferFailed
+		}
 		if err = trackingPause(ctx, time.Second); err != nil {
 			return err
 		}

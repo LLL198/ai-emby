@@ -125,6 +125,13 @@ func main() {
 	coreTarget, _ := url.Parse(coreURL)
 	scraperTarget, _ := url.Parse(scraperURL)
 	coreProxy := httputil.NewSingleHostReverseProxy(coreTarget)
+	coreDirector := coreProxy.Director
+	coreProxy.Director = func(request *http.Request) {
+		coreDirector(request)
+		if brandingPath(request.URL.Path) {
+			request.Header.Set("Accept-Encoding", "identity")
+		}
+	}
 	coreProxy.ModifyResponse = func(response *http.Response) error {
 		if err := brandingResponse(sessionDB, response); err != nil {
 			return err
