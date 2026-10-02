@@ -23,7 +23,7 @@ const CloudMounts = (() => {
     '139Yun':'可填写移动云盘 Authorization；使用邮箱登录时，在高级设置里填写移动邮箱 Cookie 和账号信息。',
     '115 Cloud':'填写已登录账号的 Cookie。115 的直链与播放客户端 User-Agent 绑定。',
     '115 Open':'使用 115 开放平台授权得到的 Access Token 和 Refresh Token。',
-    Quark:'开启转码直链后使用夸克提供的视频地址；部分原画下载链接需要 Cookie，不能直接用于 302 播放。',
+    Quark:'原码播放可选择服务器中转。转码直链可能被夸克限制，出现 plf_invalid 时需要移动端接口凭据。',
     WebDav:'填写 WebDAV 地址、账号和密码，根目录默认 /。文件通过服务器读取，播放流量会经过 AI Emby。',
     GuangYaPan:'可使用 Token 登录；短信登录先填手机号和 Client ID，勾选发送短信后保存，再编辑挂载填写短信验证码。',
   };
@@ -67,13 +67,17 @@ const CloudMounts = (() => {
   async function edit(m) {
     const drivers=Object.entries(data.Drivers);
     let schema,driver=m?.Driver||'139Yun',serial=0;
-    fmDialog(m?'编辑网盘':'添加网盘',`<section class="cloud-sheet-block"><h3>基本信息</h3><div class="feature-grid">${field('Name','挂载名称',m?.Name||'','text','required maxlength="256"')}<label>网盘类型<select name="Driver" ${m?'disabled':''}>${drivers.map(([id,title])=>`<option value="${esc(id)}" ${id===driver?'selected':''}>${esc(title)}</option>`).join('')}</select></label></div></section><section class="cloud-sheet-block cloud-account-fields" data-fields></section>`,async form=>{
+    const mode=m?.PlaybackMode||(driver==='WebDav'?'proxy':'redirect');
+    fmDialog(m?'编辑网盘':'添加网盘',`<section class="cloud-sheet-block"><h3>基本信息</h3><div class="feature-grid">${field('Name','挂载名称',m?.Name||'','text','required maxlength="256"')}<label>网盘类型<select name="Driver" ${m?'disabled':''}>${drivers.map(([id,title])=>`<option value="${esc(id)}" ${id===driver?'selected':''}>${esc(title)}</option>`).join('')}</select></label><label class="cloud-span">播放方式<select name="PlaybackMode" ${driver==='WebDav'?'disabled':''}><option value="redirect" ${mode==='redirect'?'selected':''}>直链 302（视频不经过服务器）</option><option value="proxy" ${mode==='proxy'?'selected':''}>服务器中转（消耗服务器流量）</option></select></label></div></section><section class="cloud-sheet-block cloud-account-fields" data-fields></section>`,async form=>{
       if(!schema) return false;
       const addition={};for(const f of schema.Fields){if(f.name==='verification_id')continue;const v=form.get('account:'+f.name);if(sensitive(f.name)&&!v)continue;addition[f.name]=f.type==='bool'?form.has('account:'+f.name):['number','float'].includes(f.type)?Number(v):String(v??'');}
-      const saved=await api(base+'/save','POST',{ID:m?.ID||'',Name:form.get('Name'),Driver:driver,Addition:addition});
+      const saved=await api(base+'/save','POST',{ID:m?.ID||'',Name:form.get('Name'),Driver:driver,PlaybackMode:form.get('PlaybackMode')||(driver==='WebDav'?'proxy':'redirect'),Addition:addition});
       toast(saved.Message,{type:saved.Connected?'success':'info'});selected={ID:saved.ID};currentPath='/';page=1;await load(host,still);
     },'保存挂载');
     const dialog=document.getElementById('modal'), fields=dialog.querySelector('[data-fields]');
+    const playback=dialog.querySelector('[name="PlaybackMode"]');
+    const applyPlayback=()=>{const input=fields.querySelector('[name="account:use_transcoding_address"]');if(input){const proxy=driver==='Quark'&&playback.value==='proxy';input.disabled=proxy;input.closest('label').hidden=proxy;}};
+    playback.onchange=applyPlayback;
     dialog.classList.add('cloud-sheet','cloud-account-sheet');
     const draw=async()=>{
       const ticket=++serial;schema=null;fields.innerHTML='<p role="status">读取账号配置…</p>';
@@ -95,9 +99,10 @@ const CloudMounts = (() => {
       };
       const common=items.filter(f=>primary[driver]?.includes(f.name)), advanced=items.filter(f=>!primary[driver]?.includes(f.name));
       fields.innerHTML=`<h3>账号与目录</h3><p class="cloud-account-tip">${esc(tips[driver])}</p><div class="feature-grid">${common.map(html).join('')}</div>${advanced.length?`<details class="cloud-advanced"><summary>高级配置</summary><div class="feature-grid">${advanced.map(html).join('')}</div></details>`:''}`;
+      applyPlayback();
       fields.addEventListener('invalid',e=>{const details=e.target.closest('details');if(details)details.open=true},true);
     };
-    dialog.querySelector('[name="Driver"]').onchange=run(async e=>{driver=e.target.value;await draw()});await draw();
+    dialog.querySelector('[name="Driver"]').onchange=run(async e=>{driver=e.target.value;playback.disabled=driver==='WebDav';playback.value=driver==='WebDav'?'proxy':'redirect';await draw()});await draw();
   }
   async function browse(p='/',n=1,refresh=false) {
     const ticket=++browseSerial,mount=selected;const target=host.querySelector('[data-browser]');if(!mount||!target)return;
@@ -122,7 +127,7 @@ const CloudMounts = (() => {
     if(!selected?.Enabled)return;const m=selected,source=currentPath;
     const libs=await api('/admin/features/libraries');
     const suffix=m.Name.replace(/[\\/:*?"<>|\r\n]/g,'_');
-    fmDialog('生成 STRM',`<div class="feature-grid">${field('Source','网盘源目录',source,'text','required')}${field('Output','本地输出目录','/media/网盘/'+suffix,'text','required')}<label class="cloud-span">AI Emby 服务地址<input name="PublicURL" type="url" required value="${esc(data.PublicURL||location.origin)}" placeholder="https://emby.example.com"></label>${field('Limit','本次最多生成（0 为不限）',0,'number','min="0" max="100000" required')}${field('Concurrency','文件写入并发',4,'number','min="1" max="8" required')}<label class="cloud-span">完成后扫描<select name="Library"><option value="">只生成 STRM</option>${libs.map(l=>`<option value="${esc(l.Id)}">${esc(l.Name)}</option>`).join('')}</select></label><label class="feature-check"><input name="Recursive" type="checkbox" checked>包含子目录</label><label class="feature-check"><input name="Overwrite" type="checkbox">覆盖已有 STRM</label></div><div class="cloud-actions"><button type="button" class="secondary" data-local-picker>选择本地目录</button></div><p class="cloud-account-tip">${m.Driver==='WebDav'?'保留源目录结构，只生成视频的 STRM。WebDAV 由服务器携带认证读取，播放流量经过 AI Emby；账号密码不会写入 STRM。':'保留源目录结构，只生成视频的 STRM。服务地址需能被播放设备访问，播放时获取网盘直链并 302 跳转。'}</p>`,async f=>{
+    fmDialog('生成 STRM',`<div class="feature-grid">${field('Source','网盘源目录',source,'text','required')}${field('Output','本地输出目录','/media/网盘/'+suffix,'text','required')}<label class="cloud-span">AI Emby 服务地址<input name="PublicURL" type="url" required value="${esc(data.PublicURL||location.origin)}" placeholder="https://emby.example.com"></label>${field('Limit','本次最多生成（0 为不限）',0,'number','min="0" max="100000" required')}${field('Concurrency','文件写入并发',4,'number','min="1" max="8" required')}<label class="cloud-span">完成后扫描<select name="Library"><option value="">只生成 STRM</option>${libs.map(l=>`<option value="${esc(l.Id)}">${esc(l.Name)}</option>`).join('')}</select></label><label class="feature-check"><input name="Recursive" type="checkbox" checked>包含子目录</label><label class="feature-check"><input name="Overwrite" type="checkbox">覆盖已有 STRM</label></div><div class="cloud-actions"><button type="button" class="secondary" data-local-picker>选择本地目录</button></div><p class="cloud-account-tip">${m.PlaybackMode==='proxy'?'保留源目录结构，只生成视频的 STRM。服务器携带网盘认证读取视频，播放流量经过 AI Emby；账号凭据不会写入 STRM。':'保留源目录结构，只生成视频的 STRM。服务地址需能被播放设备访问，播放时获取网盘直链并 302 跳转。'}</p>`,async f=>{
       await api(base+'/generate','POST',{ID:m.ID,Source:f.get('Source'),Output:f.get('Output'),PublicURL:f.get('PublicURL'),Library:f.get('Library'),Limit:Number(f.get('Limit')),Concurrency:Number(f.get('Concurrency')),Recursive:f.has('Recursive'),Overwrite:f.has('Overwrite')});
       toast('生成任务已启动');await poll();schedule();
     },'开始生成');

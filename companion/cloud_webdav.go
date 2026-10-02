@@ -35,7 +35,7 @@ func cloudWebDAVAddition(addition map[string]any) error {
 
 // Only the fixed loopback engine receives these requests. Its signed proxy
 // handles provider authentication without exposing credentials to the player.
-var cloudWebDAVHTTP = &http.Client{
+var cloudProxyHTTP = &http.Client{
 	Transport: &http.Transport{
 		Proxy:                 nil,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -47,7 +47,8 @@ var cloudWebDAVHTTP = &http.Client{
 	CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 }
 
-func (a *App) cloudWebDAVStream(w http.ResponseWriter, r *http.Request, m cloudMount, p string) {
+func (a *App) cloudProxyStream(w http.ResponseWriter, r *http.Request, m cloudMount, p string) {
+	label := cloudDrivers[m.Driver]
 	var file struct {
 		Sign  string `json:"sign"`
 		IsDir bool   `json:"is_dir"`
@@ -58,7 +59,7 @@ func (a *App) cloudWebDAVStream(w http.ResponseWriter, r *http.Request, m cloudM
 		return
 	}
 	if file.IsDir || file.Sign == "" {
-		fail(w, 502, "WebDAV 文件不可读取，请检查挂载状态和目录权限")
+		fail(w, 502, label+"文件不可读取，请检查挂载状态和目录权限")
 		return
 	}
 	engine, _ := url.Parse(cloudEngineURL)
@@ -68,7 +69,7 @@ func (a *App) cloudWebDAVStream(w http.ResponseWriter, r *http.Request, m cloudM
 	// that the WebDAV driver signed. Close the body after receiving its headers.
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, engine.String(), nil)
 	if err != nil {
-		fail(w, 502, "WebDAV 播放请求无法创建")
+		fail(w, 502, label+"播放请求无法创建")
 		return
 	}
 	for _, header := range []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since"} {
@@ -82,17 +83,17 @@ func (a *App) cloudWebDAVStream(w http.ResponseWriter, r *http.Request, m cloudM
 	if headProbe {
 		request.Header.Set("Range", "bytes=0-0")
 	}
-	response, err := cloudWebDAVHTTP.Do(request)
+	response, err := cloudProxyHTTP.Do(request)
 	if err != nil {
 		if r.Context().Err() == nil {
-			fail(w, 502, "WebDAV 文件读取失败，请检查服务连接和账号权限")
+			fail(w, 502, label+"文件读取失败，请检查服务连接和账号权限")
 		}
 		return
 	}
 	defer response.Body.Close()
 	status := response.StatusCode
 	if status != http.StatusOK && status != http.StatusPartialContent && status != http.StatusNotModified && status != http.StatusRequestedRangeNotSatisfiable {
-		fail(w, 502, "WebDAV 文件读取失败，请检查账号、目录权限和服务状态")
+		fail(w, 502, label+"文件读取失败，请检查账号、目录权限和服务状态")
 		return
 	}
 	// Copy media headers only; engine errors, cookies and provider credentials

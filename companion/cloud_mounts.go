@@ -20,19 +20,23 @@ import (
 func cloudInt(n int64) string { return strconv.FormatInt(n, 10) }
 
 type cloudMount struct {
-	ID        string
-	Name      string
-	Driver    string
-	StorageID int64  `json:"-"`
-	Secret    string `json:"-"`
-	Enabled   bool
-	Status    string
+	ID           string
+	Name         string
+	Driver       string
+	StorageID    int64  `json:"-"`
+	Secret       string `json:"-"`
+	Enabled      bool
+	Status       string
+	PlaybackMode string
 }
 
 func (a *App) cloudMount(id string) (cloudMount, error) {
 	var m cloudMount
 	var enabled int
-	err := a.db.QueryRow("SELECT id,name,driver,storage_id,secret,enabled FROM feature_cloud_mounts WHERE id=?", id).Scan(&m.ID, &m.Name, &m.Driver, &m.StorageID, &m.Secret, &enabled)
+	err := a.db.QueryRow("SELECT id,name,driver,storage_id,secret,enabled,playback_mode FROM feature_cloud_mounts WHERE id=?", id).Scan(&m.ID, &m.Name, &m.Driver, &m.StorageID, &m.Secret, &enabled, &m.PlaybackMode)
+	if m.Driver == "WebDav" {
+		m.PlaybackMode = "proxy"
+	}
 	m.Enabled = enabled == 1
 	return m, err
 }
@@ -224,6 +228,7 @@ func (a *App) cloudSave(w http.ResponseWriter, r *http.Request) {
 	}
 	var b struct {
 		ID, Name, Driver string
+		PlaybackMode     string
 		Addition         map[string]any
 	}
 	if !body(w, r, &b) {
@@ -232,6 +237,10 @@ func (a *App) cloudSave(w http.ResponseWriter, r *http.Request) {
 	b.Name = strings.TrimSpace(b.Name)
 	if b.Name == "" || len(b.Name) > 256 || cloudDrivers[b.Driver] == "" {
 		fail(w, 400, "请填写名称并选择支持的网盘")
+		return
+	}
+	if b.PlaybackMode != "" && b.PlaybackMode != "redirect" && b.PlaybackMode != "proxy" {
+		fail(w, 400, "请选择直链 302 或服务器中转")
 		return
 	}
 	cloudManageMu.Lock()
@@ -266,6 +275,15 @@ func (a *App) cloudSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = json.Unmarshal([]byte(s.Addition), &addition)
+	}
+	if b.PlaybackMode != "" {
+		m.PlaybackMode = b.PlaybackMode
+	}
+	if m.PlaybackMode == "" {
+		m.PlaybackMode = "redirect"
+	}
+	if b.Driver == "WebDav" {
+		m.PlaybackMode = "proxy"
 	}
 	for _, f := range schema.Additional {
 		v, ok := b.Addition[f.Name]
@@ -316,12 +334,15 @@ func (a *App) cloudSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if b.Driver == "Quark" && m.PlaybackMode == "proxy" {
+		addition["use_transcoding_address"] = false
+	}
 	s.MountPath = cloudStoragePath(m, "/")
 	s.Addition = featureJSON(addition)
 	s.WebProxy = false
 	s.EnableSign = true
 	s.WebdavPolicy = "302_redirect"
-	if b.Driver == "WebDav" {
+	if m.PlaybackMode == "proxy" {
 		s.WebProxy = true
 		s.WebdavPolicy = "native_proxy"
 	}
@@ -332,7 +353,7 @@ func (a *App) cloudSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		m.Secret = hex.EncodeToString(secret[:])
-		_, err := a.db.Exec("INSERT INTO feature_cloud_mounts(id,name,driver,secret,enabled,created) VALUES(?,?,?,?,1,?)", m.ID, b.Name, b.Driver, m.Secret, featureNow())
+		_, err := a.db.Exec("INSERT INTO feature_cloud_mounts(id,name,driver,secret,enabled,created,playback_mode) VALUES(?,?,?,?,1,?,?)", m.ID, b.Name, b.Driver, m.Secret, featureNow(), m.PlaybackMode)
 		if err != nil {
 			featureError(w, err)
 			return
@@ -372,7 +393,7 @@ func (a *App) cloudSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := cloudCall(r.Context(), "POST", "/api/admin/storage/update", s, nil, "")
-	if _, e := a.db.Exec("UPDATE feature_cloud_mounts SET name=? WHERE id=?", b.Name, m.ID); e != nil {
+	if _, e := a.db.Exec("UPDATE feature_cloud_mounts SET name=?,playback_mode=? WHERE id=?", b.Name, m.PlaybackMode, m.ID); e != nil {
 		featureError(w, e)
 		return
 	}
@@ -491,8 +512,8 @@ func (a *App) cloudResolve(w http.ResponseWriter, r *http.Request) {
 		fail(w, 403, "播放链接签名无效")
 		return
 	}
-	if m.Driver == "WebDav" {
-		a.cloudWebDAVStream(w, r, m, p)
+	if m.PlaybackMode == "proxy" {
+		a.cloudProxyStream(w, r, m, p)
 		return
 	}
 	var link struct {

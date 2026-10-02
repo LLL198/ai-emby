@@ -26,8 +26,9 @@ var errCloudEngine = errors.New("网盘引擎暂时不可用，请稍后重试")
 var errCloudAccount = errors.New("网盘操作失败，请检查账号是否过期、目录权限和网盘登录配置")
 
 type cloudEnvelope struct {
-	Code int             `json:"code"`
-	Data json.RawMessage `json:"data"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
 }
 
 func cloudCall(ctx context.Context, method, endpoint string, payload any, result any, ua string) error {
@@ -103,6 +104,9 @@ func cloudCall(ctx context.Context, method, endpoint string, payload any, result
 		}
 	}
 	if envelope.Code != 200 || resp.StatusCode != 200 {
+		if strings.Contains(strings.ToLower(envelope.Message), "plf_invalid") {
+			return errors.New("夸克转码直链接口拒绝了当前请求（plf_invalid）。可在网盘配置中选择服务器中转；302 播放需要移动端接口凭据")
+		}
 		return errCloudAccount
 	}
 	return nil
