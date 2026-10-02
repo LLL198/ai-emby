@@ -92,6 +92,18 @@ async function openFileScraper(item, poster = false, onComplete = () => {}) {
   return dialog;
 }
 
+function renderScraperRecord(entry) {
+  let current = entry.Current || '';
+  try {
+    const fields = JSON.parse(current);
+    current = ['phase', 'title', 'kind', 'directory', 'recognizer', 'scraper', 'reason'].map(key => fields[key]).filter(Boolean).map(scraperLogText).join(' · ');
+  } catch { current = scraperLogText(current); }
+  const error = scraperLogText(entry.Error || '');
+  const state = error || entry.State === 'error' ? 'error' : entry.State;
+  const key = JSON.stringify([entry.TaskID, entry.ItemID, entry.Name, entry.Started]);
+  return `<article class="scraper-record" data-state="${esc(state)}"><div class="scraper-record-heading"><strong>${esc(entry.Name)}</strong><span class="scraper-record-badge">${esc(logStates[state] || state || '记录')}</span><time>${esc(new Date(entry.Updated || entry.Started).toLocaleString())}</time></div>${entry.Total ? `<div class="scraper-record-progress"><progress max="${Math.max(1, Number(entry.Total) || 1)}" value="${Math.max(0, Number(entry.Done) || 0)}"></progress><span>${esc(entry.Done)}/${esc(entry.Total)}</span></div>` : ''}${current || error ? `<details class="scraper-record-details" data-log-key="${esc(key)}"><summary><span>${esc(error || current)}</span></summary><div>${current ? `<p>${esc(current)}</p>` : ''}${error && error !== current ? `<p class="scraper-record-error">${esc(error)}</p>` : ''}</div></details>` : ''}</article>`;
+}
+
 async function loadScraperSettings() {
   const result = await api('/admin/scraper');
   const host = $('#scraper-settings');
@@ -103,17 +115,30 @@ async function loadScraperSettings() {
   const kinds = { Series: '电视剧 Series', Movie: '电影 Movie', Season: '季 Season', Episode: '集 Episode' };
   const contents = { Series: ['NFO', 'Poster', 'Backdrop', 'Logo', 'Banner'], Movie: ['NFO', 'Poster', 'Backdrop', 'Logo', 'Disc', 'Banner'], Season: ['NFO', 'Poster', 'Banner'], Episode: ['NFO', 'Still'] };
   const contentName = (kind, value) => ({ NFO: 'NFO元数据', Poster: '海报', Backdrop: '背景图', Logo: 'Logo', Still: '缩略图', Disc: '光盘图（如有）', Banner: '横幅图（如有）' })[value] || value;
+  host.classList.add('scraper-workspace');
   host.innerHTML = `
-    <div class="scraper-master"><div><span class="eyebrow">METADATA SERVICE</span><p>刮削服务</p></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="enabled" type="checkbox" ${config.Enabled?'checked':''}><span>启用刮削</span></label></div>
+    <div class="scraper-master"><div class="scraper-service-title"><span class="scraper-service-icon">${fmIcon('gear')}</span><p>刮削工作台</p><span class="scraper-service-state" data-service-state></span></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="enabled" type="checkbox" ${config.Enabled?'checked':''}><span>启用刮削</span></label></div>
     <div data-scraper-pane="manual">
-      <section class="setting-card"><div class="card-heading"><div><span class="step-label">01 / SCOPE</span><h3>选择任务范围</h3></div></div><div class="scope-controls"><div><span data-scope-summary>手动刮削目录</span><button type="button" class="secondary text-icon-button" data-manual-scopes>${fmIcon('folder')} 选择目录 / 磁盘</button></div><div><span>执行并发</span><button type="button" class="secondary" data-concurrency>刮削并发</button></div></div></section>
-      <section class="setting-card"><div class="card-heading"><span class="step-label">02 / PLAN & RUN</span><h3>预览并开始</h3></div><div class="scraper-operation"><label>任务操作<select data-operation><option value="scrape">仅刮削</option><option value="name">仅规范命名</option><option value="both">规范命名后刮削</option></select></label></div><p data-policy class="policy-note"></p><div data-scrape-actions class="tmdb-actions"><button type="button" class="secondary" data-plan>扫描任务</button><button type="button" data-start disabled>开始刮削 ↗</button></div><div data-naming hidden></div><div class="tmdb-actions"><button type="button" class="secondary" data-cancel disabled>停止任务</button></div><p data-result class="task-status" role="status" aria-live="polite">${result.Running?'刮削正在运行，下方显示实时记录。':'请先扫描生成计划。'}</p><div data-details></div></section>
-      <section class="setting-card"><details open data-live><summary>扫描与刮削记录</summary><p data-live-status role="status"></p><div data-live-entries></div></details></section>
+      <div class="scraper-task-grid">
+        <section class="setting-card scraper-setup"><div class="card-heading"><h3>任务设置</h3><span class="scraper-section-number">01</span></div>
+          <div class="scraper-scope-control"><span class="scraper-field-label">处理范围</span><strong data-scope-summary>手动刮削目录</strong><button type="button" class="secondary text-icon-button" data-manual-scopes>${fmIcon('folder')} 选择目录 / 磁盘</button></div>
+          <div class="scraper-operation"><label><span class="scraper-field-label">任务操作</span><select data-operation><option value="scrape">仅刮削</option><option value="name">仅规范命名</option><option value="both">规范命名后刮削</option></select></label></div>
+          <div class="scraper-execution"><span class="scraper-field-label">执行并发</span><button type="button" class="secondary" data-concurrency>刮削并发</button></div><p data-policy class="policy-note"></p>
+          <div class="scraper-task-actions"><div data-scrape-actions class="tmdb-actions"><button type="button" class="secondary" data-plan>扫描任务</button><button type="button" data-start disabled>开始刮削</button></div><button type="button" class="secondary" data-cancel disabled>停止任务</button></div>
+        </section>
+        <section class="setting-card scraper-preview"><div class="card-heading"><h3 data-preview-title>任务预览</h3><span class="scraper-section-number">02</span></div><p data-result class="task-status" role="status" aria-live="polite">${result.Running?'刮削正在运行':'等待扫描'}</p><div data-details></div><div data-naming hidden></div></section>
+      </div>
+      <section class="setting-card scraper-records"><details open data-live><summary>任务记录</summary><div class="scraper-record-toolbar"><p data-live-status role="status"></p><label><input type="checkbox" data-log-errors>仅看失败</label></div><div data-live-entries></div></details></section>
     </div>
     <div data-scraper-pane="issues"><section class="setting-card"><div class="card-heading"><h3>待处理项目</h3></div><div data-media-issues></div></section></div>
-    <div data-scraper-pane="monitor"><section class="setting-card"><div class="card-heading with-control"><div><h3>实时监控</h3></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor" type="checkbox" ${config.MonitorEnabled?'checked':''}><span>启用监控</span></label></div><div class="scope-controls"><div><span data-monitor-summary>监控目录</span><button type="button" class="secondary text-icon-button" data-monitor-settings>${fmIcon('folder')} 选择监控目录</button></div></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor-auto-refresh" type="checkbox" ${config.MonitorAutoRefresh?'checked':''}><span>自动刷新本地元数据</span></label><p class="tmdb-help">与文件监听共用队列，均启用时由刮削接管。</p></section></div>
-    <div data-scraper-pane="settings"><section class="setting-card"><div class="card-heading"><h3>刮削器与优先级</h3></div><div data-scrapers></div><p class="tmdb-help">至少启用一个刮削器，按顺序补全缺失内容；Fanart.tv 需要 API Key。</p></section><section class="setting-card"><div class="card-heading"><h3>内容与写入策略</h3></div><button type="button" class="secondary text-icon-button" data-settings>${fmIcon('gear')} 配置刮削内容</button><p class="tmdb-help">已有 WebP 保留；保存设置后重新扫描生成计划。</p></section></div>`;
+    <div data-scraper-pane="monitor"><section class="setting-card scraper-monitor"><div class="card-heading with-control"><h3>实时监控</h3><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor" type="checkbox" ${config.MonitorEnabled?'checked':''}><span>启用监控</span></label></div><div class="scraper-monitor-options"><div class="scraper-scope-control"><span class="scraper-field-label">监控范围</span><strong data-monitor-summary>监控目录</strong><button type="button" class="secondary text-icon-button" data-monitor-settings>${fmIcon('folder')} 选择监控目录</button></div><label class="tmdb-switch-row"><input class="switch" role="switch" name="monitor-auto-refresh" type="checkbox" ${config.MonitorAutoRefresh?'checked':''}><span>自动刷新本地元数据</span></label></div></section></div>
+    <div data-scraper-pane="settings"><div class="scraper-config-grid"><section class="setting-card"><div class="card-heading"><h3>刮削器优先级</h3></div><div data-scrapers></div><p class="tmdb-help">拖动调整补全顺序，至少启用一个刮削器。</p></section><section class="setting-card"><div class="card-heading"><h3>内容与写入策略</h3></div><div class="scraper-content-kinds">${Object.entries(kinds).map(([kind])=>`<span>${({Series:'电视剧',Movie:'电影',Season:'季',Episode:'单集'})[kind]}</span>`).join('')}</div><button type="button" class="secondary text-icon-button" data-settings>${fmIcon('gear')} 配置刮削内容</button></section></div></div>`;
   Panel.prepareScraper(host);
+  const details = host.querySelector('[data-details]');
+  const emptyPreview = () => {
+    details.innerHTML = `<div class="scraper-empty-preview"><span class="scraper-empty-icon">${fmIcon('folder')}</span><strong>准备好整理你的媒体库</strong><p>选择处理范围，扫描后查看待刮削内容。</p></div>`;
+  };
+  emptyPreview();
   const monitor = host.querySelector('[name=monitor]');
   const autoRefresh = host.querySelector('[name=monitor-auto-refresh]');
   const enabled = host.querySelector('[name=enabled]'), provider = host.querySelector('[data-scrapers]');
@@ -122,7 +147,7 @@ async function loadScraperSettings() {
   const renderProviders = () => {
     const selected = selectedProviders();
     const names = [...selected, ...['TMDB', 'Fanart.tv', 'Bangumi', ...result.Scrapers].filter((name, i, all) => !selected.includes(name) && all.indexOf(name) === i)];
-    provider.innerHTML = names.map(name => `<div class="row" data-provider="${esc(name)}"><button type="button" class="drag-handle secondary" aria-label="拖动 ${esc(name)} 排序，键盘方向键调整" style="touch-action:none;cursor:grab">☰</button><label class="row"><input type="checkbox" value="${esc(name)}" ${selected.includes(name) ? 'checked' : ''}>${esc(name)}</label></div>`).join('');
+    provider.innerHTML = names.map((name, index) => `<div class="row" data-provider="${esc(name)}"><button type="button" class="drag-handle secondary" aria-label="拖动 ${esc(name)} 排序，键盘方向键调整" style="touch-action:none;cursor:grab">☰</button><label class="row"><input type="checkbox" value="${esc(name)}" ${selected.includes(name) ? 'checked' : ''}>${esc(name)}</label><span class="scraper-provider-order">${String(index + 1).padStart(2, '0')}</span></div>`).join('');
     const save = async () => {
       const names = [...provider.querySelectorAll('input:checked')].map(el => el.value);
       if (!names.length) { renderProviders(); toast('至少选择一个刮削器'); return; }
@@ -175,6 +200,9 @@ async function loadScraperSettings() {
   const scan = host.querySelector('[data-plan]'), start = host.querySelector('[data-start]'), cancelButton = host.querySelector('[data-cancel]'), status = host.querySelector('[data-result]');
   const operation=host.querySelector('[data-operation]');
   const controls = () => {
+    const serviceState = host.querySelector('[data-service-state]');
+    serviceState.textContent = taskActive || busy || namingBusy ? '任务运行中' : config.Enabled ? '已就绪' : '未启用';
+    serviceState.dataset.active = String(config.Enabled);
     const locked=busy||providerSaving||namingBusy;
     scan.disabled = locked || taskActive || !config.Enabled;
     start.disabled = locked || taskActive || !config.Enabled || !plan || !(plan.Pending + plan.Overwrite);
@@ -185,6 +213,7 @@ async function loadScraperSettings() {
     host.querySelector('[data-monitor-settings]').disabled = locked;
     host.querySelector('[data-manual-scopes]').disabled = locked||taskActive;
     provider.querySelectorAll('input, button').forEach(el => { el.disabled = locked; });
+    [...provider.children].forEach((row, index) => { row.querySelector('.scraper-provider-order').textContent = String(index + 1).padStart(2, '0'); });
     enabled.disabled = locked;
     host.querySelector('[data-settings]').disabled = locked;
     host.querySelector('[data-concurrency]').disabled = locked || taskActive;
@@ -194,13 +223,15 @@ async function loadScraperSettings() {
     host.querySelector('[data-monitor-summary]').textContent = `已选择 ${(config.MonitorScopes||[]).filter(x=>x.Enabled).length} 个监控目录`;
     host.querySelector('[data-policy]').textContent = `覆盖策略：${config.Overwrite ? '覆盖已有文件' : '跳过已有文件（默认）'}`;
   };
-  const invalidate = () => { plan = null; namingUI?.invalidate(); status.textContent = '设置已保存，请重新生成任务预览'; toast(status.textContent); host.querySelector('[data-details]').replaceChildren(); controls(); };
+  const invalidate = () => { plan = null; namingUI?.invalidate(); status.textContent = '设置已保存，请重新扫描'; toast(status.textContent); emptyPreview(); controls(); };
   operation.onchange=()=>{
     plan=null;namingUI?.invalidate();
     host.querySelector('[data-naming]').hidden=operation.value==='scrape';
     host.querySelector('[data-scrape-actions]').hidden=operation.value!=='scrape';
     host.querySelector('[data-policy]').hidden=operation.value==='name';
-    host.querySelector('[data-details]').replaceChildren();
+    details.hidden=operation.value!=='scrape';
+    host.querySelector('[data-preview-title]').textContent=operation.value==='scrape'?'任务预览':'规范命名';
+    emptyPreview();
     status.textContent=operation.value==='scrape'?'请先扫描生成计划。':operation.value==='both'?'使用上方目录范围，命名完成后自动刮削。':'使用上方目录范围进行规范命名。';
     controls();
   };
@@ -479,14 +510,15 @@ async function loadScraperSettings() {
   };
   scan.onclick = run(async () => {
     if (!config.Enabled || busy) return;
-    scanCancelled = false; busy = true; taskActive = true; plan = null; controls(); status.textContent = '扫描刮削任务…';
+    scanCancelled = false; busy = true; taskActive = true; plan = null; emptyPreview(); controls(); status.textContent = '正在扫描媒体库…';
+    details.querySelector('strong').textContent = '正在生成任务预览';
     try {
       plan = await ScraperManual.plan({alive: () => !scanCancelled && host.isConnected});
       if (scanCancelled) { plan = null; return; }
       const failed = plan.FailedObjects ?? plan.Objects.filter(object => object.Error).length;
-      status.textContent = `媒体 ${plan.TotalObjects ?? plan.Objects.length} · 待刮削文件 ${plan.Pending} · 已存在/跳过 ${plan.Skipped} · 将覆盖 ${plan.Overwrite} · 分类关闭 ${plan.Disabled} · 路径异常 ${failed}`;
+      status.textContent = plan.Pending + plan.Overwrite ? '扫描完成，可以开始刮削' : '扫描完成，没有待刮削内容';
       // Bound DOM work for large libraries; full item/file progress remains in Activity.
-      host.querySelector('[data-details]').innerHTML = `<details open><summary>任务预览（前 100 项）</summary>${plan.Objects.slice(0, 100).map(object => `<p>${esc(object.Name)} · ${esc(object.Kind)} · ${object.Disabled ? '分类关闭' : object.Error ? esc(object.Error) : object.Targets.map(target => `${contentName(object.Kind, target.Content)}：${({ create: '待刮削', skip: '跳过', overwrite: '覆盖' })[target.Action]}`).join('，')}</p>`).join('')}</details>`;
+      details.innerHTML = `<div class="scraper-plan-stats">${[['媒体项目', plan.TotalObjects ?? plan.Objects.length], ['待写入文件', plan.Pending], ['覆盖文件', plan.Overwrite], ['已有 / 跳过', plan.Skipped]].map(([label, value]) => `<div><span>${label}</span><strong>${esc(value ?? 0)}</strong></div>`).join('')}</div><div class="scraper-plan-heading"><strong>媒体明细</strong><span>前 ${Math.min(100, plan.Objects.length)} 项${plan.Disabled ? ` · 分类关闭 ${esc(plan.Disabled)}` : ''}${failed ? ` · 路径异常 ${esc(failed)}` : ''}</span></div><div class="scraper-plan-list">${plan.Objects.slice(0, 100).map(object => `<div class="scraper-plan-item"><div><strong>${esc(object.Name)}</strong><span>${esc(object.Disabled ? '分类关闭' : object.Error || object.Targets.map(target => `${contentName(object.Kind, target.Content)}：${({ create: '待刮削', skip: '跳过', overwrite: '覆盖' })[target.Action] || target.Action}`).join('，'))}</span></div><span class="scraper-kind-badge">${esc(({Movie:'电影',Series:'电视剧',Season:'季',Episode:'单集'})[object.Kind] || object.Kind)}</span></div>`).join('') || '<p class="scraper-list-empty">当前范围没有媒体项目</p>'}</div>`;
     } catch (e) { if (!scanCancelled) { status.textContent = '任务扫描未完成：' + e.message; } }
     finally { busy = false; taskActive = false; controls(); }
   });
@@ -554,6 +586,19 @@ async function loadScraperSettings() {
     if(tab)tab.textContent=count?`待处理 (${count})`:'待处理';
   });
   const live = host.querySelector('[data-live]');
+  const onlyErrors = live.querySelector('[data-log-errors]');
+  let recentEntries = [], lastRecordHTML = '';
+  const paintRecords = () => {
+    const list = live.querySelector('[data-live-entries]');
+    const filtered = onlyErrors.checked ? recentEntries.filter(entry => entry.Error || entry.State === 'error') : recentEntries;
+    const html = filtered.map(renderScraperRecord).join('') || `<p class="scraper-list-empty">${onlyErrors.checked ? '最近记录中没有失败项目' : '暂无任务记录'}</p>`;
+    if (lastRecordHTML === html) return;
+    const opened = new Set([...list.querySelectorAll('details[open]')].map(row => row.dataset.logKey));
+    list.innerHTML = html;
+    lastRecordHTML = html;
+    list.querySelectorAll('details').forEach(row => { row.open = opened.has(row.dataset.logKey); });
+  };
+  onlyErrors.onchange = paintRecords;
   let lastTaskStateCheck = 0;
   const poll = async () => {
     if (!live.isConnected || view!=='admin' || host.closest('.admin-section')?.hidden) return;
@@ -566,10 +611,9 @@ async function loadScraperSettings() {
         controls();
       }
       if (!live.isConnected) return;
-      live.querySelector('[data-live-status]').textContent = '最近刷新 ' + new Date().toLocaleTimeString() + ' · 最近 100 条';
-      const list = live.querySelector('[data-live-entries]');
-      const html = entries.map(renderScraperLog).join('') || '<p>暂无扫描或刮削记录</p>';
-      if (list.innerHTML !== html) list.innerHTML = html;
+      live.querySelector('[data-live-status]').textContent = `最近 ${entries.length} 条 · 更新于 ${new Date().toLocaleTimeString()}`;
+      recentEntries = entries;
+      paintRecords();
     } catch (e) {
       if (live.isConnected) live.querySelector('[data-live-status]').textContent = '日志读取失败：' + e.message + '，正在重试';
     } finally {
