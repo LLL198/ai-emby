@@ -993,6 +993,9 @@ func (a *App) scrapeObject(ctx context.Context, config scraperConfig, object scr
 		data, err := provider.Fetch(fetchCtx, a, item, target.Content)
 		if errors.Is(err, errTMDBNoArtwork) {
 			reason := target.Content + " · 无可用图片，保留已有文件"
+			if item.Kind == "Episode" && target.Content == "Still" {
+				reason = "单集图 · 暂无可用图片，正常跳过"
+			}
 			update(reason)
 			phase("跳过", reason)
 			return nil

@@ -62,8 +62,15 @@ func (scrapers orderedScrapers) Fetch(ctx context.Context, app *App, item Item, 
 			continue
 		}
 		data, err := scraper.Fetch(ctx, app, item, artwork)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if err == nil && len(data) == 0 {
-			err = errors.New("刮削器返回空内容")
+			if item.Kind == "Episode" && artwork == "Still" {
+				err = errTMDBNoArtwork
+			} else {
+				err = errors.New("刮削器返回空内容")
+			}
 		}
 		if err != nil {
 			failures = append(failures, err)
@@ -103,6 +110,11 @@ func (scrapers orderedScrapers) Fetch(ctx context.Context, app *App, item Item, 
 		reportable = append(reportable, err)
 	}
 	if len(reportable) == 0 {
+		for _, err := range failures {
+			if errors.Is(err, errTMDBEpisodeNotFound) {
+				return nil, errTMDBEpisodeNotFound
+			}
+		}
 		return nil, errors.Join(failures...)
 	}
 	return nil, joinUniqueScraperErrors(reportable)

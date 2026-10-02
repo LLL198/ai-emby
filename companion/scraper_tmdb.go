@@ -260,20 +260,6 @@ func (a *App) scraperSearchTMDB(ctx context.Context, settings tmdbConfig, mediaT
 	return scraperSelectCandidate(mediaType, candidates, title, year, season, episode)
 }
 
-func (s tmdbScraper) episodeArtworkFallback(ctx context.Context, app *App, item Item, artwork string) ([]byte, error) {
-	if item.Kind != "Series" {
-		return nil, nil
-	}
-	data, err := s.Fetch(ctx, app, item, artwork)
-	if err == nil {
-		return data, nil
-	}
-	if !errors.Is(err, errTMDBNoArtwork) {
-		return nil, nil
-	}
-	return s.Fetch(ctx, app, item, "Poster")
-}
-
 type tmdbNFOUniqueID struct {
 	Type    string `xml:"type,attr"`
 	Default bool   `xml:"default,attr,omitempty"`
@@ -294,25 +280,6 @@ type tmdbNFORecord struct {
 	Genres        []string          `xml:"genre,omitempty"`
 	Season        int               `xml:"season,omitempty"`
 	Episode       int               `xml:"episode,omitempty"`
-}
-
-func tmdbItemSeries(app *App, item Item) (Item, bool) {
-	switch item.Kind {
-	case "Series":
-		return item, true
-	case "Season":
-		series, err := app.item(item.Parent)
-		return series, err == nil && series.Kind == "Series"
-	case "Episode":
-		season, err := app.item(item.Parent)
-		if err != nil || season.Kind != "Season" {
-			return Item{}, false
-		}
-		series, err := app.item(season.Parent)
-		return series, err == nil && series.Kind == "Series"
-	default:
-		return Item{}, false
-	}
 }
 
 func tmdbNFODate(kind string, data tmdbData) string {
@@ -439,12 +406,7 @@ func (s tmdbScraper) Fetch(ctx context.Context, app *App, item Item, artwork str
 	}
 	if err := app.ensureTMDBRequest(ctx, item, false, true); err != nil {
 		if item.Kind == "Episode" && strings.Contains(err.Error(), "TMDB HTTP 404") {
-			if artwork == "Still" {
-				if series, ok := tmdbItemSeries(app, item); ok {
-					return s.episodeArtworkFallback(ctx, app, series, artwork)
-				}
-			}
-			return nil, nil
+			return nil, errTMDBEpisodeNotFound
 		}
 		return nil, err
 	}
@@ -468,12 +430,7 @@ func (s tmdbScraper) Fetch(ctx context.Context, app *App, item Item, artwork str
 		var detail tmdbData
 		if err := app.tmdbGet(ctx, endpoint, nil, &detail, settings); err != nil {
 			if item.Kind == "Episode" && strings.Contains(err.Error(), "TMDB HTTP 404") {
-				if artwork == "Still" {
-					if series, ok := tmdbItemSeries(app, item); ok {
-						return s.episodeArtworkFallback(ctx, app, series, artwork)
-					}
-				}
-				return nil, nil
+				return nil, errTMDBEpisodeNotFound
 			}
 			return nil, err
 		}
@@ -495,9 +452,7 @@ func (s tmdbScraper) Fetch(ctx context.Context, app *App, item Item, artwork str
 		if detail.Poster != "" {
 			data.Poster = detail.Poster
 		}
-		if detail.Still != "" {
-			data.Still = detail.Still
-		}
+		data.Still = detail.Still
 		if detail.Rating != 0 {
 			data.Rating = detail.Rating
 		}
@@ -554,11 +509,6 @@ func (s tmdbScraper) Fetch(ctx context.Context, app *App, item Item, artwork str
 		return nil, err
 	}
 	if path == "" {
-		if item.Kind == "Episode" && artwork == "Still" {
-			if series, ok := tmdbItemSeries(app, item); ok {
-				return s.episodeArtworkFallback(ctx, app, series, artwork)
-			}
-		}
 		return nil, errTMDBNoArtwork
 	}
 	rawURL := tmdbArtwork(path)
