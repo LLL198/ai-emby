@@ -6,6 +6,8 @@ dialog.naming-sheet{width:min(1240px,calc(100vw - 56px));max-width:none;max-heig
 @media(max-width:760px){dialog.naming-sheet{width:calc(100vw - 24px);max-height:calc(100dvh - 24px);padding:20px;border-radius:20px}.naming-grid,.naming-metadata{grid-template-columns:1fr}.naming-metadata .naming-wide{grid-column:1/-1}.naming-candidates{grid-template-columns:1fr}.naming-scope{align-items:flex-start;flex-direction:column;gap:6px}.naming-table{min-width:720px}.naming-actions{bottom:-20px;padding:16px 20px;margin:0 -20px -20px;gap:8px}.naming-actions>button{min-width:0;flex:1;font-size:13px}.naming-summary{align-items:flex-start;flex-direction:column;gap:6px}}
 .naming-sheet>.section-heading{position:sticky;top:-28px;z-index:3;padding:12px 0;background:var(--surface);border-bottom:1px solid var(--border)}
 @media(max-width:760px){
+  .naming-actions{flex-wrap:wrap}
+  .naming-actions>button{flex:1 1 calc(50% - 8px)}
   .naming-sheet>.section-heading{top:-20px}
   .naming-table,.naming-table tbody{display:block;min-width:0;width:100%}
   .naming-table thead{display:none}

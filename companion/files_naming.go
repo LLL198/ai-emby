@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -36,6 +35,7 @@ type namingRequest struct {
 	Title         string   `json:"title"`
 	Year          int      `json:"year"`
 	TMDB          string   `json:"tmdb"`
+	AutoTMDB      *bool    `json:"autoTMDB"`
 	OriginalTitle string   `json:"-"`
 	Season        *int     `json:"season"`
 	Bare          bool     `json:"bare"`
@@ -164,33 +164,11 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 		fileFail(w, err)
 		return
 	}
-	if b.TMDB != "" {
+	if b.TMDB != "" && b.Mode != "regex" {
 		n, err := strconv.Atoi(b.TMDB)
 		if err != nil || n < 1 || b.Kind != "movie" && b.Kind != "tv" {
 			fail(w, 400, "TMDB 补全需要电影或剧集类型以及有效 ID")
 			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer cancel()
-		var data tmdbData
-		if err = a.tmdbGet(ctx, b.Kind+"/"+b.TMDB, url.Values{"language": {"zh-CN"}}, &data, a.tmdbSettings()); err != nil {
-			featureError(w, a.scraperSafeError(err))
-			return
-		}
-		date := data.ReleaseDate
-		b.Title = data.Title
-		b.OriginalTitle = data.OriginalTitle
-		if b.Kind == "tv" {
-			b.Title = data.Name
-			b.OriginalTitle = data.OriginalName
-			date = data.FirstAirDate
-		}
-		if b.Title == "" {
-			fail(w, 502, "TMDB 返回的作品名称为空")
-			return
-		}
-		if len(date) >= 4 {
-			b.Year, _ = strconv.Atoi(date[:4])
 		}
 	}
 	filesMu.RLock()
@@ -253,6 +231,7 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 	}
 	sort.SliceStable(files, func(i, j int) bool { return namingNatural(files[i], files[j]) })
 	plan := &namingPlan{ID: id(), Owner: user.ID, Created: time.Now(), Rows: []namingRow{}}
+	resolver := namingTMDBResolver{app: a, settings: a.tmdbSettings(), cache: map[string]namingTMDBResult{}}
 	for i, path := range files {
 		if err := r.Context().Err(); err != nil {
 			return
@@ -270,7 +249,56 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 			plan.Rows = append(plan.Rows, row)
 			continue
 		}
-		next, reason, e := namingDestination(path, fi.IsDir(), b, re, i)
+		request := b
+		matchReason := ""
+		if b.Mode != "regex" && (b.TMDB != "" || b.AutoTMDB == nil || *b.AutoTMDB) {
+			source, sourceErr := namingSource(path, fi.IsDir(), b, i)
+			if sourceErr != nil {
+				row.Reason = sourceErr.Error()
+				plan.Rows = append(plan.Rows, row)
+				continue
+			}
+			if !source.SeasonDirectory {
+				if fi.IsDir() && (source.Kind == "auto" || b.Title == "" && b.TMDB == "") {
+					inferredKind, err := namingDirectoryKind(root, path, b.Bare)
+					if err != nil {
+						row.Reason = err.Error()
+						plan.Rows = append(plan.Rows, row)
+						continue
+					}
+					if source.Kind == "auto" {
+						source.Kind = inferredKind
+					} else if inferredKind != "auto" && source.Kind != inferredKind {
+						row.Reason = "作品目录内容与指定类型冲突，请核对电影或剧集类型"
+						plan.Rows = append(plan.Rows, row)
+						continue
+					}
+				}
+				filesMu.RUnlock()
+				filesLocked = false
+				request, matchReason, e = resolver.resolve(r.Context(), source, b)
+				filesMu.RLock()
+				filesLocked = true
+				if r.Context().Err() != nil {
+					return
+				}
+				if e != nil {
+					row.Reason = a.scraperSafeError(e).Error()
+					plan.Rows = append(plan.Rows, row)
+					continue
+				}
+				current, err := fileCheck(root, path)
+				if err != nil || !namingSameFile(fi, current) {
+					row.Reason = "搜索期间源文件发生变化，请重新生成预览"
+					plan.Rows = append(plan.Rows, row)
+					continue
+				}
+			}
+		}
+		next, reason, e := namingDestination(path, fi.IsDir(), request, re, i)
+		if matchReason != "" {
+			reason = matchReason + " · " + reason
+		}
 		row.Reason = reason
 		if e != nil {
 			row.Reason = e.Error()
@@ -286,6 +314,9 @@ func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
 		if row.New == path {
 			row.Status = "unchanged"
 			row.Reason = "名称已符合当前规则"
+			if matchReason != "" {
+				row.Reason = matchReason + " · " + row.Reason
+			}
 			if !fi.IsDir() {
 				associated := append([]namingMove{{Old: path, New: path, Info: fi}}, namingSidecars(root, entries, path, path)...)
 				if reason := namingNFOConflict(root, associated); reason != "" {
@@ -379,78 +410,18 @@ func namingDestination(path string, directory bool, b namingRequest, re *regexp.
 	if b.Kind == "directory" {
 		return "", "", errors.New("当前类型只处理文件夹")
 	}
-	identity := namingTitle(name)
-	parent := filepath.Base(filepath.Dir(path))
-	parentIdentity := scraperSearchIdentity(parent)
-	parentSeason, hasParentSeason := namingSeason(parent)
-	if hasParentSeason {
-		parentIdentity = scraperSearchIdentity(filepath.Base(filepath.Dir(filepath.Dir(path))))
+	source, err := namingSource(path, false, b, index)
+	if err != nil {
+		return "", "", err
 	}
-	ep, hasEpisode := namingEpisode(stem, b.Bare)
-	if b.Mode == "sequence" {
-		ep = namingEpisodeInfo{Season: *b.Season, Episode: b.Start + index, HasSeason: true, Reason: "按文件名自然排序，顺序编号"}
-		hasEpisode = true
-		if ep.Episode > 9999 {
-			return "", "", errors.New("顺序编号超过 9999")
-		}
-	}
-	if hasEpisode && b.Mode != "sequence" && namingMulti.MatchString(stem) {
-		return "", "", errors.New("多集、特别篇或剧场版需核对编号，请用正则或顺序编号明确指定")
-	}
-	if b.Kind == "movie" && hasEpisode {
-		return "", "", errors.New("文件包含集号，与电影类型冲突")
-	}
-	if b.Kind == "tv" && !hasEpisode {
-		return "", "", errors.New("未找到明确集号；可确认裸集号，或使用顺序编号")
-	}
-	if !hasEpisode && (hasParentSeason || namingMulti.MatchString(stem)) {
-		return "", "", errors.New("季目录或特别篇中的文件不能自动当作电影")
-	}
-	if hasEpisode {
-		if ep.HasSeason && hasParentSeason && ep.Season != parentSeason {
-			return "", "", errors.New("文件季号与所在季目录冲突，请先核对季目录")
-		}
-		if !ep.HasSeason {
-			if b.Season != nil {
-				ep.Season = *b.Season
-				ep.HasSeason = true
-			} else if hasParentSeason {
-				ep.Season = parentSeason
-				ep.HasSeason = true
-			}
-		}
-		if !ep.HasSeason {
-			return "", "", errors.New("已找到集号，但季号不明确，请指定季号")
-		}
-		if b.Season != nil && *b.Season != ep.Season {
-			return "", "", errors.New("文件季号与指定季号冲突；需要重排时使用顺序编号")
-		}
-		identity = scraperSearchIdentity(strings.TrimSpace(stem[:ep.Start]))
-		if identity.Title == "" || hasParentSeason {
-			identity.Title = parentIdentity.Title
-		}
-		if identity.Year == 0 {
-			identity.Year = parentIdentity.Year
-		}
-	}
-	if b.Title != "" {
-		identity.Title = b.Title
-	}
-	if b.Year > 0 {
-		identity.Year = b.Year
-	}
-	if b.TMDB != "" {
-		identity.TMDBID = b.TMDB
-	} else if hasEpisode && identity.TMDBID == "" {
-		identity.TMDBID = parentIdentity.TMDBID
-	}
+	identity, ep, hasEpisode, hasParentSeason := source.Identity, source.Episode, source.HasEpisode, source.HasParentSeason
 	if identity.Title == "" {
 		return "", "", errors.New("未能确定作品标题，请指定作品或使用 TMDB 搜索")
 	}
 	if !hasEpisode && identity.Year == 0 {
 		return "", "", errors.New("电影缺少年份，请指定年份或选择 TMDB 结果")
 	}
-	if b.Mode == "auto" && hasEpisode && b.Title == "" && b.Year == 0 && b.TMDB == "" && b.Template == "" && namingCanonicalSE.MatchString(stem) {
+	if b.Mode == "auto" && hasEpisode && b.Title == "" && b.Year == 0 && b.TMDB == "" && b.Template == "" && b.AutoTMDB != nil && !*b.AutoTMDB && namingCanonicalSE.MatchString(stem) {
 		return name, "名称已经包含规范季集编号", nil
 	}
 	quality := ""

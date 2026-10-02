@@ -1,6 +1,6 @@
 const FileNaming = (() => {
   const endpoint = "/admin/features/naming/";
-  const labels = {ready:"可改名", unchanged:"已规范", review:"待确认", conflict:"有冲突"};
+  const labels = {ready:"可改名", unchanged:"已规范", review:"待确认", conflict:"有冲突", renamed:"已改名"};
   const presets = {
     tv:"{title} - S{season:2}E{episode:2}",
     movie:"{title} ({year})"
@@ -20,12 +20,13 @@ const FileNaming = (() => {
       UI.el("span",{},"/media"+(path?"/"+path:"")),
       UI.el("small",{},paths.length?`已选择 ${paths.length} 项` : "当前目录 · 最多 500 项")
     ]);
-    const mode = select("命名方式",[["auto","识别命名"],["regex","正则替换"],["sequence","顺序编号"]]);
+    const mode = select("命名方式",[["auto","自动标准命名"],["regex","正则替换"],["sequence","顺序编号"]]);
     const kind = select("作品类型",[["auto","自动判断"],["tv","剧集 / 动漫 / 综艺"],["movie","电影"],["directory","仅文件夹"]]);
     const title = UI.el("input",{type:"text","aria-label":"作品名称",placeholder:"留空则从文件和目录识别",autocomplete:"off",maxlength:160});
     const year = UI.el("input",{type:"number","aria-label":"发行年份",placeholder:"可选",min:1800,max:2199});
     const season = UI.el("input",{type:"number","aria-label":"季号",placeholder:"从季目录识别；不确定时填写",min:0,max:999});
     const bare = UI.el("input",{type:"checkbox"});
+    const autoTMDB = UI.el("input",{type:"checkbox",checked:true});
     const template = UI.el("input",{type:"text","aria-label":"命名模板",placeholder:"留空使用推荐格式，自动保留扩展名",maxlength:512,autocomplete:"off"});
     const pattern = UI.el("input",{type:"text","aria-label":"匹配正则",placeholder:"例如 EP(\\d+)",autocomplete:"off",maxlength:512});
     const replacement = UI.el("input",{type:"text","aria-label":"替换内容",placeholder:"例如 E${1}；留空表示删除匹配",autocomplete:"off",maxlength:512});
@@ -36,7 +37,7 @@ const FileNaming = (() => {
       field("作品名称",title,true),field("发行年份",year),field("季号",season)
     ]);
     const tmdbLabel = UI.el("span",{class:"naming-tmdb-label"});
-    const searchButton = UI.el("button",{type:"button",class:"secondary"},"搜索 TMDB");
+    const searchButton = UI.el("button",{type:"button",class:"secondary"},"手动选作品");
     const clearButton = UI.el("button",{type:"button",class:"secondary",hidden:true},"取消作品绑定");
     const searchbar = UI.el("div",{class:"naming-searchbar"},[searchButton,clearButton,tmdbLabel]);
     const candidates = UI.el("div",{class:"naming-candidates"});
@@ -53,24 +54,29 @@ const FileNaming = (() => {
       UI.el("p",{},"正则使用 RE2 语法，替换分组写 ${1} 或 $1，不支持环视。顺序编号按文件名自然排序：1、2、10。")
     ]);
     const option = UI.el("label",{class:"naming-option"},[bare,UI.el("span",{},"确认裸集号是本季集号（例如 01、02；非动漫绝对集数）")]);
+    const tmdbOption = UI.el("label",{class:"naming-option"},[autoTMDB,UI.el("span",{},"自动搜索 TMDB，按作品名称、年份和类型匹配")]);
     const regexArea = UI.el("div",{class:"naming-grid",hidden:true},[field("匹配正则",pattern,true),field("替换内容",replacement,true)]);
     const sequenceArea = UI.el("div",{class:"naming-grid",hidden:true},[field("起始集号",start),field("集号补位",width)]);
     const sequenceNote = UI.el("p",{class:"naming-note",hidden:true},"顺序编号会重排集号，请先确认作品、季号和文件顺序。只给选中的媒体文件编号。");
-    const notice = UI.el("p",{class:"naming-note"},"仅修改本地名称，STRM 播放链接保留。关联字幕、NFO 和缩略图会随同改名。");
+    const notice = UI.el("p",{class:"naming-note"},"自动命名会直接执行可靠匹配，不确定的项目跳过。关联文件随同改名，STRM 播放链接保留。");
     const previewButton = UI.el("button",{type:"submit",class:"secondary"},"生成预览");
+    const autoButton = UI.el("button",{type:"submit"},"自动命名");
     const feedback = UI.el("p",{class:"naming-feedback",role:"status","aria-live":"polite"});
     const results = UI.el("section",{class:"naming-results","aria-label":"改名预览"},UI.el("p",{class:"empty"},"生成预览后，在这里确认改名内容。"));
     const applyButton = UI.el("button",{type:"button",disabled:true},"执行改名");
     const closeButton = UI.el("button",{type:"button",class:"secondary"},"关闭");
-    const actions = UI.el("div",{class:"naming-actions"},[previewButton,closeButton,applyButton]);
-    form.append(scope,basic,metadata,searchbar,candidates,regexArea,sequenceArea,sequenceNote,templateArea,presetArea,variableHelp,option,notice,feedback,results,actions);
+    const actions = UI.el("div",{class:"naming-actions"},[previewButton,closeButton,applyButton,autoButton]);
+    form.append(scope,basic,metadata,searchbar,candidates,regexArea,sequenceArea,sequenceNote,templateArea,presetArea,variableHelp,tmdbOption,option,notice,feedback,results,actions);
     wrap.append(form);
     const dialog = UI.Modal("规范命名",wrap);
     dialog.classList.add("naming-sheet");
     const headingClose = dialog.querySelector('.section-heading button');
     function updateButtons() {
       previewButton.disabled=busy;
+      autoButton.disabled=busy;
+      autoButton.textContent=busy&&mode.value==="auto"?"正在处理…":"自动命名";
       applyButton.disabled=busy||!plan||!chosen.size;
+      applyButton.hidden=!plan;
       applyButton.textContent=applying?"正在改名…":`执行改名${chosen.size?` (${chosen.size})`:""}`;
       closeButton.disabled=applying; headingClose.disabled=applying;
       form.querySelectorAll("input,select").forEach(input=>input.disabled=applying);
@@ -88,6 +94,8 @@ const FileNaming = (() => {
       metadata.hidden=regex;searchbar.hidden=regex;candidates.hidden=regex;
       regexArea.hidden=!regex;sequenceArea.hidden=!sequence;sequenceNote.hidden=!sequence;
       templateArea.hidden=regex;presetArea.hidden=regex;option.hidden=regex||sequence;
+      tmdbOption.hidden=regex;autoButton.hidden=regex||sequence;
+      notice.textContent=regex||sequence?"关联字幕、NFO 和缩略图随同改名，STRM 播放链接保留。":"自动命名会直接执行可靠匹配，不确定的项目跳过。关联文件随同改名，STRM 播放链接保留。";
       if(sequence)kind.value="tv";
       invalidate();
     }
@@ -125,22 +133,23 @@ const FileNaming = (() => {
       } catch(error) { if(sequence===requestNumber)feedback.textContent=error.message; }
       finally {busy=false;updateButtons();}
     };
-    function renderRows() {
-      const ready=plan.rows.filter(row=>row.status==="ready");
+    function renderRows(displayPlan=plan) {
+      const ready=displayPlan.rows.filter(row=>row.status==="ready");
+      const renamed=displayPlan.rows.filter(row=>row.status==="renamed").length;
       const summary=UI.el("div",{class:"naming-summary"});
       const selectAll=UI.el("input",{type:"checkbox","aria-label":"选择全部可改名项目"});
       selectAll.checked=ready.length>0&&ready.every(row=>chosen.has(row.id));
-      selectAll.disabled=ready.length===0;
+      selectAll.disabled=!plan||ready.length===0;
       selectAll.onchange=()=>{chosen.clear();if(selectAll.checked)ready.forEach(row=>chosen.add(row.id));renderRows();updateButtons();};
-      summary.append(UI.el("label",{},[selectAll,UI.el("span",{},`可改名 ${ready.length} / ${plan.rows.length}`)]),UI.el("small",{},`待确认或冲突 ${plan.rows.filter(row=>["review","conflict"].includes(row.status)).length}`));
+      summary.append(UI.el("label",{},[selectAll,UI.el("span",{},renamed?`已改名 ${renamed} / ${displayPlan.rows.length}`:`可改名 ${ready.length} / ${displayPlan.rows.length}`)]),UI.el("small",{},`待确认或冲突 ${displayPlan.rows.filter(row=>["review","conflict"].includes(row.status)).length}`));
       const table=UI.el("table",{class:"naming-table"});
       table.append(UI.el("thead",{},UI.el("tr",{},[UI.el("th",{},"选择"),UI.el("th",{},"原名称"),UI.el("th",{},"新名称"),UI.el("th",{},"识别依据")] )));
       const tbody=UI.el("tbody");
-      for(const row of plan.rows) {
+      for(const row of displayPlan.rows) {
         const check=UI.el("input",{type:"checkbox","aria-label":"改名 "+row.old.split("/").at(-1)});
-        check.checked=chosen.has(row.id);check.disabled=row.status!=="ready";
+        check.checked=chosen.has(row.id);check.disabled=!plan||row.status!=="ready";
         check.onchange=()=>{check.checked?chosen.add(row.id):chosen.delete(row.id);selectAll.checked=ready.length>0&&ready.every(x=>chosen.has(x.id));updateButtons();};
-        const detail=UI.el("td",{},[UI.el("span",{class:"naming-badge naming-badge--"+row.status},labels[row.status]),UI.el("small",{},row.reason)]);
+        const detail=UI.el("td",{},[UI.el("span",{class:"naming-badge naming-badge--"+(row.status==="renamed"?"unchanged":row.status)},labels[row.status]),UI.el("small",{},row.reason)]);
         if(row.moves?.length>1) {
           const related=UI.el("details",{},[UI.el("summary",{},`关联文件 ${row.moves.length-1}`)]);
           for(const move of row.moves.slice(1))related.append(UI.el("p",{},move.old.split("/").at(-1)+" → "+move.new.split("/").at(-1)));
@@ -152,35 +161,43 @@ const FileNaming = (() => {
       }
       table.append(tbody);
       results.replaceChildren(summary,UI.el("div",{class:"naming-table-scroll"},table));
-      if(!plan.rows.length)results.append(UI.el("p",{class:"empty"},"当前范围没有可处理的媒体文件或文件夹。"));
+      if(!displayPlan.rows.length)results.append(UI.el("p",{class:"empty"},"当前范围没有可处理的媒体文件或文件夹。"));
     }
     form.onsubmit=async e=>{
       e.preventDefault();if(busy)return;
+      const automatic=e.submitter===autoButton||!e.submitter&&mode.value==="auto";
       if(mode.value==="sequence"&&(!season.value||!title.value.trim())) {feedback.textContent="顺序编号需要填写作品名称和季号（特别篇填写 0）。";return;}
-      busy=true;plan=null;chosen.clear();updateButtons();feedback.textContent="正在识别名称并检查冲突…";
+      busy=true;plan=null;chosen.clear();updateButtons();feedback.textContent=autoTMDB.checked?"正在自动匹配 TMDB 并检查名称…":"正在识别名称并检查冲突…";
       const sequence=++requestNumber;
       try {
-        const data=await api(endpoint+"preview","POST",{path,paths,mode:mode.value,kind:kind.value,title:title.value.trim(),year:year.value?Number(year.value):0,tmdb,season:season.value?Number(season.value):null,bare:bare.checked,template:template.value.trim(),pattern:pattern.value,replacement:replacement.value,start:Number(start.value),width:Number(width.value)});
+        const data=await api(endpoint+"preview","POST",{path,paths,mode:mode.value,kind:kind.value,title:title.value.trim(),year:year.value?Number(year.value):0,tmdb,autoTMDB:autoTMDB.checked,season:season.value?Number(season.value):null,bare:bare.checked,template:template.value.trim(),pattern:pattern.value,replacement:replacement.value,start:Number(start.value),width:Number(width.value)});
         if(sequence!==requestNumber||!dialog.open)return;
         plan=data;data.rows.filter(row=>row.status==="ready").forEach(row=>chosen.add(row.id));
-        renderRows();feedback.textContent="预览已生成，检查新名称后执行。";
+        renderRows();
+        if(automatic&&chosen.size)await applyPlan(true);
+        else feedback.textContent=automatic?"处理完成：已规范的项目保持原名，其余跳过原因见下方。":"预览已生成，检查新名称后执行。";
       } catch(error) { if(sequence===requestNumber)feedback.textContent=error.message; }
       finally {busy=false;updateButtons();}
     };
-    applyButton.onclick=async()=>{
-      if(busy||!plan||!chosen.size)return;
+    async function applyPlan(automatic=false) {
+      if(!plan||!chosen.size)return;
       const selectedPlan=plan,selected=[...chosen];
       busy=true;applying=true;updateButtons();feedback.textContent="正在同步改名并迁移媒体记录…";
       try {
         const data=await api(endpoint+"apply","POST",{id:selectedPlan.id,rows:selected});
         plan=null;chosen.clear();
         feedback.textContent=`已改名 ${data.renamed} 项，包含关联文件共 ${data.files} 个。媒体库正在刷新。${data.journalWarning?"改名记录完成状态未能更新，准备记录仍可用于恢复。":""}`;
-        results.replaceChildren(UI.el("p",{class:"empty"},"本批改名已完成。"));
+        if(automatic) {
+          selectedPlan.rows.forEach(row=>{if(selected.includes(row.id))row.status="renamed";});
+          renderRows(selectedPlan);
+          feedback.textContent+=` 已规范 ${selectedPlan.rows.filter(row=>row.status==="unchanged").length} 项，跳过 ${selectedPlan.rows.filter(row=>["review","conflict"].includes(row.status)).length} 项。`;
+        } else results.replaceChildren(UI.el("p",{class:"empty"},"本批改名已完成。"));
         toast(`已改名 ${data.renamed} 项`);
         await refresh();
       } catch(error) { feedback.textContent=error.message;plan=null;chosen.clear(); }
       finally {busy=false;applying=false;updateButtons();}
-    };
+    }
+    applyButton.onclick=()=>{if(!busy)applyPlan();};
     modeChanged();
   }
   return {open};
