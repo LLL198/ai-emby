@@ -1,6 +1,6 @@
 {
   "Architecture": "linux/amd64",
-  "SHA256": "cef7fa19b454891d3addb776545a7a162a839737382023ffc17fcc323f96b2be",
-  "Description": "Core executable with scan-deadline and mounted-filesystem write compatibility fixes. Its complete source is still being recovered.",
+  "SHA256": "7538b8efc1fc2115b5bb2149a8fa4fbf418b737f82c99c66523a485f7c693749",
+  "Description": "Core executable with scan-deadline and mounted-filesystem write compatibility fixes; HTTP requests use the application handler directly.",
   "Version": "2026.09.28-124350"
 }

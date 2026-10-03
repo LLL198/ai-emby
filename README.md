@@ -50,7 +50,6 @@ mkdir -p app-backups secrets media update-control
 | `HTTP_PORT` | 网页访问端口，默认 `8097` |
 | `IMAGE_TAG` | 镜像版本，默认 `latest` |
 | `PUID` / `PGID` | 容器运行用户和用户组，默认均为 `0`；自定义时需确保媒体与数据目录可读写 |
-| `LICENSE_KEY` | 授权密钥，按所用授权方式填写 |
 
 已有账号的密码请在面板内修改，调整 `ADMIN_PASSWORD` 不会重设已有管理员密码。
 
@@ -63,7 +62,7 @@ docker compose up -d --no-build
 
 浏览器打开 `http://服务器地址:8097`。如果修改了 `HTTP_PORT`，使用对应端口。
 
-首次登录使用用户名 `admin`，密码为 `.env` 中填写的 `ADMIN_PASSWORD`。如页面提示需要授权，按提示完成授权配置。
+首次登录使用用户名 `admin`，密码为 `.env` 中填写的 `ADMIN_PASSWORD`。
 
 登录后会自动记住当前设备。清除网站数据、退出登录或修改密码后，需要重新登录。
 
@@ -342,7 +341,7 @@ docker compose stop
 docker compose up -d --no-build
 ```
 
-迁移已有部署时，保留 `.env`、应用数据、数据库、媒体挂载路径和授权机器标识，并沿用原来的 Compose 项目名与服务名。
+迁移已有部署时，保留 `.env`、应用数据、数据库和媒体挂载路径，并沿用原来的 Compose 项目名与服务名。
 
 ## 常见问题
 

@@ -17,7 +17,7 @@ type proxySettingsRequest struct {
 }
 
 func defaultProxyScopes() map[string]bool {
-	return map[string]bool{"tmdb": true, "subtitle": true, "update": true, "license": false, "generic": false}
+	return map[string]bool{"tmdb": true, "subtitle": true, "update": true, "generic": false}
 }
 
 func (a *App) loadProxySettings() {
@@ -28,7 +28,18 @@ func (a *App) loadProxySettings() {
 	}
 	_ = a.db.QueryRow("SELECT v FROM settings WHERE k='external_proxy_password'").Scan(&config.Password)
 	config.PasswordConfigured = config.Password != ""
+	config.Scopes = normalizeProxyScopes(config.Scopes)
 	a.proxy.replace(config)
+}
+
+func normalizeProxyScopes(scopes map[string]bool) map[string]bool {
+	normalized := defaultProxyScopes()
+	for scope := range normalized {
+		if enabled, ok := scopes[scope]; ok {
+			normalized[scope] = enabled
+		}
+	}
+	return normalized
 }
 
 func validateProxy(config proxySettings) error {
@@ -44,7 +55,7 @@ func validateProxy(config proxySettings) error {
 	}
 	for scope := range config.Scopes {
 		switch scope {
-		case "tmdb", "subtitle", "update", "license", "generic":
+		case "tmdb", "subtitle", "update", "generic":
 		default:
 			return errInvalidProxyConfiguration
 		}

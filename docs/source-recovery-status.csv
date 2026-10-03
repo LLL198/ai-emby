@@ -29,7 +29,6 @@ companion/image_authorization.go,2,missing_reconstruct,pending_reconstruction,co
 companion/image_upload_store.go,7,missing_reconstruct,reconstructed_from_saved_binary,companion,5,5,0
 companion/image_upload.go,1,present_needs_version_review,reference_copy_unverified,companion,1,1,0
 companion/initials.go,3,present_needs_version_review,reference_copy_unverified,companion,1,1,0
-companion/internal/licensesdk/license.go,13,present_needs_version_review,reference_copy_unverified,companion/internal/licensesdk,6,6,0
 companion/intro_credits.go,17,missing_reconstruct,pending_reconstruction,companion,9,0,9
 companion/intro_records.go,18,missing_reconstruct,pending_reconstruction,companion,12,0,12
 companion/library_collage.go,9,missing_reconstruct,pending_reconstruction,companion,6,0,6

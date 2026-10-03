@@ -24,7 +24,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/LLL198/ai-emby/companion/internal/licensesdk"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -1389,18 +1388,11 @@ func main() {
 		db.Close()
 		return
 	}
-	licenseClient, licenseErr := licensesdk.NewFromEnv()
-	if licenseErr != nil {
-		log.Fatalf("license configuration: %v", licenseErr)
-	}
-	licenseCtx, licenseCancel := context.WithCancel(context.Background())
-	defer licenseCancel()
-	licenseClient.OnError = func(detail string) { a.recordError(nil, "授权验证错误", detail) }
-	licenseClient.Refresh(licenseCtx)
-	go licenseClient.Run(licenseCtx)
+	serviceCtx, serviceCancel := context.WithCancel(context.Background())
+	defer serviceCancel()
 	go a.reclaimIdleMemory()
 	go a.watchMedia()
-	go a.monitorScraper(licenseCtx)
+	go a.monitorScraper(serviceCtx)
 	go a.runScanSchedule()
 	if e := a.migrateMedia(); e != nil {
 		log.Printf("media cache migration: %v", e)
@@ -1417,7 +1409,7 @@ func main() {
 		listen, e = serverListenAddress()
 		must(e)
 	}
-	srv := &http.Server{Addr: listen, Handler: licenseClient.Middleware(http.HandlerFunc(a.serve)), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10}
+	srv := &http.Server{Addr: listen, Handler: http.HandlerFunc(a.serve), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10}
 	go func() {
 		log.Printf("AI Emby listening %s; redirect-only playback", listen)
 		if e := srv.ListenAndServe(); e != nil && e != http.ErrServerClosed {

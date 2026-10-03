@@ -1436,7 +1436,7 @@ async function loadIntroSettings() {
 async function loadProxySettings() {
   const c=await api('/admin/proxy-settings'),f=$('#proxy-settings');
   if(!f)return;
-  const scopes=[['tmdb','TMDB'],['subtitle','字幕'],['update','更新检测'],['license','授权服务'],['generic','其它外部 HTTP']];
+  const scopes=[['tmdb','TMDB'],['subtitle','字幕'],['update','更新检测'],['generic','其它外部 HTTP']];
   f.innerHTML=`<label class="tmdb-switch-row"><input class="switch" role="switch" name="enabled" type="checkbox" ${c.Enabled?'checked':''}><span>启用代理</span></label>
     <label class="tmdb-field tmdb-inline-field"><span>代理类型</span><select name="type"><option>HTTP</option><option>HTTPS</option><option>SOCKS5</option></select></label>
     <label class="tmdb-field tmdb-inline-field"><span>代理地址</span><input name="url" type="url" placeholder="http://127.0.0.1:7890" value="${esc(c.URL)}"></label>

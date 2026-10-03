@@ -22,13 +22,9 @@ async function api(path, method = "GET", data, options = {}) {
     body = JSON.parse(body);
   } catch {}
   if (!res.ok) {
-    if (res.status === 401 && requestToken && body?.error !== "license_required" && !path.toLowerCase().includes("/authenticatebyname"))
+    if (res.status === 401 && requestToken && !path.toLowerCase().includes("/authenticatebyname"))
       handleExpiredSession(requestToken);
-    const message = body?.error === "license_required"
-      ? body.reason === "license_server_unavailable"
-        ? "授权服务器暂时无法连接，请稍后重新加载。"
-        : body.message || "服务器授权验证未通过，请检查授权配置。"
-      : body?.Message || body?.message || body?.error || `HTTP ${res.status}`;
+    const message = body?.Message || body?.message || body?.error || `HTTP ${res.status}`;
     const e = new Error(message);
     e.status = res.status;
     throw e;

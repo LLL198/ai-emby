@@ -5,7 +5,7 @@ const FilesPage = (() => {
   const join = (a,b) => [a,b].filter(Boolean).join("/");
   const size = (n) => { if (!n) return "—"; const units=["B","KB","MB","GB","TB"]; let i=0,v=n; while(v>=1024&&i<units.length-1){v/=1024;i++} return `${v.toFixed(i?1:0)} ${units[i]}`; };
   const authHeaders = () => ({"X-Emby-Token":token,"X-Emby-Authorization":`Emby Client="AI Emby Web", Device="Browser", DeviceId="${device}", Version="1.0"`});
-  async function request(path, options={}, raw=false) { const requestToken=token; const res=await fetch(path,{...options,headers:{...authHeaders(),...(options.headers||{})}}); if(!res.ok){let b;try{b=await res.json()}catch{};if(res.status===401&&b?.error!=="license_required")handleExpiredSession(requestToken);const e=new Error(b?.Message||b?.message||b?.error||`HTTP ${res.status}`);e.status=res.status;throw e} if(raw)return res;const ct=res.headers.get("content-type")||""; return ct.includes("json")?res.json():res; }
+  async function request(path, options={}, raw=false) { const requestToken=token; const res=await fetch(path,{...options,headers:{...authHeaders(),...(options.headers||{})}}); if(!res.ok){let b;try{b=await res.json()}catch{};if(res.status===401)handleExpiredSession(requestToken);const e=new Error(b?.Message||b?.message||b?.error||`HTTP ${res.status}`);e.status=res.status;throw e} if(raw)return res;const ct=res.headers.get("content-type")||""; return ct.includes("json")?res.json():res; }
   const currentRoot = () => state.roots.find(root => root.id === state.root);
   const readOnly = () => !!currentRoot()?.readOnly;
   const endpoint = (suffix = "", query = {}, root = state.root) => "/admin/features/local-files" + suffix + "?" + new URLSearchParams({...query, root});

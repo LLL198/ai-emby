@@ -1,10 +1,4 @@
 SourcePath,BinaryFunction,Address,CurrentDeclaration,DeclarationStatus
-companion/internal/licensesdk/license.go,licensesdk.NewFromEnv,0x74c940,companion/internal/licensesdk/license.go:42,present_not_equivalence_verified
-companion/internal/licensesdk/license.go,licensesdk.(*Client).Refresh,0x74d100,companion/internal/licensesdk/license.go:84,present_not_equivalence_verified
-companion/internal/licensesdk/license.go,licensesdk.(*Client).reportError,0x74db20,companion/internal/licensesdk/license.go:134,present_not_equivalence_verified
-companion/internal/licensesdk/license.go,licensesdk.(*Client).networkError,0x74dc80,companion/internal/licensesdk/license.go:140,present_not_equivalence_verified
-companion/internal/licensesdk/license.go,licensesdk.(*Client).Status,0x74dde0,companion/internal/licensesdk/license.go:148,present_not_equivalence_verified
-companion/internal/licensesdk/license.go,licensesdk.(*Client).Run,0x74dfe0,companion/internal/licensesdk/license.go:160,present_not_equivalence_verified
 companion/activity.go,main.(*App).newActivity,0x766d60,companion/activity.go:29,present_not_equivalence_verified
 companion/activity.go,main.(*App).changeActivity,0x767400,companion/activity.go:52,present_not_equivalence_verified
 companion/activity.go,main.(*App).activitySnapshot,0x767620,companion/activity.go:72,present_not_equivalence_verified
