@@ -28,7 +28,7 @@ type trackingNames struct {
 
 var errTrackingRenameReview = errors.New("自动命名需核对")
 
-func (a *App) trackingSTRMNames(ctx context.Context, s trackingSubscription, m cloudMount, output, activity string) (*trackingNames, error) {
+func (a *App) trackingSTRMNames(ctx context.Context, s trackingSubscription, m cloudMount, output, activity string, identity trackingMediaIdentity) (*trackingNames, error) {
 	base, err := cloudOutput(output)
 	if err != nil {
 		return nil, err
@@ -45,9 +45,9 @@ func (a *App) trackingSTRMNames(ctx context.Context, s trackingSubscription, m c
 		}
 	}()
 	if n.rename {
-		kind := "auto"
+		kind := identity.Kind
 		for _, lib := range a.libraries() {
-			if lib["Id"] == s.AutoImport.Library {
+			if kind == "" && lib["Id"] == s.AutoImport.Library {
 				switch lib["CollectionType"] {
 				case "tvshows":
 					kind = "tv"
@@ -56,9 +56,9 @@ func (a *App) trackingSTRMNames(ctx context.Context, s trackingSubscription, m c
 				}
 			}
 		}
-		n.request = namingRequest{Mode: "auto", Kind: kind, Title: s.Title, Year: s.Year}
+		n.request = namingRequest{Mode: "auto", Kind: kind, Title: identity.Title, Year: identity.Year, TMDB: identity.TMDBID}
 		resolver := namingTMDBResolver{app: a, settings: a.tmdbSettings(), cache: map[string]namingTMDBResult{}}
-		n.request, _, n.lookupError = resolver.resolve(ctx, namingSourceInfo{Kind: kind, Identity: MediaRecognition{Title: s.Title, Year: s.Year}}, n.request)
+		n.request, _, n.lookupError = resolver.resolve(ctx, namingSourceInfo{Kind: kind, Identity: MediaRecognition{Title: identity.Title, Year: identity.Year, TMDBID: identity.TMDBID}}, n.request)
 		if n.lookupError == nil {
 			n.request.Template = "{title} ({year})"
 			if n.request.Kind == "tv" {

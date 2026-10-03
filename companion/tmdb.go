@@ -94,7 +94,10 @@ func (a *App) tmdbIdentity(item Item) (key, endpoint string) {
 	}
 
 	metadata := a.metadata(item)
-	providerID := strings.TrimSpace(metadata.TMDB)
+	providerID := strings.TrimSpace(original.scraperTMDBID)
+	if providerID == "" {
+		providerID = strings.TrimSpace(metadata.TMDB)
+	}
 	if providerID == "" {
 		for _, uniqueID := range metadata.UniqueIDs {
 			if strings.EqualFold(strings.TrimSpace(uniqueID.Type), "tmdb") {
@@ -148,6 +151,18 @@ func (a *App) tmdbIdentity(item Item) (key, endpoint string) {
 
 // Resolve a unique TMDB match and retain its provider ID on the item copy.
 func (a *App) resolveTMDBItem(ctx context.Context, item Item, settings tmdbConfig) (Item, string, string, error) {
+	trackingIdentity, err := a.trackingIdentityForItem(ctx, item)
+	if err != nil {
+		return item, "", "", err
+	}
+	if trackingIdentity != nil {
+		if trackingIdentity.TMDBID != "" {
+			item.scraperTMDBID = trackingIdentity.TMDBID
+		}
+		if item.Kind == "Series" || item.Kind == "Movie" {
+			item.Name, item.Year = trackingIdentity.Title, trackingIdentity.Year
+		}
+	}
 	key, endpoint := a.tmdbIdentity(item)
 	if key == "" || endpoint == "" {
 		return item, "", "", errors.New("无可识别媒体 TMDB 身份")
@@ -175,6 +190,9 @@ func (a *App) resolveTMDBItem(ctx context.Context, item Item, settings tmdbConfi
 	}
 
 	identity := scraperSearchIdentity(searchItem.Name)
+	if trackingIdentity != nil {
+		identity.Title, identity.Year = trackingIdentity.Title, trackingIdentity.Year
+	}
 	title := strings.TrimSpace(identity.Title)
 	if title == "" {
 		title = strings.TrimSpace(filepath.Base(searchItem.Path))

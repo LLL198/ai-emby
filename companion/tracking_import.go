@@ -30,10 +30,11 @@ type trackingImportState struct {
 	PendingFiles                                        []trackingShareFile
 	Updated                                             int64
 	Saved                                               int
-	RenamePending                                       int                   `json:",omitempty"`
-	ProcessingKey                                       string                `json:",omitempty"`
-	SkipAutoScrape                                      bool                  `json:",omitempty"`
-	ManualConfig                                        *trackingImportConfig `json:",omitempty"`
+	RenamePending                                       int                    `json:",omitempty"`
+	ProcessingKey                                       string                 `json:",omitempty"`
+	SkipAutoScrape                                      bool                   `json:",omitempty"`
+	ManualConfig                                        *trackingImportConfig  `json:",omitempty"`
+	Identity                                            *trackingMediaIdentity `json:",omitempty"`
 }
 type trackingShareFile struct {
 	ID, Name, Token, Parent string
@@ -171,6 +172,12 @@ func (a *App) trackingValidateImport(s *trackingSubscription) error {
 	if rename && strings.TrimSpace(a.tmdbSettings().APIKey) == "" {
 		return errors.New("自动重命名需要先在 TMDB 管理中配置 API Key 或访问令牌")
 	}
+	hint := a.trackingImportHint(c.ResourceID, s.ID)
+	if trackingTitleKey(hint.Title) == trackingTitleKey(s.Title) {
+		if err := a.trackingValidateIdentityLibrary(c.Library, hint); err != nil {
+			return err
+		}
+	}
 	if c.ResourceID != "" {
 		var cloud string
 		if a.db.QueryRow("SELECT cloud FROM feature_tracking_resources WHERE id=? AND subscription=? AND status<>'ignored'", c.ResourceID, s.ID).Scan(&cloud) != nil || cloud != trackingMountCloud(m.Driver) {
@@ -215,7 +222,8 @@ func (a *App) trackingImportAPI(w http.ResponseWriter, r *http.Request) {
 			featureError(w, err)
 			return
 		}
-		respond(w, M{"Mounts": mounts, "Libraries": a.libraries(), "FileRoot": fileRoot(), "ScraperEnabled": a.scraperSettings().Enabled, "TMDBConfigured": strings.TrimSpace(a.tmdbSettings().APIKey) != ""})
+		hint := a.trackingImportHint(r.URL.Query().Get("ResourceID"), r.URL.Query().Get("SubscriptionID"))
+		respond(w, M{"Mounts": mounts, "Libraries": a.libraries(), "FileRoot": fileRoot(), "ScraperEnabled": a.scraperSettings().Enabled, "TMDBConfigured": strings.TrimSpace(a.tmdbSettings().APIKey) != "", "SuggestedKind": hint.Kind, "SuggestedYear": hint.Year, "SuggestedTitle": hint.Title})
 		return
 	}
 	if r.URL.Path == "/admin/features/tracking/import/start" {
@@ -516,6 +524,14 @@ func (a *App) trackingImport(ctx context.Context, s trackingSubscription, activi
 		}
 		return err
 	}
+	identity := trackingSearchIdentity(s, resource)
+	if *s.AutoImport.AutoScrape || *s.AutoImport.AutoRename {
+		identity, _ = a.trackingResolveIdentity(ctx, s, resource)
+	}
+	if err = a.trackingValidateIdentityLibrary(s.AutoImport.Library, identity); err != nil {
+		return err
+	}
+	st.Identity = &identity
 	name, err := trackingWorkName(s)
 	if err != nil {
 		return err
@@ -748,7 +764,7 @@ func (a *App) trackingImport(ctx context.Context, s trackingSubscription, activi
 			return err
 		}
 	}
-	names, err := a.trackingSTRMNames(ctx, s, m, st.Output, activity)
+	names, err := a.trackingSTRMNames(ctx, s, m, st.Output, activity, identity)
 	if err != nil {
 		return err
 	}
