@@ -109,6 +109,20 @@ def wait_healthy(project, service):
     raise RuntimeError("新容器未恢复健康状态")
 
 
+def require_persistent_storage(container, destination, description):
+    mounts = subprocess.check_output([
+        "docker", "exec", container, "cat", "/proc/self/mountinfo",
+    ], text=True, timeout=15)
+    for line in mounts.splitlines():
+        fields = line.split()
+        if len(fields) > 5 and fields[4] == destination:
+            filesystem = line.split(" - ", 1)[1].split()[0]
+            if filesystem == "tmpfs":
+                raise ValueError(description + "正使用内存挂载，重启会丢数据；请先备份并迁移到 Docker 持久卷")
+            return
+    raise ValueError("无法确认" + description + "存储位置，请先检查数据挂载")
+
+
 def application_service(project):
     configuration = json.loads(subprocess.check_output(
         ["docker", "compose", "config", "--format", "json"],
@@ -129,6 +143,7 @@ def perform_update(options, request):
     version = request.get("Version", "")
     work = options.project / "app-backups" / "updates" / (version + "-" + str(int(time.time())))
     switched = False
+    application_stopped = False
     previous = []
 
     def status(state, message):
@@ -179,9 +194,18 @@ def perform_update(options, request):
             (work / "compose.before.yaml").write_text(previous[0][1], encoding="utf-8")
             postgres = subprocess.check_output(["docker", "compose", "ps", "-q", "postgres"], cwd=options.project, text=True).strip()
             if postgres:
-                status("backup", "正在备份数据库")
+                require_persistent_storage(postgres, "/var/lib/postgresql/data", "数据库")
+                status("backup", "正在备份数据库和网盘数据")
+                application = subprocess.check_output(["docker", "compose", "ps", "-q", options.service], cwd=options.project, text=True).strip()
+                if not application:
+                    raise ValueError("应用未运行，无法保存更新前的网盘数据")
+                require_persistent_storage(application, "/app/data", "应用数据")
+                run(["docker", "compose", "stop", options.service], options.project, log)
+                application_stopped = True
                 with (work / "database.before.dump").open("wb") as output:
                     subprocess.run(["docker", "exec", postgres, "pg_dump", "-U", "emby", "-d", "emby", "-Fc", "--no-owner"], stdout=output, stderr=log, check=True, timeout=300)
+                with (work / "app-data.before.tar").open("wb") as output:
+                    subprocess.run(["docker", "cp", application + ":/app/data/.", "-"], stdout=output, stderr=log, check=True, timeout=600)
             status("restarting", "正在切换版本")
             switched = True
             for path, _, changed in previous:
@@ -205,6 +229,13 @@ def perform_update(options, request):
                 message += "；已恢复旧版本"
             except Exception:
                 message += "；自动恢复未完成，请检查宿主机"
+        elif application_stopped:
+            try:
+                with (work / "restart.log").open("w") as log:
+                    run(["docker", "compose", "start", options.service], options.project, log)
+                wait_healthy(options.project, options.service)
+            except Exception:
+                message += "；原应用未恢复，请检查宿主机"
         status("failed", message)
     finally:
         (control / "processing.json").unlink(missing_ok=True)

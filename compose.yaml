@@ -31,7 +31,7 @@ services:
       POSTGRES_USER: emby
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置数据库密码}
     volumes:
-      - ./postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: [CMD-SHELL, pg_isready -U emby -d emby]
       interval: 5s
@@ -63,7 +63,7 @@ services:
       FILE_MANAGER_PATH_MAPPINGS: ${FILE_MANAGER_PATH_MAPPINGS:-[]}
       MEDIA_ROOTS: ${MEDIA_ROOTS:-/media}
     volumes:
-      - ./app-data:/app/data
+      - app-data:/app/data
       - ./app-backups:/app/backups
       - ./update-control:/app/update-control
       - ${MEDIA_PATH:-./media}:/media:rw
@@ -79,3 +79,7 @@ services:
       options:
         max-size: 10m
         max-file: '3'
+
+volumes:
+  postgres-data:
+  app-data:

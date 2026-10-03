@@ -35,7 +35,7 @@ AI Emby 是一款电影、剧集与 STRM 媒体库管理服务。在一个面板
 git clone https://github.com/LLL198/ai-emby.git
 cd ai-emby
 cp .env.example .env
-mkdir -p app-data app-backups postgres-data secrets media update-control
+mkdir -p app-backups secrets media update-control
 ```
 
 ### 2. 填写配置
@@ -300,13 +300,27 @@ sudo bash scripts/install-updater.sh "$PWD"
 
 ## 数据保存与日常维护
 
-| 部署目录 | 内容 |
+| 存储位置 | 内容 |
 | --- | --- |
-| `app-data/` | 应用数据与缓存 |
-| `postgres-data/` | 数据库文件 |
+| Docker 卷 `app-data` | 应用数据、网盘登录信息与缓存 |
+| Docker 卷 `postgres-data` | 账号、媒体库、网盘配置与追新订阅 |
 | `app-backups/` | 备份与更新日志 |
 | `update-control/` | 面板更新服务使用的目录 |
 | `MEDIA_PATH` 指定的目录 | 媒体文件、STRM，以及刮削生成的 NFO 和图片 |
+
+新安装使用 Docker 持久卷保存数据库和应用数据，卷名带有 Compose 项目名前缀。重启电脑、Docker 或容器不会清空这些数据。备份仍保存在部署目录的 `app-backups/`；迁移设备时，数据库和应用数据需要一起备份和恢复。
+
+日常停止服务使用 `docker compose stop`。不要使用 `docker compose down -v` 或删除数据卷；这些操作会删除新安装的持久数据。
+
+旧安装如果仍使用 `./postgres-data`、`./app-data` 目录挂载，**先保留原来的 Compose 文件执行迁移，再换用新版配置**。直接换成空的持久卷，会看起来像丢失数据。在 Windows 的 WSL 部署中，Docker 可能早于 WSL 磁盘挂载启动，因此更推荐使用持久卷。
+
+在原服务正常运行时，用本仓库中的脚本指定原部署目录：
+
+```bash
+python3 scripts/migrate-storage.py --project /原部署目录
+```
+
+脚本会暂时停止应用，备份数据库与应用数据，将数据恢复到新卷，再启动服务。原目录及备份均会保留。使用自动更新服务时，先暂停更新服务，迁移结束后再启动。数据已经丢失时，请先从有效备份恢复，再迁移；迁移空数据库不会找回历史数据。
 
 查看服务状态和日志：
 
