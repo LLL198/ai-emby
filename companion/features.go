@@ -12,22 +12,24 @@ import (
 )
 
 type featureState struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	mu            sync.Mutex
-	jobs          map[string]context.CancelFunc
-	wg            sync.WaitGroup
-	playMu        sync.Mutex
-	plays         map[string]featurePlaybackSample
-	cacheMu       sync.Mutex
-	transcodes    map[string]*featureTranscode
-	trackingMu    sync.Mutex
-	trackingBusy  bool
-	trackingQueue chan trackingJob
+	ctx              context.Context
+	cancel           context.CancelFunc
+	mu               sync.Mutex
+	jobs             map[string]context.CancelFunc
+	wg               sync.WaitGroup
+	playMu           sync.Mutex
+	plays            map[string]featurePlaybackSample
+	cacheMu          sync.Mutex
+	transcodes       map[string]*featureTranscode
+	trackingMu       sync.Mutex
+	trackingSearchMu sync.Mutex
+	trackingBusy     bool
+	trackingQueue    chan trackingJob
 }
 
 const featureSchema = `
 CREATE TABLE IF NOT EXISTS feature_tracking_subscriptions(id TEXT PRIMARY KEY,data TEXT NOT NULL,created BIGINT NOT NULL,last_search BIGINT NOT NULL DEFAULT 0,next_search BIGINT NOT NULL DEFAULT 0,state TEXT NOT NULL DEFAULT 'idle',error TEXT NOT NULL DEFAULT '',last_count BIGINT NOT NULL DEFAULT 0);
+ALTER TABLE feature_tracking_subscriptions ADD COLUMN IF NOT EXISTS context_kind TEXT NOT NULL DEFAULT 'subscription';
 CREATE TABLE IF NOT EXISTS feature_tracking_imports(subscription TEXT PRIMARY KEY REFERENCES feature_tracking_subscriptions(id) ON DELETE CASCADE,data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS feature_tracking_resources(id TEXT PRIMARY KEY,subscription TEXT NOT NULL REFERENCES feature_tracking_subscriptions(id) ON DELETE CASCADE,cloud TEXT NOT NULL,data TEXT NOT NULL,fingerprint TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',first_seen BIGINT NOT NULL,updated BIGINT NOT NULL,last_seen BIGINT NOT NULL);
 CREATE INDEX IF NOT EXISTS feature_tracking_resources_list ON feature_tracking_resources(subscription,status,updated DESC,id);

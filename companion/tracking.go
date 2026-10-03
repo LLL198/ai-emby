@@ -89,6 +89,8 @@ func trackingWords(values []string) ([]string, error) {
 }
 func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/admin/features/tracking/search":
+		a.trackingDirectSearchAPI(w, r)
 	case "/admin/features/tracking":
 		if !featureMethod(w, r, "GET") {
 			return
@@ -205,7 +207,7 @@ func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Method == "DELETE" {
-			result, err := a.db.Exec("DELETE FROM feature_tracking_subscriptions WHERE id=?", r.URL.Query().Get("ID"))
+			result, err := a.db.Exec("DELETE FROM feature_tracking_subscriptions WHERE id=? AND context_kind='subscription'", r.URL.Query().Get("ID"))
 			if err != nil {
 				featureError(w, err)
 				return
@@ -282,7 +284,7 @@ func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 		b.AutoImport.Reselect = false
 		if b.ID == "" {
 			var count int
-			if err = a.db.QueryRow("SELECT COUNT(*) FROM feature_tracking_subscriptions").Scan(&count); err != nil {
+			if err = a.db.QueryRow("SELECT COUNT(*) FROM feature_tracking_subscriptions WHERE context_kind='subscription'").Scan(&count); err != nil {
 				featureError(w, err)
 				return
 			}
@@ -294,7 +296,7 @@ func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 			_, err = a.db.Exec("INSERT INTO feature_tracking_subscriptions(id,data,created,next_search) VALUES(?,?,?,?)", b.ID, featureJSON(b), time.Now().Unix(), time.Now().Unix())
 		} else {
 			var result sql.Result
-			result, err = a.db.Exec("UPDATE feature_tracking_subscriptions SET data=?,next_search=? WHERE id=?", featureJSON(b), time.Now().Unix(), b.ID)
+			result, err = a.db.Exec("UPDATE feature_tracking_subscriptions SET data=?,next_search=? WHERE id=? AND context_kind='subscription'", featureJSON(b), time.Now().Unix(), b.ID)
 			if err == nil {
 				n, _ := result.RowsAffected()
 				if n == 0 {
@@ -356,7 +358,7 @@ func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) trackingSubscriptions() ([]trackingRecord, error) {
-	rows, err := a.db.Query("SELECT id,data,created,last_search,next_search,state,error,last_count FROM feature_tracking_subscriptions ORDER BY created DESC,id")
+	rows, err := a.db.Query("SELECT id,data,created,last_search,next_search,state,error,last_count FROM feature_tracking_subscriptions WHERE context_kind='subscription' ORDER BY created DESC,id")
 	if err != nil {
 		return nil, err
 	}
@@ -487,7 +489,7 @@ func (a *App) trackingResourcesAPI(w http.ResponseWriter, r *http.Request) {
 		respond(w, M{"ok": true})
 		return
 	}
-	query := " FROM feature_tracking_resources WHERE 1=1"
+	query := " FROM feature_tracking_resources WHERE subscription IN (SELECT id FROM feature_tracking_subscriptions WHERE context_kind='subscription')"
 	args := []any{}
 	for _, filter := range []struct{ param, column string }{{"Subscription", "subscription"}, {"Status", "status"}, {"Cloud", "cloud"}} {
 		if v := r.URL.Query().Get(filter.param); v != "" {
@@ -788,7 +790,7 @@ func (a *App) trackingBackground(ctx context.Context) {
 			if !c.Enabled || c.URL == "" {
 				continue
 			}
-			rows, err := a.db.Query("SELECT id,data FROM feature_tracking_subscriptions WHERE next_search<=? ORDER BY next_search,id", time.Now().Unix())
+			rows, err := a.db.Query("SELECT id,data FROM feature_tracking_subscriptions WHERE context_kind='subscription' AND next_search<=? ORDER BY next_search,id", time.Now().Unix())
 			if err != nil {
 				continue
 			}

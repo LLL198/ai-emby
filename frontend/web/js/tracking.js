@@ -4,7 +4,9 @@ const Tracking = (() => {
   const importStates={error:'入库失败',queued:'等待入库',transfer:'转存中',strm:'生成 STRM',scan:'扫描入库',rename:'标准命名',scrape:'刮削中',complete:'入库完成','waiting-resource':'等待合适资源',interrupted:'已中断'};
   const resourceStates = {new:'未读',seen:'已读',ignored:'已忽略'};
   let host, still, data, selected='', status='', cloud='', page=1, results, timer, generation=0, requestSerial=0, summarySerial=0;
-  let section='subscriptions', subscriptionQuery='', subscriptionState='', subscriptionSaving=false;
+  let section='search', subscriptionQuery='', subscriptionState='', subscriptionSaving=false;
+  let direct=null, directPage=1, directBusy=false, directError='', directSerial=0;
+  let directQuery={Title:'',Year:'',Cloud:'',Source:'all'};
   const checked = new Set();
   const date = value => value ? new Date(value * 1000).toLocaleString() : '尚未搜索';
   const field = (name,label,value='',type='text',extra='') => `<label>${esc(label)}<input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;
@@ -15,13 +17,13 @@ const Tracking = (() => {
   function schedule() {
     stopPoll();
     if (!current()) return;
-    timer=setTimeout(()=>{if(current())refresh(false).catch(error=>{if(current()){host.querySelector('[data-run-state]').textContent=error.message;schedule();}});},data.Busy?2500:30000);
+    timer=setTimeout(()=>{if(current())refresh(false).catch(error=>{if(current()){host.querySelector('[data-run-state]').textContent=error.message;schedule();}});},data.Busy||directBusy||direct?.Session?.State==='running'?2500:30000);
   }
   async function load(target,isCurrent) {
     stopPoll();const serial=++generation;++summarySerial;host=target;still=isCurrent;results=null;
     const b=await api(base);if(serial!==generation||!isCurrent())return;data=b;
     if(selected&&!selectedSub())selected='';
-    checked.clear();render();await resourceList();schedule();
+    checked.clear();render();await Promise.all([resourceList(),refreshDirect()]);schedule();
   }
   function render() {
     host.classList.add('tracking-section');
@@ -32,7 +34,13 @@ const Tracking = (() => {
       <section id="tracking-resources-pane" role="tabpanel" aria-labelledby="tracking-resources-tab" data-tracking-pane="resources"><div class="tracking-workspace"><aside class="tracking-subscriptions" aria-label="作品订阅"><div class="tracking-subscriptions-head"><h3>作品筛选 <span>${data.Subscriptions.length}</span></h3><button type="button" class="secondary" data-manage>管理订阅</button></div><div data-subscriptions></div></aside>
       <section class="tracking-results"><div data-selected></div><div class="tracking-filters"><nav aria-label="资源状态">${[['','全部'],['new','未读'],['seen','已读'],['ignored','忽略']].map(([key,label])=>`<button type="button" data-filter="${key}" aria-current="${status===key?'page':'false'}">${label}</button>`).join('')}</nav><label>网盘<select data-cloud aria-label="筛选网盘"><option value="">全部网盘</option>${Object.entries(data.CloudTypes).map(([key,label])=>`<option value="${key}" ${key===cloud?'selected':''}>${esc(label)}</option>`).join('')}</select></label></div>
       <div class="tracking-batch"><label><input type="checkbox" data-select-all aria-label="全选本页">全选本页</label><span data-selection>未选择</span><button type="button" class="secondary" data-batch="seen" disabled>标为已读</button><button type="button" class="secondary" data-batch="ignored" disabled>忽略</button></div><div data-resources aria-live="polite"></div><div data-pagination></div></section></div></section>`;
-    renderManagement();renderSubscriptions();renderSelected();showSection(section);
+    const tabs=host.querySelector('[role="tablist"]');
+    tabs.insertAdjacentHTML('afterbegin','<button type="button" role="tab" id="tracking-search-tab" data-tracking-view="search" aria-controls="tracking-search-pane">搜索资源</button>');
+    tabs.insertAdjacentHTML('afterend',`<section id="tracking-search-pane" role="tabpanel" aria-labelledby="tracking-search-tab" data-tracking-pane="search"><form class="tracking-direct-search" data-direct-form><div class="tracking-direct-heading"><h3>搜索网盘资源</h3><span>无需订阅，找到就能入库</span></div><div class="tracking-direct-input"><input type="search" name="Title" aria-label="作品名称" placeholder="输入电影或剧集名称" maxlength="512" required value="${esc(directQuery.Title)}"><button type="submit" data-direct-submit ${directBusy||!data.Settings.URL?'disabled':''}>${directBusy?'搜索中…':'搜索资源'}</button></div><div class="tracking-direct-filters">${field('Year','年份',directQuery.Year,'number','min="0" max="9999" placeholder="不限"')}<label>网盘<select name="Cloud"><option value="">全部网盘</option>${Object.entries(data.CloudTypes).map(([key,label])=>`<option value="${key}" ${key===directQuery.Cloud?'selected':''}>${esc(label)}</option>`).join('')}</select></label><label>来源<select name="Source">${[['all','全部来源'],['plugin','搜索插件'],['tg','Telegram 频道']].map(([key,label])=>`<option value="${key}" ${key===directQuery.Source?'selected':''}>${label}</option>`).join('')}</select></label></div></form><div data-direct-status role="status" aria-live="polite"></div><div data-direct-results></div><div data-direct-pagination></div></section>`);
+    const searchForm=host.querySelector('[data-direct-form]');
+    searchForm.oninput=()=>{const f=new FormData(searchForm);directQuery={Title:f.get('Title'),Year:f.get('Year'),Cloud:f.get('Cloud'),Source:f.get('Source')};};
+    searchForm.onsubmit=event=>{event.preventDefault();startDirectSearch();};
+    renderManagement();renderSubscriptions();renderSelected();renderDirect();showSection(section);
     host.querySelector('[data-add]').onclick=()=>edit();host.querySelector('[data-settings]').onclick=settings;
     host.querySelector('[data-config]')?.addEventListener('click',settings);
     host.querySelector('[data-refresh]').onclick=run(()=>refresh(true));host.querySelector('[data-manage-run-all]').onclick=run(()=>search(''));
@@ -112,7 +120,7 @@ const Tracking = (() => {
     const changed=JSON.stringify(data.Subscriptions.map(s=>[s.ID,s.NewCount,s.ResourceCount,s.LastSearch,s.State,s.Import]))!==JSON.stringify(b.Subscriptions.map(s=>[s.ID,s.NewCount,s.ResourceCount,s.LastSearch,s.State,s.Import]));
     data=b;if(selected&&!selectedSub())selected='';if(reset)checked.clear();
     host.querySelector('[data-run-state]').textContent=data.Busy?'正在执行追新任务…':data.Settings.Enabled?'定时追新已开启':'定时追新未开启';
-    renderManagement();renderSubscriptions();renderSelected();if(reset||changed||data.Busy||results==null)await resourceList();schedule();
+    renderManagement();renderSubscriptions();renderSelected();if(reset||changed||data.Busy||results==null)await resourceList();await refreshDirect();schedule();
   }
   async function resourceList() {
     const serial=++requestSerial,viewGeneration=generation;
@@ -139,6 +147,51 @@ const Tracking = (() => {
   async function mark(ids,state) {await api(base+'/resources','PUT',{IDs:ids,Status:state});if(current())await refresh(true);}
   async function search(id) {
     const b=await api(base+'/run','POST',{ID:id});toast(`已加入 ${b.Queued} 个订阅`);if(current()){data.Busy=true;await refresh(true);}
+  }
+  async function refreshDirect() {
+    if(directBusy){renderDirect();return;}
+    const serial=++directSerial,viewGeneration=generation;
+    try {
+      const b=await api.query(base+'/search',direct?.Session?.ID?{ID:direct.Session.ID}:{});
+      if(serial!==directSerial||viewGeneration!==generation||!current())return;
+      direct=b;
+      if(!directQuery.Title&&b.Session){
+        directQuery={Title:b.Session.Title,Year:b.Session.Year||'',Cloud:b.Session.CloudTypes?.length===1?b.Session.CloudTypes[0]:'',Source:b.Session.Source||'all'};
+        const form=host.querySelector('[data-direct-form]');
+        Object.entries(directQuery).forEach(([key,value])=>{form.elements.namedItem(key).value=value;});
+      }
+      renderDirect();
+    }catch(error){if(serial===directSerial&&viewGeneration===generation&&current()){directError=error.message;renderDirect();}}
+  }
+  async function startDirectSearch() {
+    if(directBusy||!current())return;
+    const form=host.querySelector('[data-direct-form]'),f=new FormData(form);
+    const title=String(f.get('Title')||'').trim();if(!title)return;
+    directQuery={Title:title,Year:f.get('Year'),Cloud:f.get('Cloud'),Source:f.get('Source')};
+    const query={Title:title,Year:Number(directQuery.Year||0),Source:directQuery.Source,CloudTypes:directQuery.Cloud?[directQuery.Cloud]:[]};
+    directBusy=true;directError='';const serial=++directSerial,viewGeneration=generation;renderDirect();
+    try {
+      const b=await api(base+'/search','POST',query);
+      if(serial!==directSerial||viewGeneration!==generation||!current())return;
+      direct=b;directPage=1;
+    }catch(error){if(serial===directSerial&&viewGeneration===generation&&current())directError=error.message;}
+    finally{directBusy=false;if(current()){if(viewGeneration===generation)renderDirect();else refreshDirect();}}
+  }
+  function renderDirect() {
+    const container=host.querySelector('[data-direct-results]');if(!container)return;
+    const s=direct?.Session,items=direct?.Items||[],st=s?.Import;
+    const button=host.querySelector('[data-direct-submit]');button.disabled=directBusy||!data.Settings.URL;button.textContent=directBusy?'搜索中…':'搜索资源';
+    host.querySelector('[data-direct-form]').setAttribute('aria-busy',String(directBusy));
+    host.querySelector('[data-direct-status]').innerHTML=`${directBusy?'<p class="tracking-direct-progress">正在寻找资源，请稍候…</p>':''}${directError||s?.Error?`<p class="tracking-error" role="alert">${esc(directError||s.Error)}</p>`:''}${s?`<div class="tracking-direct-result-heading"><h3>${esc(s.Query)} <span>${items.length} 条资源</span></h3><span>${date(s.LastSearch)}</span></div>`:''}${st?.Stage?`<div class="tracking-import-status"><div><strong>所选资源入库</strong><span>${esc(importStates[st.Stage]||st.Stage)}${st.Saved?' · 已转存 '+st.Saved+' 个视频':''}${st.RenamePending?' · '+st.RenamePending+' 项命名待处理':''}</span></div>${st.Error?`<p class="tracking-error" role="alert">${esc(st.Error)}</p>`:''}</div>`:''}`;
+    directPage=Math.max(1,Math.min(directPage,Math.ceil(items.length/20)||1));
+    const visible=items.slice((directPage-1)*20,directPage*20);
+    container.classList.add('tracking-direct-results');
+    container.innerHTML=visible.length?visible.map((r,index)=>`<article class="tracking-resource"><div class="tracking-resource-content"><div class="tracking-resource-tags"><span class="tracking-cloud">${esc(data.CloudTypes[r.Cloud]||r.Cloud)}</span><span>${esc(r.Source||'PanSou')}</span></div><h4><a href="${esc(r.URL)}" target="_blank" rel="noopener noreferrer">${esc(r.Title)}</a></h4><div class="tracking-resource-meta">${r.Published?`<span>${esc(r.Published)}</span>`:''}${r.Password?`<span>提取码：<strong>${esc(r.Password)}</strong></span>`:''}</div><div class="tracking-resource-actions"><button type="button" class="secondary" data-direct-copy="${index}">复制链接</button>${['mobile','115','quark','guangya'].includes(r.Cloud)?`<button type="button" data-direct-import="${index}" ${data.Busy||directBusy?'disabled':''}>${st?.ResourceID===r.ID?(st.Stage==='complete'?'再次入库':'继续入库'):'入库'}</button>`:'<span class="tracking-import-unavailable">暂不支持此网盘转存</span>'}</div></div></article>`).join(''):`<div class="tracking-empty"><h3>${directBusy?'正在搜索':s?'没有找到资源':'找一部想看的作品'}</h3>${s&&!directBusy?'<p>可尝试调整名称、年份或搜索网盘。</p>':''}</div>`;
+    container.querySelectorAll('[data-direct-copy]').forEach(b=>b.onclick=run(async()=>{const r=visible[Number(b.dataset.directCopy)],text=r.URL+(r.Password?'\n提取码：'+r.Password:'');try{await navigator.clipboard.writeText(text);toast('链接已复制');}catch{fmDialog('分享链接',`<label>链接<textarea rows="4" readonly>${esc(text)}</textarea></label>`,null);}}));
+    container.querySelectorAll('[data-direct-import]').forEach(b=>b.onclick=run(()=>importResource(visible[Number(b.dataset.directImport)])));
+    const pagination=host.querySelector('[data-direct-pagination]');
+    pagination.innerHTML=items.length?`<div class="tracking-pagination"><span>共 ${items.length} 条 · 第 ${directPage} / ${Math.ceil(items.length/20)} 页</span><div><button type="button" class="secondary" data-direct-prev ${directPage<=1?'disabled':''}>上一页</button><button type="button" class="secondary" data-direct-next ${directPage*20>=items.length?'disabled':''}>下一页</button></div></div>`:'';
+    pagination.querySelector('[data-direct-prev]')?.addEventListener('click',()=>{directPage--;renderDirect();});pagination.querySelector('[data-direct-next]')?.addEventListener('click',()=>{directPage++;renderDirect();});
   }
   function processingFields(config={}) {
     const scrape=config.AutoScrape??data.Settings.AutoScrape??true,rename=config.AutoRename??data.Settings.AutoRename??false;
@@ -173,7 +226,7 @@ const Tracking = (() => {
     dialog.querySelector('[data-connect]').onclick=run(async e=>{const b=e.currentTarget,display=dialog.querySelector('[data-connect-status]');b.disabled=true;display.classList.remove('tracking-error');display.textContent='正在连接…';try {const r=await api(base+'/connect','POST',{});display.textContent=`已连接 · ${r.Plugins} 个插件 · ${r.Channels} 个频道`;}catch(error){display.textContent=error.message;display.classList.add('tracking-error');}finally{b.disabled=false;}});
   }
   async function importResource(resource) {
-    const subscription=data.Subscriptions.find(s=>s.ID===resource.Subscription);
+    const subscription=data.Subscriptions.find(s=>s.ID===resource.Subscription)||(direct?.Session?.ID===resource.Subscription?direct.Session:null);
     if(!subscription)return;
     const options=await api(base+'/import/options?ResourceID='+encodeURIComponent(resource.ID));if(!current())return;
     const mounts=options.Mounts.filter(m=>m.Enabled&&m.Supported&&m.Cloud===resource.Cloud),libraries=options.Libraries;
@@ -186,10 +239,10 @@ const Tracking = (() => {
     const ready=mounts.length&&libraries.length&&!blocked;
     const pickerMount={ID:mount?.ID||'',Name:mount?.Name||'网盘'};
     const notices=[!mounts.length?`请先添加并启用「${data.CloudTypes[resource.Cloud]||resource.Cloud}」挂载，分享只能转存到同类网盘。`:'',!libraries.length?'请先创建媒体库。':'',blocked?'另一条分享有待确认的转存任务，请先继续该资源的入库。':''].filter(Boolean);
-    fmDialog('资源入库',`<section class="tracking-import-source"><span>${esc(data.CloudTypes[resource.Cloud]||resource.Cloud)}</span><h3>${esc(resource.Title)}</h3><div>${esc(subscription.Title)}${subscription.Year||options.SuggestedYear?' · '+(subscription.Year||options.SuggestedYear):''}${resource.Password?' · 提取码：'+esc(resource.Password):''}</div></section><ol class="tracking-import-steps" data-import-steps><li>转存网盘</li><li>生成 STRM</li><li>扫描入库</li><li>元数据刮削</li></ol>${notices.map(n=>`<p class="tracking-error" role="alert">${esc(n)}</p>`).join('')}<section class="tracking-sheet-block tracking-auto-config"><div class="feature-grid"><label>目标网盘账号<select name="MountID" required><option value="">选择网盘账号</option>${mounts.map(m=>`<option value="${esc(m.ID)}" ${m.ID===mount?.ID?'selected':''}>${esc(m.Name)}</option>`).join('')}</select></label><label>入库媒体库<select name="Library" required><option value="">选择媒体库</option>${libraries.map(l=>`<option value="${esc(l.Id)}" ${l.Id===library?.Id?'selected':''}>${esc(l.Name)}${l.CollectionType==='tvshows'?' · 剧集':l.CollectionType==='movies'?' · 电影':''}</option>`).join('')}</select></label></div><div class="cloud-directory-grid">${CloudMounts.directoryField('Source','网盘转存父目录',sameMount?previous.RemotePath||'/':'/')}${CloudMounts.directoryField('Output','本地 STRM 父目录',(library?.Id===previous.Library?previous.Output:'')||library?.Locations?.[0]||options.FileRoot)}</div><section id="cloud-generate-picker" data-directory-picker role="region" hidden></section><div class="feature-grid">${field('PublicURL','播放器可访问的 AI Emby 地址',previous.PublicURL||location.origin,'url','required')}${field('ImportLimit','本次最多转存视频数',previous.Limit||200,'number','min="1" max="5000" required')}</div><section class="tracking-processing-section"><h3>入库处理</h3>${processingFields(previous)}<p class="tracking-error" data-processing-warning role="alert" hidden></p></section><p class="tracking-help">父目录下会建立「${esc(subscription.Title)}${subscription.Year?' ('+subscription.Year+')':''}」文件夹。本次仅入库所选分享，不改变订阅的自动入库设置。</p>${pending?'<p class="tracking-help">已有网盘任务待确认，请保留原目标目录后继续入库。</p>':''}</section>`,ready?async f=>{
+    fmDialog('资源入库',`<section class="tracking-import-source"><span>${esc(data.CloudTypes[resource.Cloud]||resource.Cloud)}</span><h3>${esc(resource.Title)}</h3><div>${esc(subscription.Title)}${subscription.Year||options.SuggestedYear?' · '+(subscription.Year||options.SuggestedYear):''}${resource.Password?' · 提取码：'+esc(resource.Password):''}</div></section><ol class="tracking-import-steps" data-import-steps><li>转存网盘</li><li>生成 STRM</li><li>扫描入库</li><li>元数据刮削</li></ol>${notices.map(n=>`<p class="tracking-error" role="alert">${esc(n)}</p>`).join('')}<section class="tracking-sheet-block tracking-auto-config"><div class="feature-grid"><label>目标网盘账号<select name="MountID" required><option value="">选择网盘账号</option>${mounts.map(m=>`<option value="${esc(m.ID)}" ${m.ID===mount?.ID?'selected':''}>${esc(m.Name)}</option>`).join('')}</select></label><label>入库媒体库<select name="Library" required><option value="">选择媒体库</option>${libraries.map(l=>`<option value="${esc(l.Id)}" ${l.Id===library?.Id?'selected':''}>${esc(l.Name)}${l.CollectionType==='tvshows'?' · 剧集':l.CollectionType==='movies'?' · 电影':''}</option>`).join('')}</select></label></div><div class="cloud-directory-grid">${CloudMounts.directoryField('Source','网盘转存父目录',sameMount?previous.RemotePath||'/':'/')}${CloudMounts.directoryField('Output','本地 STRM 父目录',(library?.Id===previous.Library?previous.Output:'')||library?.Locations?.[0]||options.FileRoot)}</div><section id="cloud-generate-picker" data-directory-picker role="region" hidden></section><div class="feature-grid">${field('PublicURL','播放器可访问的 AI Emby 地址',previous.PublicURL||location.origin,'url','required')}${field('ImportLimit','本次最多转存视频数',previous.Limit||200,'number','min="1" max="5000" required')}</div><section class="tracking-processing-section"><h3>入库处理</h3>${processingFields(previous)}<p class="tracking-error" data-processing-warning role="alert" hidden></p></section><p class="tracking-help">父目录下会建立「${esc(subscription.Title)}${subscription.Year?' ('+subscription.Year+')':''}」文件夹。${direct?.Session?.ID===resource.Subscription?'本次仅入库所选分享。':'本次仅入库所选分享，不改变订阅的自动入库设置。'}</p>${pending?'<p class="tracking-help">已有网盘任务待确认，请保留原目标目录后继续入库。</p>':''}</section>`,ready?async f=>{
       validateProcessing(f,options);
       await api(base+'/import/start','POST',{ID:resource.Subscription,ResourceID:resource.ID,Config:{MountID:f.get('MountID'),Library:f.get('Library'),RemotePath:f.get('Source'),Output:f.get('Output'),PublicURL:f.get('PublicURL'),Limit:Number(f.get('ImportLimit')),AutoScrape:f.has('AutoScrape'),AutoRename:f.has('AutoRename')}});
-      selected=resource.Subscription;toast('已加入入库任务');if(current())await refresh(true);
+      if(direct?.Session?.ID!==resource.Subscription)selected=resource.Subscription;toast('已加入入库任务');if(current())await refresh(true);
     }:null,'开始入库');
     const dialog=$('#modal');dialog.classList.add('tracking-sheet','tracking-import-sheet','cloud-generate-sheet');
     bindProcessing(dialog,options);
