@@ -171,7 +171,7 @@ func (n *trackingNames) localPath(ctx context.Context, remote, local string) (st
 	if err != nil || !filepath.IsLocal(relative) {
 		return "", errors.New("STRM 命名结果超出入库目录")
 	}
-	return strings.TrimSuffix(relative, ".strm"), nil
+	return strings.TrimSuffix(relative, filepath.Ext(relative)), nil
 }
 
 func (a *App) trackingRenameSTRM(ctx context.Context, root *os.Root, old, next, remote, mount, activity string) error {
