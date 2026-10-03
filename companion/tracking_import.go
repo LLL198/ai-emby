@@ -734,7 +734,7 @@ func (a *App) trackingImport(ctx context.Context, s trackingSubscription, activi
 		}
 		return flush()
 	}
-	if err = walk(p.ShareRoot(), destination, false, 0); err != nil {
+	if err = walk(p.ShareRoot(), destination, trackingTitleMatch(resource.Title, s), 0); err != nil {
 		return err
 	}
 	if found == 0 {
