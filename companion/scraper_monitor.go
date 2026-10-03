@@ -115,10 +115,14 @@ func (a *App) monitorScraper(ctx context.Context) {
 
 	var config scraperConfig
 	var roots []scraperMonitorRoot
+	var importExclusions []string
 	configKey := ""
 	enabled := false
 
 	discover := func(root scraperMonitorRoot, path string) {
+		if cloudOutputReserved(path) || trackingScrapeExcluded(path, importExclusions) {
+			return
+		}
 		relative, err := filepath.Rel(root.Root, path)
 		if err != nil || !filepath.IsLocal(relative) {
 			return
@@ -203,6 +207,11 @@ func (a *App) monitorScraper(ctx context.Context) {
 			}
 
 		case now := <-ticker.C:
+			nextExclusions, exclusionErr := a.trackingScrapeExclusions()
+			if exclusionErr != nil {
+				continue
+			}
+			importExclusions = nextExclusions
 			nextConfig := a.scraperSettings()
 			nextRoots := a.scraperMonitorRoots()
 			payload, _ := json.Marshal(struct {
@@ -245,6 +254,14 @@ func (a *App) monitorScraper(ctx context.Context) {
 				continue
 			}
 			for key, discovery := range discoveries {
+				directory := filepath.Join(discovery.scope.Root, discovery.scope.Relative)
+				if trackingScrapeExcluded(directory, importExclusions) {
+					delete(discoveries, key)
+					continue
+				}
+				if cloudOutputReserved(directory) {
+					continue
+				}
 				if now.Sub(discovery.discovered) > 10*time.Minute {
 					a.scraperPhase("跳过", discovery.scope, MediaRecognition{}, config.Scraper,
 						"等待稳定或媒体索引超时；请更新媒体库后手动刮削")
@@ -324,6 +341,17 @@ func (a *App) scraperRecognizeDirectory(entries []fs.DirEntry, libraryID, root, 
 // Return whether the monitor should retry this directory.
 func (a *App) scraperAutoDirectory(ctx context.Context, discovery *scraperDiscovery, entries []fs.DirEntry, config scraperConfig) bool {
 	scope := discovery.scope
+	exclusions, err := a.trackingScrapeExclusions()
+	if err != nil {
+		return true
+	}
+	fullDirectory := filepath.Join(scope.Root, scope.Relative)
+	if trackingScrapeExcluded(fullDirectory, exclusions) {
+		return false
+	}
+	if cloudOutputReserved(fullDirectory) {
+		return true
+	}
 	a.scraperPhase("识别中", scope, MediaRecognition{}, config.Scraper, "规则识别器")
 	recognition := a.scraperRecognizeDirectory(entries, scope.Library, scope.Root, scope.Relative, discovery.libraryType)
 	if !recognition.Matched || recognition.Kind == "Unknown" {
@@ -341,6 +369,7 @@ func (a *App) scraperAutoDirectory(ctx context.Context, discovery *scraperDiscov
 		return true
 	}
 	var items []Item
+	ignoredItems := false
 	indexed := make(map[string]bool)
 	for rows.Next() {
 		item, err := readItem(rows)
@@ -349,8 +378,12 @@ func (a *App) scraperAutoDirectory(ctx context.Context, discovery *scraperDiscov
 			return true
 		}
 		if item.Path == directory || filepath.Dir(item.Path) == directory {
-			items = append(items, item)
-			indexed[item.Path] = true
+			if trackingScrapeExcluded(item.Path, exclusions) {
+				ignoredItems = true
+			} else {
+				items = append(items, item)
+				indexed[item.Path] = true
+			}
 		}
 	}
 	err = rows.Err()
@@ -359,6 +392,9 @@ func (a *App) scraperAutoDirectory(ctx context.Context, discovery *scraperDiscov
 		return true
 	}
 	for _, entry := range entries {
+		if trackingScrapeExcluded(filepath.Join(directory, entry.Name()), exclusions) {
+			continue
+		}
 		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".strm") &&
 			!indexed[filepath.Join(directory, entry.Name())] {
 			a.scraperPhase("等待索引", scope, recognition, config.Scraper, "发现早于普通媒体库更新，稍后重试")
@@ -366,6 +402,9 @@ func (a *App) scraperAutoDirectory(ctx context.Context, discovery *scraperDiscov
 		}
 	}
 	if len(items) == 0 {
+		if ignoredItems {
+			return false
+		}
 		return true
 	}
 

@@ -32,6 +32,7 @@ type trackingImportState struct {
 	Saved                                               int
 	RenamePending                                       int                   `json:",omitempty"`
 	ProcessingKey                                       string                `json:",omitempty"`
+	SkipAutoScrape                                      bool                  `json:",omitempty"`
 	ManualConfig                                        *trackingImportConfig `json:",omitempty"`
 }
 type trackingShareFile struct {
@@ -520,6 +521,7 @@ func (a *App) trackingImport(ctx context.Context, s trackingSubscription, activi
 		return err
 	}
 	st.ResourceID, st.Remote, st.Output = resource.ID, path.Join(s.AutoImport.RemotePath, name), filepath.Join(s.AutoImport.Output, name)
+	st.SkipAutoScrape = !*s.AutoImport.AutoScrape
 	cloudManageMu.Lock()
 	for _, output := range cloudOutputs {
 		if pathsOverlap(output, st.Output) {
