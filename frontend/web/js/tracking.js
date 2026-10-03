@@ -4,6 +4,7 @@ const Tracking = (() => {
   const importStates={transfer:'转存中',strm:'生成 STRM',scan:'扫描入库',scrape:'刮削中',complete:'入库完成','waiting-resource':'等待合适资源',interrupted:'已中断'};
   const resourceStates = {new:'未读',seen:'已读',ignored:'已忽略'};
   let host, still, data, selected='', status='', cloud='', page=1, results, timer, generation=0, requestSerial=0, summarySerial=0;
+  let section='subscriptions', subscriptionQuery='', subscriptionState='', subscriptionSaving=false;
   const checked = new Set();
   const date = value => value ? new Date(value * 1000).toLocaleString() : '尚未搜索';
   const field = (name,label,value='',type='text',extra='') => `<label>${esc(label)}<input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;
@@ -26,22 +27,76 @@ const Tracking = (() => {
     host.classList.add('tracking-section');
     host.innerHTML=`<div class="tracking-toolbar"><div><h2>资源追新</h2><span data-run-state role="status">${data.Busy?'正在执行追新任务…':data.Settings.Enabled?'定时追新已开启':'定时追新未开启'}</span></div><div class="tracking-actions"><button type="button" class="secondary" data-refresh>刷新</button><button type="button" class="secondary" data-settings>盘搜设置</button><button type="button" data-add>＋ 添加订阅</button></div></div>
       ${!data.Settings.URL?'<div class="tracking-notice">连接 PanSou 后即可搜索网盘资源。<button type="button" class="secondary" data-config>配置服务</button></div>':''}
-      <div class="tracking-workspace"><aside class="tracking-subscriptions" aria-label="作品订阅"><div class="tracking-subscriptions-head"><h3>我的订阅 <span>${data.Subscriptions.length}</span></h3><button type="button" class="secondary" data-run-all ${data.Busy||!data.Settings.URL||!data.Subscriptions.some(s=>s.Enabled)?'disabled':''}>搜索全部</button></div><div data-subscriptions></div></aside>
+      <nav class="tracking-view-tabs section-tabs" role="tablist" aria-label="追新页面"><button type="button" role="tab" id="tracking-subscriptions-tab" data-tracking-view="subscriptions" aria-controls="tracking-subscriptions-pane">我的订阅 <span data-subscription-count>${data.Subscriptions.length}</span></button><button type="button" role="tab" id="tracking-resources-tab" data-tracking-view="resources" aria-controls="tracking-resources-pane">资源索引</button></nav>
+      <section id="tracking-subscriptions-pane" role="tabpanel" aria-labelledby="tracking-subscriptions-tab" data-tracking-pane="subscriptions"><div data-subscription-summary class="tracking-subscription-summary"></div><div class="tracking-management-toolbar"><input type="search" data-subscription-search aria-label="搜索我的订阅" placeholder="搜索作品名称或关键词" value="${esc(subscriptionQuery)}"><select data-subscription-state aria-label="筛选订阅状态"><option value="">全部订阅</option><option value="enabled" ${subscriptionState==='enabled'?'selected':''}>正在追新</option><option value="paused" ${subscriptionState==='paused'?'selected':''}>已暂停</option><option value="import" ${subscriptionState==='import'?'selected':''}>自动入库</option></select><button type="button" class="secondary" data-manage-run-all ${data.Busy||!data.Settings.URL||!data.Subscriptions.some(s=>s.Enabled)?'disabled':''}>搜索全部订阅</button></div><div data-subscription-management class="tracking-subscription-management"></div></section>
+      <section id="tracking-resources-pane" role="tabpanel" aria-labelledby="tracking-resources-tab" data-tracking-pane="resources"><div class="tracking-workspace"><aside class="tracking-subscriptions" aria-label="作品订阅"><div class="tracking-subscriptions-head"><h3>作品筛选 <span>${data.Subscriptions.length}</span></h3><button type="button" class="secondary" data-manage>管理订阅</button></div><div data-subscriptions></div></aside>
       <section class="tracking-results"><div data-selected></div><div class="tracking-filters"><nav aria-label="资源状态">${[['','全部'],['new','未读'],['seen','已读'],['ignored','忽略']].map(([key,label])=>`<button type="button" data-filter="${key}" aria-current="${status===key?'page':'false'}">${label}</button>`).join('')}</nav><label>网盘<select data-cloud aria-label="筛选网盘"><option value="">全部网盘</option>${Object.entries(data.CloudTypes).map(([key,label])=>`<option value="${key}" ${key===cloud?'selected':''}>${esc(label)}</option>`).join('')}</select></label></div>
-      <div class="tracking-batch"><label><input type="checkbox" data-select-all aria-label="全选本页">全选本页</label><span data-selection>未选择</span><button type="button" class="secondary" data-batch="seen" disabled>标为已读</button><button type="button" class="secondary" data-batch="ignored" disabled>忽略</button></div><div data-resources aria-live="polite"></div><div data-pagination></div></section></div>`;
-    renderSubscriptions();renderSelected();
+      <div class="tracking-batch"><label><input type="checkbox" data-select-all aria-label="全选本页">全选本页</label><span data-selection>未选择</span><button type="button" class="secondary" data-batch="seen" disabled>标为已读</button><button type="button" class="secondary" data-batch="ignored" disabled>忽略</button></div><div data-resources aria-live="polite"></div><div data-pagination></div></section></div></section>`;
+    renderManagement();renderSubscriptions();renderSelected();showSection(section);
     host.querySelector('[data-add]').onclick=()=>edit();host.querySelector('[data-settings]').onclick=settings;
     host.querySelector('[data-config]')?.addEventListener('click',settings);
-    host.querySelector('[data-refresh]').onclick=run(()=>refresh(true));host.querySelector('[data-run-all]').onclick=run(()=>search(''));
+    host.querySelector('[data-refresh]').onclick=run(()=>refresh(true));host.querySelector('[data-manage-run-all]').onclick=run(()=>search(''));
+    host.querySelector('[data-manage]').onclick=()=>showSection('subscriptions');
+    const viewButtons=[...host.querySelectorAll('[data-tracking-view]')];
+    viewButtons.forEach((button,index)=>{
+      button.onclick=()=>showSection(button.dataset.trackingView);
+      button.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?viewButtons.length-1:(index+(event.key==='ArrowRight'?1:-1)+viewButtons.length)%viewButtons.length;showSection(viewButtons[next].dataset.trackingView);viewButtons[next].focus();};
+    });
+    host.querySelector('[data-subscription-search]').oninput=event=>{subscriptionQuery=event.target.value;renderManagement();};
+    host.querySelector('[data-subscription-state]').onchange=event=>{subscriptionState=event.target.value;renderManagement();};
     host.querySelectorAll('[data-filter]').forEach(b=>b.onclick=run(async()=>{status=b.dataset.filter;page=1;checked.clear();host.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-current',String(x===b?'page':'false')));await resourceList();}));
     host.querySelector('[data-cloud]').onchange=run(async e=>{cloud=e.target.value;page=1;checked.clear();await resourceList();});
     host.querySelector('[data-select-all]').onchange=e=>{checked.clear();if(e.target.checked)results.Items.forEach(x=>checked.add(x.ID));host.querySelectorAll('[data-resource-check]').forEach(x=>x.checked=e.target.checked);updateSelection();};
     host.querySelectorAll('[data-batch]').forEach(b=>b.onclick=run(()=>mark([...checked],b.dataset.batch)));
   }
+  function showSection(next) {
+    section=next;
+    host.querySelectorAll('[data-tracking-pane]').forEach(pane=>{pane.hidden=pane.dataset.trackingPane!==section;});
+    host.querySelectorAll('[data-tracking-view]').forEach(button=>{const active=button.dataset.trackingView===section;button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;});
+  }
+  async function viewSubscription(id) {
+    selected=id;page=1;checked.clear();renderSubscriptions();renderSelected();showSection('resources');await resourceList();
+  }
+  async function changeSubscription(s,action) {
+    if(subscriptionSaving||data.Busy)return;
+    if(action==='delete'&&!(await confirmDialog('删除订阅',`删除「${s.Title}」及其资源索引？已转存的影视文件和 STRM 会保留。`,'删除订阅')))return;
+    if(subscriptionSaving||!current())return;
+    subscriptionSaving=true;renderManagement();renderSelected();
+    try {
+      if(action==='delete'){
+        await api(base+'/subscription?ID='+encodeURIComponent(s.ID),'DELETE');
+        if(selected===s.ID){selected='';page=1;checked.clear();}
+        toast('订阅已删除');
+      }else{
+        await api(base+'/subscription','POST',{...s,Enabled:!s.Enabled});
+        toast(s.Enabled?'订阅已暂停':'订阅已恢复');
+      }
+      if(current())await refresh(true);
+    }finally{subscriptionSaving=false;if(current()){renderManagement();renderSelected();}}
+  }
+  function renderManagement() {
+    const subscriptions=data.Subscriptions,locked=data.Busy||subscriptionSaving;
+    host.querySelector('[data-subscription-count]').textContent=subscriptions.length;
+    host.querySelector('[data-subscription-summary]').innerHTML=[['全部订阅',subscriptions.length],['正在追新',subscriptions.filter(s=>s.Enabled).length],['已暂停',subscriptions.filter(s=>!s.Enabled).length],['自动入库',subscriptions.filter(s=>s.AutoImport?.Enabled).length]].map(([label,count])=>`<div><span>${label}</span><strong>${count}</strong></div>`).join('');
+    host.querySelector('[data-manage-run-all]').disabled=locked||!data.Settings.URL||!subscriptions.some(s=>s.Enabled);
+    host.querySelector('[data-add]').disabled=locked;
+    const query=subscriptionQuery.trim().toLocaleLowerCase();
+    const filtered=subscriptions.filter(s=>(!query||`${s.Title} ${s.Year||''} ${s.Query}`.toLocaleLowerCase().includes(query))&&(!subscriptionState||subscriptionState==='enabled'&&s.Enabled||subscriptionState==='paused'&&!s.Enabled||subscriptionState==='import'&&s.AutoImport?.Enabled));
+    const list=host.querySelector('[data-subscription-management]');
+    list.innerHTML=filtered.length?filtered.map(s=>`<article class="tracking-subscription-card"><div class="tracking-subscription-card-head"><div><h3><button type="button" class="text-button" data-subscription-action="view" data-subscription-id="${esc(s.ID)}">${esc(s.Title)}${s.Year?` <span>${s.Year}</span>`:''}</button></h3><span class="tracking-subscription-state ${s.Enabled?'is-enabled':''}">${s.Enabled?'正在追新':'已暂停'}</span></div><div class="tracking-subscription-actions"><button type="button" class="secondary" data-subscription-action="view" data-subscription-id="${esc(s.ID)}">查看资源</button><button type="button" class="secondary" data-subscription-action="edit" data-subscription-id="${esc(s.ID)}" ${locked?'disabled':''}>编辑</button><button type="button" class="secondary" data-subscription-action="pause" data-subscription-id="${esc(s.ID)}" ${locked?'disabled':''}>${s.Enabled?'暂停':'恢复'}</button><button type="button" class="secondary tracking-delete-subscription" data-subscription-action="delete" data-subscription-id="${esc(s.ID)}" ${locked?'disabled':''}>删除</button></div></div><div class="tracking-subscription-info"><div><span>搜索设置</span><strong>${esc(s.Query||s.Title)}</strong><small>每 ${s.Minutes>=60&&s.Minutes%60===0?s.Minutes/60+' 小时':s.Minutes+' 分钟'} · ${({all:'全部来源',plugin:'搜索插件',tg:'Telegram 频道'})[s.Source]||'全部来源'}</small></div><div><span>搜索网盘</span><strong>${esc(s.CloudTypes?.length?s.CloudTypes.map(key=>data.CloudTypes[key]||key).join('、'):'全部网盘')}</strong><small>${s.AutoImport?.Enabled?'自动入库'+(s.ImportMount?' · '+esc(s.ImportMount):''):'仅列出资源'}</small></div><div><span>已发现资源</span><strong>${s.ResourceCount} 条${s.NewCount?` <span class="tracking-unread">${s.NewCount} 条未读</span>`:''}</strong><small>${esc(stateNames[s.State]||s.State||'等待搜索')}</small></div></div><div class="tracking-subscription-card-footer"><span>上次搜索：${date(s.LastSearch)}</span>${data.Settings.Enabled&&s.Enabled?`<span>下次搜索：${date(s.NextSearch)}</span>`:''}${s.Error?`<details class="tracking-subscription-error"><summary>搜索失败详情</summary><p>${esc(s.Error)}</p></details>`:''}</div></article>`).join(''):`<div class="tracking-empty"><h3>${subscriptions.length?'没有符合条件的订阅':'还没有订阅作品'}</h3><p>${subscriptions.length?'尝试更换关键词或筛选条件。':'添加电影或剧集后，可在这里查看和管理。'}</p>${subscriptions.length?'':'<button type="button" data-management-add>添加订阅</button>'}</div>`;
+    list.querySelector('[data-management-add]')?.addEventListener('click',()=>edit());
+    list.querySelectorAll('[data-subscription-action]').forEach(button=>button.onclick=run(async()=>{
+      const s=data.Subscriptions.find(sub=>sub.ID===button.dataset.subscriptionId);if(!s)return;
+      const action=button.dataset.subscriptionAction;
+      if(action==='view')await viewSubscription(s.ID);
+      else if(action==='edit')await edit(s);
+      else await changeSubscription(s,action);
+    }));
+  }
   function renderSubscriptions() {
     const unread=data.Subscriptions.reduce((n,s)=>n+s.NewCount,0);
     host.querySelector('[data-subscriptions]').innerHTML=`<button type="button" class="tracking-sub ${!selected?'is-active':''}" data-sub=""><span><strong>全部资源</strong><small>${data.Subscriptions.reduce((n,s)=>n+s.ResourceCount,0)} 条资源</small></span>${unread?`<span class="tracking-unread">${unread}</span>`:''}</button>${data.Subscriptions.map(s=>`<button type="button" class="tracking-sub ${s.ID===selected?'is-active':''}" data-sub="${s.ID}"><span><strong>${esc(s.Title)}${s.Year?` <small>${s.Year}</small>`:''}</strong><small class="${s.State==='error'?'tracking-error':''}">${s.Enabled?esc(stateNames[s.State]||s.State):'已暂停'}</small></span>${s.NewCount?`<span class="tracking-unread">${s.NewCount}</span>`:''}</button>`).join('')}${!data.Subscriptions.length?'<p class="tracking-empty-small">订阅电影或剧集，资源会集中显示在这里。</p>':''}`;
-    host.querySelectorAll('[data-sub]').forEach(b=>b.onclick=run(async()=>{selected=b.dataset.sub;page=1;checked.clear();renderSubscriptions();renderSelected();await resourceList();}));
+    host.querySelectorAll('[data-sub]').forEach(b=>b.onclick=run(()=>viewSubscription(b.dataset.sub)));
   }
   function renderSelected() {
     const s=selectedSub();
@@ -49,16 +104,15 @@ const Tracking = (() => {
     if(!s)return;
     host.querySelector('[data-edit]').onclick=()=>edit(s);host.querySelector('[data-retry-import]')?.addEventListener('click',run(()=>search(s.ID)));host.querySelector('[data-unpin]')?.addEventListener('click',run(async()=>{await api(base+'/import/resource','POST',{ID:s.ID,ResourceID:''});await refresh(true);}));host.querySelector('[data-run]').onclick=run(()=>search(s.ID));
     host.querySelector('[data-read-all]').onclick=run(async()=>{await api(base+'/resources','PUT',{Subscription:s.ID,Status:'seen',IDs:[]});await refresh(true);});
-    host.querySelector('[data-pause]').onclick=run(async()=>{await api(base+'/subscription','POST',{...s,Enabled:!s.Enabled});await refresh(true);});
-    host.querySelector('[data-delete]').onclick=run(async()=>{if(!(await confirmDialog('删除订阅',`删除「${s.Title}」及其资源索引？`,'删除')))return;await api(base+'/subscription?ID='+encodeURIComponent(s.ID),'DELETE');selected='';page=1;await refresh(true);});
+    host.querySelector('[data-pause]').onclick=run(()=>changeSubscription(s,'pause'));
+    host.querySelector('[data-delete]').onclick=run(()=>changeSubscription(s,'delete'));
   }
   async function refresh(reset) {
     const viewGeneration=generation,serial=++summarySerial,b=await api(base);if(serial!==summarySerial||viewGeneration!==generation||!current())return;
     const changed=JSON.stringify(data.Subscriptions.map(s=>[s.ID,s.NewCount,s.ResourceCount,s.LastSearch,s.State,s.Import]))!==JSON.stringify(b.Subscriptions.map(s=>[s.ID,s.NewCount,s.ResourceCount,s.LastSearch,s.State,s.Import]));
     data=b;if(selected&&!selectedSub())selected='';if(reset)checked.clear();
     host.querySelector('[data-run-state]').textContent=data.Busy?'正在执行追新任务…':data.Settings.Enabled?'定时追新已开启':'定时追新未开启';
-    host.querySelector('[data-run-all]').disabled=data.Busy||!data.Settings.URL||!data.Subscriptions.some(s=>s.Enabled);
-    renderSubscriptions();renderSelected();if(reset||changed||data.Busy||results==null)await resourceList();schedule();
+    renderManagement();renderSubscriptions();renderSelected();if(reset||changed||data.Busy||results==null)await resourceList();schedule();
   }
   async function resourceList() {
     const serial=++requestSerial,viewGeneration=generation;

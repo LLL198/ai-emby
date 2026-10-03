@@ -1,4 +1,42 @@
 .tracking-section { min-width:0; }
+.tracking-section [hidden] { display:none!important; }
+.tracking-view-tabs { margin-bottom:24px; }
+body.panel-view .tracking-view-tabs button { min-height:42px;padding:9px 24px; }
+.tracking-view-tabs [data-subscription-count] { display:inline-flex;align-items:center;justify-content:center;min-width:20px;margin-left:8px;padding:1px 6px;border-radius:6px;background:var(--surface-2);font-size:12px;font-variant-numeric:tabular-nums; }
+.tracking-subscription-summary { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:24px; }
+.tracking-subscription-summary>div { display:flex;flex-direction:column;gap:10px;padding:22px 24px;background:var(--surface);border:1px solid var(--border);border-radius:14px; }
+.tracking-subscription-summary span { font-size:13px;color:var(--muted); }
+.tracking-subscription-summary strong { font-size:28px;font-weight:600;line-height:1.2;letter-spacing:-.5px;font-variant-numeric:tabular-nums; }
+.tracking-management-toolbar { display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:20px; }
+.tracking-management-toolbar input { flex:1;min-width:180px;max-width:none;margin:0; }
+.tracking-management-toolbar select { width:160px;min-width:120px;margin:0; }
+.tracking-management-toolbar button { min-height:42px; }
+.tracking-subscription-management { display:grid;gap:16px; }
+.tracking-subscription-card { min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px; }
+.tracking-subscription-card-head { display:flex;align-items:center;justify-content:space-between;gap:20px; }
+.tracking-subscription-card-head>div:first-child { display:flex;align-items:center;flex-wrap:wrap;gap:12px;min-width:0; }
+.tracking-subscription-card-head h3 { min-width:0;margin:0; }
+body.panel-view .tracking-subscription-card-head h3 button { color:var(--text);text-align:left;background:transparent;font-size:18px;font-weight:600;line-height:1.5;padding:0;min-height:30px;box-shadow:none;overflow-wrap:anywhere; }
+.tracking-subscription-card-head h3 button:hover { color:var(--accent); }
+.tracking-subscription-card-head h3 button span { color:var(--muted);font-weight:400;font-size:13px;margin-left:6px; }
+.tracking-subscription-state { flex:none;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);background:var(--surface-2);border-radius:6px;padding:4px 9px; }
+.tracking-subscription-state::before { content:'';width:5px;height:5px;border-radius:50%;background:currentColor; }
+.tracking-subscription-state.is-enabled { color:var(--success);background:color-mix(in srgb,var(--success) 8%,var(--surface)); }
+.tracking-subscription-actions { display:flex;gap:8px;flex-wrap:wrap;flex:none; }
+.tracking-subscription-actions button { font-size:13px;min-height:38px; }
+body.panel-view button.tracking-delete-subscription { color:var(--danger); }
+body.panel-view button.tracking-delete-subscription:not(:disabled):hover { color:var(--danger);border-color:color-mix(in srgb,var(--danger) 25%,var(--border));background:color-mix(in srgb,var(--danger) 5%,var(--surface)); }
+.tracking-subscription-info { display:grid;grid-template-columns:1.1fr 1.3fr 1fr;gap:24px;padding:20px 0;margin-top:18px;border-top:1px solid var(--border); }
+.tracking-subscription-info>div { display:flex;flex-direction:column;gap:8px;min-width:0; }
+.tracking-subscription-info>div>span,.tracking-subscription-info small { color:var(--muted);font-size:12px;line-height:1.6; }
+.tracking-subscription-info strong { display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:14px;font-weight:500;line-height:1.7;overflow-wrap:anywhere; }
+.tracking-subscription-info .tracking-unread { display:inline-flex;font-size:11px;background:var(--accent-soft,var(--surface-2));color:var(--accent); }
+.tracking-subscription-card-footer { display:flex;align-items:center;flex-wrap:wrap;gap:10px 24px;padding-top:16px;border-top:1px solid var(--border);font-size:12px;color:var(--muted); }
+.tracking-subscription-error { flex-basis:100%;color:var(--danger); }
+body.panel-view .tracking-subscription-error summary { font-family:inherit;font-size:12px;font-weight:400;min-height:24px; }
+.tracking-subscription-error p { font-size:12px;overflow-wrap:anywhere;line-height:1.7; }
+@media(max-width:1100px) { .tracking-subscription-card-head { align-items:flex-start;flex-direction:column;gap:16px; }.tracking-subscription-summary { gap:12px; }.tracking-subscription-summary>div { padding:18px; } }
+@media(max-width:680px) { .tracking-subscription-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }.tracking-subscription-card { padding:18px; }.tracking-subscription-info { grid-template-columns:minmax(0,1fr);gap:18px; }.tracking-subscription-actions { width:100%; }.tracking-subscription-actions button { flex:1; }.tracking-management-toolbar input { flex-basis:100%; }.tracking-management-toolbar select { flex:1; }.tracking-subscription-card-footer { flex-direction:column;align-items:flex-start;gap:8px; } }
 .tracking-toolbar,.tracking-subscriptions-head,.tracking-selected-head,.tracking-pagination { display:flex;align-items:center;justify-content:space-between;gap:16px; }
 .tracking-toolbar { margin-bottom:24px;flex-wrap:wrap; }
 .tracking-toolbar h2 { font-size:20px;margin:0 0 8px;font-weight:650; }
