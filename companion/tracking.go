@@ -332,7 +332,7 @@ func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, M{"Queued": len(ids)})
-	case "/admin/features/tracking/import/options", "/admin/features/tracking/import/resource":
+	case "/admin/features/tracking/import/options", "/admin/features/tracking/import/resource", "/admin/features/tracking/import/start":
 		a.trackingImportAPI(w, r)
 	case "/admin/features/tracking/resources":
 		a.trackingResourcesAPI(w, r)
@@ -379,6 +379,11 @@ func (a *App) trackingSubscriptions() ([]trackingRecord, error) {
 		s.Import, err = a.trackingImportState(s.ID)
 		if err != nil {
 			return nil, err
+		}
+		if s.Import.ManualConfig != nil {
+			if m, e := a.cloudMount(s.Import.ManualConfig.MountID); e == nil {
+				s.ImportCloud, s.ImportMount = trackingMountCloud(m.Driver), m.Name
+			}
 		}
 		s.Import.PendingFiles, s.Import.PendingParent, s.Import.ConfigKey = nil, "", ""
 		if s.Import.PendingTask != "" {
@@ -723,6 +728,11 @@ func trackingContains(values []string, s string) bool {
 	return false
 }
 
+type trackingJob struct {
+	IDs    []string
+	Manual *trackingSubscription
+}
+
 func (a *App) trackingQueue(ids []string) bool {
 	a.features.trackingMu.Lock()
 	defer a.features.trackingMu.Unlock()
@@ -731,7 +741,7 @@ func (a *App) trackingQueue(ids []string) bool {
 	}
 	a.features.trackingBusy = true
 	select {
-	case a.features.trackingQueue <- ids:
+	case a.features.trackingQueue <- trackingJob{IDs: ids}:
 		return true
 	default:
 		a.features.trackingBusy = false
@@ -745,8 +755,12 @@ func (a *App) trackingBackground(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case ids := <-a.features.trackingQueue:
-			a.trackingRun(ctx, ids)
+		case job := <-a.features.trackingQueue:
+			if job.Manual != nil {
+				a.trackingManualImport(ctx, *job.Manual)
+			} else {
+				a.trackingRun(ctx, job.IDs)
+			}
 		case <-ticker.C:
 			c := a.trackingConfig()
 			if !c.Enabled || c.URL == "" {

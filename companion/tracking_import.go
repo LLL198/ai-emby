@@ -29,6 +29,7 @@ type trackingImportState struct {
 	PendingFiles                                        []trackingShareFile
 	Updated                                             int64
 	Saved                                               int
+	ManualConfig                                        *trackingImportConfig `json:",omitempty"`
 }
 type trackingShareFile struct {
 	ID, Name, Token, Parent string
@@ -206,6 +207,10 @@ func (a *App) trackingImportAPI(w http.ResponseWriter, r *http.Request) {
 		respond(w, M{"Mounts": mounts, "Libraries": a.libraries(), "FileRoot": fileRoot(), "ScraperEnabled": a.scraperSettings().Enabled})
 		return
 	}
+	if r.URL.Path == "/admin/features/tracking/import/start" {
+		a.trackingStartImport(w, r)
+		return
+	}
 	if !featureMethod(w, r, "POST") {
 		return
 	}
@@ -250,7 +255,10 @@ func (a *App) trackingImportAPI(w http.ResponseWriter, r *http.Request) {
 		featureError(w, err)
 		return
 	}
-	a.trackingQueue([]string{s.ID})
+	if !a.trackingQueue([]string{s.ID}) {
+		fail(w, 409, "追新任务正在执行，请稍后重试")
+		return
+	}
 	respond(w, M{"ok": true})
 }
 
@@ -363,7 +371,95 @@ func trackingEnsureDirectory(ctx context.Context, p trackingShareProvider, paren
 	}
 	return parent, nil
 }
-func (a *App) trackingAutoImport(ctx context.Context, s trackingSubscription, activity string) (result error) {
+func (a *App) trackingStartImport(w http.ResponseWriter, r *http.Request) {
+	if !featureMethod(w, r, "POST") {
+		return
+	}
+	var b struct {
+		ID, ResourceID string
+		Config         trackingImportConfig
+	}
+	if !body(w, r, &b) {
+		return
+	}
+	a.features.trackingMu.Lock()
+	defer a.features.trackingMu.Unlock()
+	if a.features.trackingBusy || a.features.ctx.Err() != nil {
+		fail(w, 409, "追新或入库任务正在执行，请稍后重试")
+		return
+	}
+	var raw string
+	if a.db.QueryRow("SELECT data FROM feature_tracking_subscriptions WHERE id=?", b.ID).Scan(&raw) != nil {
+		fail(w, 404, "订阅不存在")
+		return
+	}
+	var s trackingSubscription
+	if json.Unmarshal([]byte(raw), &s) != nil {
+		fail(w, 400, "订阅配置无法读取")
+		return
+	}
+	if b.ResourceID == "" {
+		fail(w, 400, "请选择要入库的分享资源")
+		return
+	}
+	s.AutoImport = b.Config
+	s.AutoImport.Enabled = true
+	s.AutoImport.ResourceID = b.ResourceID
+	s.AutoImport.Reselect = false
+	s.CloudTypes = nil
+	if err := a.trackingValidateImport(&s); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	st, err := a.trackingImportState(s.ID)
+	if err != nil {
+		featureError(w, err)
+		return
+	}
+	key := trackingImportKey(s)
+	if st.ConfigKey != key {
+		st = trackingImportState{ConfigKey: key}
+	}
+	st.Stage, st.Error, st.ResourceID = "queued", "", b.ResourceID
+	config := s.AutoImport
+	st.ManualConfig = &config
+	if err = a.trackingSaveImport(s.ID, &st); err != nil {
+		featureError(w, err)
+		return
+	}
+	a.features.trackingBusy = true
+	select {
+	case a.features.trackingQueue <- trackingJob{Manual: &s}:
+		respond(w, M{"ok": true})
+	default:
+		a.features.trackingBusy = false
+		st.Stage, st.Error = "interrupted", "入库队列繁忙，请重试"
+		_ = a.trackingSaveImport(s.ID, &st)
+		fail(w, 409, st.Error)
+	}
+}
+
+func (a *App) trackingManualImport(parent context.Context, s trackingSubscription) {
+	defer func() { a.features.trackingMu.Lock(); a.features.trackingBusy = false; a.features.trackingMu.Unlock() }()
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	task := a.newActivity("tracking", "", "资源入库 · "+s.Title)
+	a.features.mu.Lock()
+	a.features.jobs["tracking:"+task] = cancel
+	a.features.mu.Unlock()
+	defer func() { a.features.mu.Lock(); delete(a.features.jobs, "tracking:"+task); a.features.mu.Unlock() }()
+	a.changeActivity(task, func(v *activityEntry) { v.State = "running"; v.Total = 1; v.Current = s.Title + " · 准备入库" })
+	err := a.trackingImport(ctx, s, task, true)
+	if err == nil {
+		a.changeActivity(task, func(v *activityEntry) { v.Done = 1; v.Current = s.Title + " · 入库完成" })
+	}
+	a.finishActivity(task, err)
+}
+
+func (a *App) trackingAutoImport(ctx context.Context, s trackingSubscription, activity string) error {
+	return a.trackingImport(ctx, s, activity, false)
+}
+func (a *App) trackingImport(ctx context.Context, s trackingSubscription, activity string, manual bool) (result error) {
 	st, err := a.trackingImportState(s.ID)
 	if err != nil {
 		return err
@@ -374,6 +470,8 @@ func (a *App) trackingAutoImport(ctx context.Context, s trackingSubscription, ac
 			st.Error = result.Error()
 			if ctx.Err() != nil {
 				st.Stage = "interrupted"
+			} else {
+				st.Stage = "error"
 			}
 		}
 		if e := a.trackingSaveImport(s.ID, &st); result == nil {
@@ -387,6 +485,12 @@ func (a *App) trackingAutoImport(ctx context.Context, s trackingSubscription, ac
 	if st.ConfigKey != key {
 		st = trackingImportState{ConfigKey: key}
 		previousStage = ""
+	}
+	if manual {
+		config := s.AutoImport
+		st.ManualConfig = &config
+	} else {
+		st.ManualConfig = nil
 	}
 	m, err := a.cloudMount(s.AutoImport.MountID)
 	if err != nil {
@@ -650,7 +754,7 @@ func (a *App) trackingAutoImport(ctx context.Context, s trackingSubscription, ac
 	if err != nil {
 		return err
 	}
-	return phase("complete", fmt.Sprintf("自动入库完成 · 新增 %d 个视频", added))
+	return phase("complete", fmt.Sprintf("入库完成 · 新增 %d 个视频", added))
 }
 func trackingConfirmSaved(ctx context.Context, p trackingShareProvider, parent string, files []trackingShareFile) error {
 	for attempt := 0; attempt < 10; attempt++ {

@@ -23,7 +23,7 @@ type featureState struct {
 	transcodes    map[string]*featureTranscode
 	trackingMu    sync.Mutex
 	trackingBusy  bool
-	trackingQueue chan []string
+	trackingQueue chan trackingJob
 }
 
 const featureSchema = `
@@ -97,7 +97,7 @@ func (a *App) initFeatures() error {
 	a.features.jobs = map[string]context.CancelFunc{}
 	a.features.plays = map[string]featurePlaybackSample{}
 	a.features.transcodes = map[string]*featureTranscode{}
-	a.features.trackingQueue = make(chan []string, 1)
+	a.features.trackingQueue = make(chan trackingJob, 1)
 	if _, err := a.db.Exec("UPDATE feature_tracking_subscriptions SET state='interrupted',error='服务重启，等待下次搜索' WHERE state='running'"); err != nil {
 		return err
 	}
