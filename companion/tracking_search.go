@@ -124,7 +124,7 @@ VALUES(?,?,?,'search','running') ON CONFLICT(id) DO UPDATE SET created=excluded.
 	if session.Import.PendingTask != "" {
 		session.Import.PendingTask = "pending"
 	}
-	rows, err := a.db.Query("SELECT id,data,status,first_seen,updated FROM feature_tracking_resources WHERE subscription=? AND last_seen>=? ORDER BY cloud,updated DESC,id LIMIT 1000", session.ID, session.LastSearch)
+	rows, err := a.db.Query("SELECT r.id,r.data,status,first_seen,updated,coalesce(p.data,'{}') FROM feature_tracking_resources r LEFT JOIN feature_tracking_resource_parses p ON p.resource=r.id WHERE subscription=? AND last_seen>=? ORDER BY cloud,updated DESC,r.id LIMIT 1000", session.ID, session.LastSearch)
 	if err != nil {
 		featureError(w, err)
 		return
@@ -133,9 +133,9 @@ VALUES(?,?,?,'search','running') ON CONFLICT(id) DO UPDATE SET created=excluded.
 	items := []trackingResource{}
 	for rows.Next() {
 		var resource trackingResource
-		var rid, status string
+		var rid, status, parsed string
 		var first, updated int64
-		if err = rows.Scan(&rid, &raw, &status, &first, &updated); err != nil {
+		if err = rows.Scan(&rid, &raw, &status, &first, &updated, &parsed); err != nil {
 			break
 		}
 		if err = json.Unmarshal([]byte(raw), &resource); err != nil {
@@ -143,6 +143,7 @@ VALUES(?,?,?,'search','running') ON CONFLICT(id) DO UPDATE SET created=excluded.
 		}
 		resource.ID, resource.Subscription, resource.Status = rid, session.ID, status
 		resource.FirstSeen, resource.Updated = first, updated
+		trackingAttachVideoSummary(&resource, parsed)
 		items = append(items, resource)
 	}
 	if err == nil {

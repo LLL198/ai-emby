@@ -40,6 +40,7 @@ type trackingRecord struct {
 type trackingResource struct {
 	ID, Subscription, Cloud, Title, URL, Password, Source, Published, Status string
 	FirstSeen, Updated                                                       int64
+	VideoInfo                                                                *trackingVideoSummary `json:",omitempty"`
 }
 
 var trackingClouds = map[string]string{"mobile": "移动云盘", "115": "115", "quark": "夸克", "guangya": "光鸭", "aliyun": "阿里云盘", "baidu": "百度网盘", "tianyi": "天翼云盘", "uc": "UC", "123": "123 云盘", "pikpak": "PikPak", "xunlei": "迅雷"}
@@ -91,6 +92,8 @@ func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/admin/features/tracking/search":
 		a.trackingDirectSearchAPI(w, r)
+	case "/admin/features/tracking/parse":
+		a.trackingParseAPI(w, r)
 	case "/admin/features/tracking":
 		if !featureMethod(w, r, "GET") {
 			return
@@ -489,7 +492,7 @@ func (a *App) trackingResourcesAPI(w http.ResponseWriter, r *http.Request) {
 		respond(w, M{"ok": true})
 		return
 	}
-	query := " FROM feature_tracking_resources WHERE subscription IN (SELECT id FROM feature_tracking_subscriptions WHERE context_kind='subscription')"
+	query := " FROM feature_tracking_resources r LEFT JOIN feature_tracking_resource_parses p ON p.resource=r.id WHERE subscription IN (SELECT id FROM feature_tracking_subscriptions WHERE context_kind='subscription')"
 	args := []any{}
 	for _, filter := range []struct{ param, column string }{{"Subscription", "subscription"}, {"Status", "status"}, {"Cloud", "cloud"}} {
 		if v := r.URL.Query().Get(filter.param); v != "" {
@@ -505,7 +508,7 @@ func (a *App) trackingResourcesAPI(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("Page"))
 	page = max(1, min(page, 100000))
 	limit := featureLimit(r, 30, 100)
-	rows, err := a.db.Query("SELECT id,subscription,cloud,data,status,first_seen,updated"+query+" ORDER BY updated DESC,id LIMIT ? OFFSET ?", append(args, limit, (page-1)*limit)...)
+	rows, err := a.db.Query("SELECT r.id,subscription,cloud,r.data,status,first_seen,updated,coalesce(p.data,'{}')"+query+" ORDER BY updated DESC,r.id LIMIT ? OFFSET ?", append(args, limit, (page-1)*limit)...)
 	if err != nil {
 		featureError(w, err)
 		return
@@ -514,8 +517,8 @@ func (a *App) trackingResourcesAPI(w http.ResponseWriter, r *http.Request) {
 	items := []trackingResource{}
 	for rows.Next() {
 		var s trackingResource
-		var raw string
-		if err = rows.Scan(&s.ID, &s.Subscription, &s.Cloud, &raw, &s.Status, &s.FirstSeen, &s.Updated); err != nil {
+		var raw, parsed string
+		if err = rows.Scan(&s.ID, &s.Subscription, &s.Cloud, &raw, &s.Status, &s.FirstSeen, &s.Updated, &parsed); err != nil {
 			break
 		}
 		var data trackingResource
@@ -527,6 +530,7 @@ func (a *App) trackingResourcesAPI(w http.ResponseWriter, r *http.Request) {
 		s.Password = data.Password
 		s.Source = data.Source
 		s.Published = data.Published
+		trackingAttachVideoSummary(&s, parsed)
 		items = append(items, s)
 	}
 	if err == nil {

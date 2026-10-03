@@ -223,7 +223,7 @@ func (a *App) trackingImportAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		hint := a.trackingImportHint(r.URL.Query().Get("ResourceID"), r.URL.Query().Get("SubscriptionID"))
-		respond(w, M{"Mounts": mounts, "Libraries": a.libraries(), "FileRoot": fileRoot(), "ScraperEnabled": a.scraperSettings().Enabled, "TMDBConfigured": strings.TrimSpace(a.tmdbSettings().APIKey) != "", "SuggestedKind": hint.Kind, "SuggestedYear": hint.Year, "SuggestedTitle": hint.Title})
+		respond(w, M{"Mounts": mounts, "Libraries": a.libraries(), "FileRoot": fileRoot(), "ScraperEnabled": a.scraperSettings().Enabled, "TMDBConfigured": strings.TrimSpace(a.tmdbSettings().APIKey) != "", "SuggestedKind": hint.Kind, "SuggestedYear": hint.Year, "SuggestedTitle": hint.Title, "VideoInfo": a.trackingVideoInfo(r.URL.Query().Get("ResourceID"))})
 		return
 	}
 	if r.URL.Path == "/admin/features/tracking/import/start" {
