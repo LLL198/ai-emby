@@ -287,6 +287,9 @@ var trackingSeasonPattern = regexp.MustCompile(`(?i)^(?:season\s*\d+|s\d{1,3}|ç¬
 func trackingTitleKey(s string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(s) {
+		if r == 'ä¸¨' {
+			continue
+		}
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			b.WriteRune(r)
 		}
