@@ -155,7 +155,15 @@ func (a *App) resolveTMDBItem(ctx context.Context, item Item, settings tmdbConfi
 	if err != nil {
 		return item, "", "", err
 	}
-	if trackingIdentity != nil {
+	explicitIdentity := strings.TrimSpace(item.scraperTMDBID) != ""
+	if trackingIdentity != nil && !explicitIdentity {
+		metadata := a.featureMetadataView(item)
+		if metadata.Locked && strings.TrimSpace(metadata.TMDB) != "" {
+			item.scraperTMDBID = metadata.TMDB
+			explicitIdentity = true
+		}
+	}
+	if trackingIdentity != nil && !explicitIdentity {
 		if trackingIdentity.TMDBID != "" {
 			item.scraperTMDBID = trackingIdentity.TMDBID
 		}
@@ -190,7 +198,7 @@ func (a *App) resolveTMDBItem(ctx context.Context, item Item, settings tmdbConfi
 	}
 
 	identity := scraperSearchIdentity(searchItem.Name)
-	if trackingIdentity != nil {
+	if trackingIdentity != nil && !explicitIdentity {
 		identity.Title, identity.Year = trackingIdentity.Title, trackingIdentity.Year
 	}
 	title := strings.TrimSpace(identity.Title)
