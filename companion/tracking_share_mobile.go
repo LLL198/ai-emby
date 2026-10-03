@@ -110,7 +110,7 @@ func trackingMobileSign(body, timestamp, nonce string) string {
 	return strings.ToUpper(trackingMobileMD5(trackingMobileMD5(encoded) + trackingMobileMD5(timestamp+":"+nonce)))
 }
 func (p *trackingMobileShare) headers() map[string]string {
-	return map[string]string{"Authorization": "Basic " + p.auth, "Content-Type": "application/json;charset=UTF-8", "Accept": "application/json, text/plain, */*", "User-Agent": "Mozilla/5.0", "Origin": "https://yun.139.com", "Referer": "https://yun.139.com/", "CMS-DEVICE": "default", "x-m4c-caller": "PC", "X-Yun-Api-Version": "v1", "x-DeviceInfo": "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||"}
+	return map[string]string{"Authorization": "Basic " + p.auth, "Content-Type": "application/json;charset=UTF-8", "Accept": "application/json, text/plain, */*", "User-Agent": "Mozilla/5.0", "Origin": "https://yun.139.com", "Referer": "https://yun.139.com/", "CMS-DEVICE": "default", "x-m4c-caller": "PC", "X-Yun-Api-Version": "v1", "x-DeviceInfo": "||9|12.27.0|chrome|136.0.0.0|||windows 10||zh-CN|||"}
 }
 func trackingMobileData(result map[string]json.RawMessage) (map[string]json.RawMessage, error) {
 	var success bool
@@ -143,7 +143,7 @@ func (p *trackingMobileShare) signedHeaders(body []byte) (map[string]string, err
 	zone := time.FixedZone("CST", 8*60*60)
 	timestamp := time.Now().In(zone).Format("2006-01-02 15:04:05")
 	h := p.headers()
-	for key, value := range map[string]string{"Caller": "web", "Mcloud-Channel": "1000101", "Mcloud-Client": "10701", "Mcloud-Route": "001", "Mcloud-Version": "7.14.0", "Mcloud-Sign": timestamp + "," + nonce + "," + trackingMobileSign(string(body), timestamp, nonce), "x-huawei-channelSrc": "10000034", "x-inner-ntwk": "2", "x-m4c-src": "10002", "x-SvcType": "1", "X-Yun-App-Channel": "10000034", "X-Yun-Channel-Source": "10000034", "X-Yun-Client-Info": "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||", "X-Yun-Module-Type": "100", "X-Yun-Svc-Type": "1", "Inner-Hcy-Router-Https": "1"} {
+	for key, value := range map[string]string{"Caller": "web", "Mcloud-Channel": "1000101", "Mcloud-Client": "10701", "Mcloud-Route": "001", "Mcloud-Version": "12.27.0", "Mcloud-Sign": timestamp + "," + nonce + "," + trackingMobileSign(string(body), timestamp, nonce), "x-huawei-channelSrc": "10000034", "x-inner-ntwk": "2", "x-m4c-src": "10002", "x-SvcType": "1", "X-Yun-App-Channel": "10000034", "X-Yun-Channel-Source": "10000034", "X-Yun-Client-Info": "||9|12.27.0|chrome|136.0.0.0|||windows 10||zh-CN|||Y2hyb21l||", "X-Yun-Module-Type": "100", "X-Yun-Svc-Type": "1", "Inner-Hcy-Router-Https": "1"} {
 		h[key] = value
 	}
 	return h, nil
