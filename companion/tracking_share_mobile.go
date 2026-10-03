@@ -119,18 +119,24 @@ func trackingMobileData(result map[string]json.RawMessage) (map[string]json.RawM
 	if code == "" {
 		code = trackingString(result, "code")
 	}
-	if !success && code != "0" {
-		return nil, errors.New("移动盘接口拒绝请求，请检查 Authorization、提取码、分享权限与网盘空间")
+	if code != "" && code != "0" && code != "0000" {
+		if len(code) <= 32 && trackingShareIDPattern.MatchString(code) {
+			return nil, fmt.Errorf("移动盘接口拒绝请求（状态码 %s），请检查登录状态、提取码、分享权限与网盘空间", code)
+		}
+		return nil, errors.New("移动盘接口拒绝请求，请检查登录状态、提取码、分享权限与网盘空间")
 	}
-	return trackingObject(result["data"])
-}
-func (p *trackingMobileShare) personalRequest(ctx context.Context, endpoint string, payload any) (map[string]json.RawMessage, error) {
-	body, err := json.Marshal(payload)
+	if code == "" && !success {
+		return nil, errors.New("移动盘接口未确认请求成功")
+	}
+	data, err := trackingObject(result["data"])
 	if err != nil {
-		return nil, err
+		return nil, errors.New("移动盘接口未返回有效数据，请稍后重试")
 	}
+	return data, nil
+}
+func (p *trackingMobileShare) signedHeaders(body []byte) (map[string]string, error) {
 	nonceBytes := make([]byte, 8)
-	if _, err = rand.Read(nonceBytes); err != nil {
+	if _, err := rand.Read(nonceBytes); err != nil {
 		return nil, err
 	}
 	nonce := hex.EncodeToString(nonceBytes)
@@ -140,14 +146,35 @@ func (p *trackingMobileShare) personalRequest(ctx context.Context, endpoint stri
 	for key, value := range map[string]string{"Caller": "web", "Mcloud-Channel": "1000101", "Mcloud-Client": "10701", "Mcloud-Route": "001", "Mcloud-Version": "7.14.0", "Mcloud-Sign": timestamp + "," + nonce + "," + trackingMobileSign(string(body), timestamp, nonce), "x-huawei-channelSrc": "10000034", "x-inner-ntwk": "2", "x-m4c-src": "10002", "x-SvcType": "1", "X-Yun-App-Channel": "10000034", "X-Yun-Channel-Source": "10000034", "X-Yun-Client-Info": "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||", "X-Yun-Module-Type": "100", "X-Yun-Svc-Type": "1", "Inner-Hcy-Router-Https": "1"} {
 		h[key] = value
 	}
+	return h, nil
+}
+func (p *trackingMobileShare) personalRequest(ctx context.Context, endpoint string, payload any) (map[string]json.RawMessage, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	h, err := p.signedHeaders(body)
+	if err != nil {
+		return nil, err
+	}
 	result, err := trackingJSONRequest(ctx, "POST", endpoint, body, h)
 	if err != nil {
 		return nil, err
 	}
 	return trackingMobileData(result)
 }
-func (p *trackingMobileShare) shareRequest(ctx context.Context, endpoint string, payload any) (map[string]json.RawMessage, error) {
+func (p *trackingMobileShare) shareRequest(ctx context.Context, endpoint string, payload M) (map[string]json.RawMessage, error) {
+	accountInfo := M{"account": p.account, "accountType": 1}
+	if query, ok := payload["queryBatchOprTaskDetailReq"].(M); ok {
+		query["commonAccountInfo"] = accountInfo
+	} else {
+		payload["commonAccountInfo"] = accountInfo
+	}
 	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	headers, err := p.signedHeaders(body)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +195,7 @@ func (p *trackingMobileShare) shareRequest(ctx context.Context, endpoint string,
 	if err != nil {
 		return nil, errors.New("移动盘分享请求无效")
 	}
-	for key, value := range p.headers() {
+	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
 	req.Header.Set("hcy-cool-flag", "1")
