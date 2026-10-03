@@ -64,12 +64,25 @@ func trackingShareCode(resource trackingResource, driver string) (string, string
 		code = query.Get("shareId")
 	}
 	if driver == "139Yun" {
-		fragment := strings.TrimPrefix(u.Fragment, "/")
-		if strings.HasPrefix(fragment, "w/i/") {
-			code = strings.Split(strings.Split(strings.TrimPrefix(fragment, "w/i/"), "?")[0], "&")[0]
+		for _, route := range []string{u.RequestURI(), u.Fragment} {
+			route = strings.TrimPrefix(route, "/")
+			if strings.HasPrefix(route, "w/i/") || strings.HasPrefix(route, "m/i/") {
+				code = strings.SplitN(strings.TrimPrefix(strings.TrimPrefix(route, "w/i/"), "m/i/"), "?", 2)[0]
+				code = strings.SplitN(code, "&", 2)[0]
+			} else if strings.HasPrefix(route, "m/i?") {
+				tail := strings.TrimPrefix(route, "m/i?")
+				values, _ := url.ParseQuery(tail)
+				if value := values.Get("shareId"); value != "" {
+					code = value
+				} else if value := values.Get("linkID"); value != "" {
+					code = value
+				} else if first := strings.SplitN(tail, "&", 2)[0]; !strings.Contains(first, "=") {
+					code = first
+				}
+			}
 		}
-		if strings.HasPrefix(fragment, "m/i?") {
-			code = strings.Split(strings.TrimPrefix(fragment, "m/i?"), "&")[0]
+		if code == "" {
+			code = query.Get("linkID")
 		}
 	}
 	if code == "" && u.Fragment != "" {
@@ -89,7 +102,7 @@ func trackingShareCode(resource trackingResource, driver string) (string, string
 	if password == "" && strings.Contains(u.Fragment, "?") {
 		_, tail, _ := strings.Cut(u.Fragment, "?")
 		if extra, e := url.ParseQuery(tail); e == nil {
-			for _, key := range []string{"password", "pwd", "passcode", "code", "passwd"} {
+			for _, key := range []string{"password", "pwd", "passcode", "code", "passwd", "receive_code"} {
 				if extra.Get(key) != "" {
 					password = extra.Get(key)
 					break

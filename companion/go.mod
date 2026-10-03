@@ -6,6 +6,7 @@ require (
 	github.com/lib/pq v1.10.9
 	golang.org/x/crypto v0.48.0
 	golang.org/x/image v0.34.0
+	golang.org/x/net v0.50.0
 )
 
 require (

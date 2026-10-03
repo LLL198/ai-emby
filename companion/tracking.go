@@ -686,10 +686,18 @@ func (a *App) trackingSearch(ctx context.Context, c trackingSettings, s tracking
 		if resource.Title == "" {
 			resource.Title = s.Title
 		}
+		var previous, status, previousData string
+		err = tx.QueryRowContext(ctx, "SELECT fingerprint,status,data FROM feature_tracking_resources WHERE id=$1", resource.ID).Scan(&previous, &status, &previousData)
+		if err == nil && trackingMobileIncomplete(resource) {
+			var saved trackingResource
+			if json.Unmarshal([]byte(previousData), &saved) == nil && saved.Title == resource.Title && saved.Source == resource.Source && saved.Published == resource.Published {
+				if _, _, parseErr := trackingShareCode(saved, "139Yun"); parseErr == nil {
+					resource.URL, resource.Password = saved.URL, saved.Password
+				}
+			}
+		}
 		raw := featureJSON(resource)
 		fingerprint := digest(resource.Cloud + "\x00" + resource.Title + "\x00" + resource.Password)
-		var previous, status string
-		err = tx.QueryRowContext(ctx, "SELECT fingerprint,status FROM feature_tracking_resources WHERE id=$1", resource.ID).Scan(&previous, &status)
 		if errors.Is(err, sql.ErrNoRows) {
 			_, err = tx.ExecContext(ctx, "INSERT INTO feature_tracking_resources(id,subscription,cloud,data,fingerprint,first_seen,updated,last_seen) VALUES($1,$2,$3,$4,$5,$6,$6,$6)", resource.ID, s.ID, resource.Cloud, raw, fingerprint, now)
 			if err == nil {

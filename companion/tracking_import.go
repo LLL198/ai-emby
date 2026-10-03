@@ -545,6 +545,15 @@ func (a *App) trackingImport(ctx context.Context, s trackingSubscription, activi
 	if err = phase("transfer", "转存分享"); err != nil {
 		return err
 	}
+	if trackingMobileIncomplete(resource) {
+		if err = phase("transfer", "从原帖补全移动盘分享链接"); err != nil {
+			return err
+		}
+		resource, err = a.trackingRepairShare(ctx, s, resource)
+		if err != nil {
+			return err
+		}
+	}
 	p, err := trackingOpenShare(ctx, m, resource)
 	if err != nil {
 		return err
