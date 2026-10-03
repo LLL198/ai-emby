@@ -139,3 +139,35 @@ body.panel-view .tracking-import-sheet .cloud-path-edit { min-height:30px;paddin
 @media(max-width:600px) { .tracking-import-steps { grid-template-columns:repeat(2,minmax(0,1fr));gap:14px; }.tracking-import-source { padding:18px; } }
 
 body.panel-view .tracking-import-sheet .form-actions button[type="submit"] { background:var(--accent);color:#fff;min-width:110px; }
+
+dialog.tracking-auto-sheet { width:min(1360px,calc(100vw - 56px));height:min(900px,calc(100dvh - 56px));max-height:calc(100dvh - 56px);padding:30px; }
+dialog.tracking-auto-sheet[open] { display:flex;flex-direction:column;overflow:hidden; }
+.tracking-editor-heading { display:flex;align-items:center;justify-content:space-between;gap:20px;flex:none;margin-bottom:24px; }
+body.panel-view .tracking-editor-heading h2 { margin:0;font-size:26px;font-weight:650; }
+.tracking-auto-sheet .fm-form { display:flex;flex-direction:column;gap:0;flex:1;min-height:0;min-width:0; }
+.tracking-editor-content { display:flex;flex-direction:column;gap:20px;flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;padding:0 8px 20px 0;scrollbar-gutter:stable; }
+.tracking-editor-card { flex:none;min-width:0;padding:24px;border:1px solid var(--border);border-radius:16px;background:var(--surface); }
+.tracking-editor-card h3 { margin:0 0 20px;font-size:17px;font-weight:600; }
+.tracking-editor-section-head { display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px; }
+.tracking-editor-section-head h3 { margin:0; }
+.tracking-editor-section-head>span { color:var(--muted);font-size:12px; }
+.tracking-auto-config .tracking-editor-section-head { margin:0; }
+.tracking-editor-auto-toggle { font-size:17px;font-weight:600; }
+.tracking-editor-basics .feature-grid { grid-template-columns:1.15fr .7fr 1.15fr;gap:22px 24px; }
+.tracking-auto-sheet .feature-grid>label { display:flex;flex-direction:column;gap:9px;font-size:14px; }
+.tracking-auto-sheet input:not([type="checkbox"]),.tracking-auto-sheet select { min-height:46px;max-width:none;margin:0; }
+.tracking-auto-sheet input[type="checkbox"] { flex:none;width:18px!important;height:18px;min-height:18px!important;padding:0; }
+.tracking-auto-sheet .tracking-cloud-choices { grid-template-columns:repeat(6,minmax(0,1fr));gap:12px; }
+.tracking-auto-sheet .tracking-cloud-choices label { padding:12px 14px;min-height:48px;background:var(--surface-2);border:1px solid transparent;border-radius:10px;cursor:pointer; }
+.tracking-auto-sheet .tracking-cloud-choices label:has(input:checked) { background:var(--accent-soft,var(--surface-2));border-color:color-mix(in srgb,var(--accent) 25%,var(--border));color:var(--accent); }
+.tracking-auto-sheet .tracking-cloud-choices span { white-space:nowrap;font-size:14px; }
+.tracking-auto-sheet .form-actions { flex:none;margin:0;padding:20px 0 0;border-top:1px solid var(--border);gap:12px; }
+body.panel-view .tracking-auto-sheet .form-actions>button { min-height:46px;min-width:104px;padding:10px 24px;font-size:14px; }
+body.panel-view .tracking-auto-sheet .form-actions>button[type="submit"] { background:var(--accent);color:#fff; }
+.tracking-editor-binding summary { cursor:pointer;font-size:15px;font-weight:600;line-height:1.6; }
+.tracking-editor-binding summary span { color:var(--muted);font-weight:400;font-size:12px;margin-left:10px; }
+.tracking-editor-binding-content { margin-top:20px; }
+body.panel-view .tracking-auto-sheet .cloud-path-edit { min-height:30px;padding:4px 8px;border:0;background:transparent;color:var(--accent);font-size:12px;white-space:nowrap; }
+@media(max-width:1100px) { .tracking-auto-sheet .tracking-cloud-choices { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+@media(max-width:760px) { dialog.tracking-auto-sheet { width:calc(100vw - 24px);height:calc(100dvh - 24px);max-height:calc(100dvh - 24px);padding:20px;margin:auto;border-radius:18px; }.tracking-editor-heading { margin-bottom:18px; }body.panel-view .tracking-editor-heading h2 { font-size:22px; }.tracking-editor-card { padding:18px; }.tracking-editor-basics .feature-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.tracking-auto-sheet .tracking-cloud-choices { grid-template-columns:repeat(3,minmax(0,1fr)); }.tracking-auto-sheet .tracking-cloud-choices label { padding:10px;gap:6px; }.tracking-auto-sheet .form-actions { padding-top:16px; } }
+@media(max-width:450px) { .tracking-editor-basics .feature-grid { grid-template-columns:minmax(0,1fr); }.tracking-auto-sheet .tracking-cloud-choices { grid-template-columns:repeat(2,minmax(0,1fr)); }.tracking-editor-section-head { align-items:flex-start; }.tracking-editor-section-head>span { width:100%; }.tracking-editor-content { padding-right:0; } }

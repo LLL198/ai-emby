@@ -295,8 +295,12 @@ const UI = (() => {
   function BottomSheet(title, content, options = {}) {
     const variant = options.variant || "compact-list";
     const d = el("dialog", { class: "bottom-sheet bottom-sheet--" + variant, "aria-label": title });
-    const heading = el("div", { class: "sheet-heading" }, [el("h2", {}, title)]);
-    if (variant === "account-menu") d.append(content);
+    const closeButton = IconButton("关闭弹窗", "close", () => d.close());
+    const heading = el("div", { class: "sheet-heading" }, [el("h2", {}, title), closeButton]);
+    if (variant === "account-menu") {
+      content.querySelector(".account-menu-header")?.append(closeButton);
+      d.append(content);
+    }
     else d.append(el("span", { class: "sheet-drag-indicator", "aria-hidden": "true" }), heading, content);
     const nativeClose = d.close.bind(d);
     let closing = false, fallback;
@@ -314,10 +318,6 @@ const UI = (() => {
       }
     });
     d.addEventListener("cancel", e => { e.preventDefault(); d.close(); });
-    d.addEventListener("click", e => {
-      const bounds = d.getBoundingClientRect();
-      if (e.target === d && (e.clientY < bounds.top || e.clientY > bounds.bottom || e.clientX < bounds.left || e.clientX > bounds.right)) d.close();
-    });
     d.addEventListener("close", () => { clearTimeout(fallback); d.remove(); }, { once: true });
     if (variant === "user-menu" || variant === "account-menu") d.tabIndex = -1;
     document.body.append(d);
@@ -398,7 +398,6 @@ const UI = (() => {
     stage.addEventListener("click",()=>{if(!image)picker.click();});
     const close = () => d.close();
     d.addEventListener("cancel", e => { e.preventDefault(); close(); });
-    d.addEventListener("click", e => { if (e.target === d) close(); });
     d.addEventListener("close", () => { if (sourceURL) URL.revokeObjectURL(sourceURL); d.remove(); }, {once:true});
     cancel.onclick=close;
     decrease.onclick=()=>{slider.value=String(Math.max(1,Number(slider.value)-.1));scale=Number(slider.value);render();};

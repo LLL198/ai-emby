@@ -718,7 +718,7 @@ function fmDialog(title, html, save, action = "保存", actionsVariant = "") {
   const d = $("#modal");
   d.className = "settings-sheet";
   d.innerHTML = `<h2>${esc(title)}</h2><form class="fm-form">${html}<div class="bar form-actions${actionsVariant === "paired" ? " form-actions--paired" : ""}"><button type="button" class="secondary" onclick="closeModal()">${!save || actionsVariant === "paired" ? "关闭" : "取消"}</button>${save ? `<button type="submit"${actionsVariant === "paired" ? ' class="primary-action"' : ""}>${esc(action)}</button><span class="action-spinner" role="status" aria-label="正在处理" hidden></span>` : ""}</div></form>`;
-  d.onclick = (e) => { if (e.target === d && outsideDialog(e, d)) closeModal(); };
+  d.onclick = null;
   if (!d.open) d.showModal();
   d.querySelector("form").onsubmit = save ? run(async (e) => {
     e.preventDefault();
@@ -959,23 +959,13 @@ async function pickDirectory(select, path = "/media", after = "") {
     d = document.createElement("dialog");
     d.id = "fm-picker";
     document.body.appendChild(d);
-    d.addEventListener("click", (e) => {
-      const r = d.getBoundingClientRect();
-      if (
-        e.target === d &&
-        (e.clientX < r.left ||
-          e.clientX > r.right ||
-          e.clientY < r.top ||
-          e.clientY > r.bottom)
-      )
-        d.close();
-    });
   }
   const b = await api(
     "/admin/directories?" + new URLSearchParams({ Path: path, After: after }),
   );
-  d.innerHTML = `<h2>选择目录</h2><p class="picker-path">${esc(b.Path)}</p><div class="directory-list">${b.Directories.map((x, i) => `<button class="secondary" data-index="${i}">${fmIcon("folder")}<span class="directory-name">${esc(x.Name)}</span><span aria-hidden="true">›</span></button>`).join("") || '<p class="empty">此目录没有子文件夹</p>'}${b.Next ? '<button id="fm-next" class="secondary">下一页</button>' : ""}</div><footer class="picker-actions"><button id="fm-up" class="secondary" ${b.Path === "/media" ? "disabled" : ""}>上一级</button><button id="fm-select">选择此目录</button></footer>`;
+  d.innerHTML = `<h2>选择目录</h2><p class="picker-path">${esc(b.Path)}</p><div class="directory-list">${b.Directories.map((x, i) => `<button class="secondary" data-index="${i}">${fmIcon("folder")}<span class="directory-name">${esc(x.Name)}</span><span aria-hidden="true">›</span></button>`).join("") || '<p class="empty">此目录没有子文件夹</p>'}${b.Next ? '<button id="fm-next" class="secondary">下一页</button>' : ""}</div><footer class="picker-actions"><button id="fm-close" class="secondary" type="button">取消</button><button id="fm-up" class="secondary" ${b.Path === "/media" ? "disabled" : ""}>上一级</button><button id="fm-select">选择此目录</button></footer>`;
   if (!d.open) d.showModal();
+  $("#fm-close").onclick = () => d.close();
   $("#fm-select").onclick = () => {
     select(b.Path);
     d.close();
@@ -1351,11 +1341,6 @@ function confirmDialog(title, message, action = "确认清空") {
     d.querySelector(".action-sheet-item--cancel").dataset.cancel = "";
     d.addEventListener("close", () => resolve(false), {once:true});
   });
-}
-
-function outsideDialog(event, dialog) {
-  const r = dialog.getBoundingClientRect();
-  return event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom;
 }
 
 async function loadTelegramSettings() {

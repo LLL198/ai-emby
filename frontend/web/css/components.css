@@ -488,8 +488,8 @@ input.switch:checked:before {
   display: grid;
   gap: 16px;
 }
-html:has(dialog.bottom-sheet[open]),
-body:has(dialog.bottom-sheet[open]) { overflow: hidden; }
+html:has(dialog[open]),
+body:has(dialog[open]) { overflow: hidden; }
 dialog.bottom-sheet {
   position: fixed;
   inset: auto 0 max(10px, env(safe-area-inset-bottom));
@@ -579,7 +579,7 @@ dialog.bottom-sheet--account-menu.is-closing {
 }
 .account-menu-avatar-image { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 .account-menu-avatar:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 3px; }
-.account-menu-identity { min-width: 0; }
+.account-menu-identity { min-width: 0; flex: 1; }
 .account-menu-identity strong,
 .account-menu-identity small {
   display: block;
