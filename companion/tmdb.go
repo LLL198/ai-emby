@@ -163,9 +163,13 @@ func (a *App) resolveTMDBItem(ctx context.Context, item Item, settings tmdbConfi
 			searchItem = parent
 		}
 	case "Episode":
-		if season, err := a.item(item.Parent); err == nil && season.Kind == "Season" {
-			if series, err := a.item(season.Parent); err == nil && series.Kind == "Series" {
-				searchItem = series
+		if parent, err := a.item(item.Parent); err == nil {
+			if parent.Kind == "Series" {
+				searchItem = parent
+			} else if parent.Kind == "Season" {
+				if series, err := a.item(parent.Parent); err == nil && series.Kind == "Series" {
+					searchItem = series
+				}
 			}
 		}
 	}
