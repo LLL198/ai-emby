@@ -20,6 +20,7 @@ import (
 type trackingImportConfig struct {
 	Reselect                                                    bool `json:",omitempty"`
 	Enabled                                                     bool
+	AutoScrape, AutoRename                                      *bool `json:",omitempty"`
 	MountID, RemotePath, Output, Library, PublicURL, ResourceID string
 	Limit                                                       int
 }
@@ -29,6 +30,8 @@ type trackingImportState struct {
 	PendingFiles                                        []trackingShareFile
 	Updated                                             int64
 	Saved                                               int
+	RenamePending                                       int                   `json:",omitempty"`
+	ProcessingKey                                       string                `json:",omitempty"`
 	ManualConfig                                        *trackingImportConfig `json:",omitempty"`
 }
 type trackingShareFile struct {
@@ -107,6 +110,10 @@ func (a *App) trackingValidateImport(s *trackingSubscription) error {
 		}
 		return nil
 	}
+	defaults := a.trackingConfig()
+	scrape := trackingOption(c.AutoScrape, trackingOption(defaults.AutoScrape, true))
+	rename := trackingOption(c.AutoRename, trackingOption(defaults.AutoRename, false))
+	c.AutoScrape, c.AutoRename = &scrape, &rename
 	m, err := a.cloudMount(c.MountID)
 	if err != nil || !m.Enabled {
 		return errors.New("请选择已启用的网盘挂载")
@@ -157,8 +164,11 @@ func (a *App) trackingValidateImport(s *trackingSubscription) error {
 	if len(s.CloudTypes) > 0 && !trackingContains(s.CloudTypes, trackingMountCloud(m.Driver)) {
 		return errors.New("搜索网盘类型必须包含自动入库的目标网盘")
 	}
-	if !a.scraperSettings().Enabled {
+	if scrape && !a.scraperSettings().Enabled {
 		return errors.New("请先在刮削模块开启刮削总开关")
+	}
+	if rename && strings.TrimSpace(a.tmdbSettings().APIKey) == "" {
+		return errors.New("自动重命名需要先在 TMDB 管理中配置 API Key 或访问令牌")
 	}
 	if c.ResourceID != "" {
 		var cloud string
@@ -204,7 +214,7 @@ func (a *App) trackingImportAPI(w http.ResponseWriter, r *http.Request) {
 			featureError(w, err)
 			return
 		}
-		respond(w, M{"Mounts": mounts, "Libraries": a.libraries(), "FileRoot": fileRoot(), "ScraperEnabled": a.scraperSettings().Enabled})
+		respond(w, M{"Mounts": mounts, "Libraries": a.libraries(), "FileRoot": fileRoot(), "ScraperEnabled": a.scraperSettings().Enabled, "TMDBConfigured": strings.TrimSpace(a.tmdbSettings().APIKey) != ""})
 		return
 	}
 	if r.URL.Path == "/admin/features/tracking/import/start" {
@@ -709,7 +719,8 @@ func (a *App) trackingImport(ctx context.Context, s trackingSubscription, activi
 	if found == 0 {
 		return errors.New("分享中未找到此作品的视频，请选择正确的分享或检查命名")
 	}
-	if added == 0 && previousStage == "complete" {
+	processingKey := digest(featureJSON([]bool{*s.AutoImport.AutoScrape, *s.AutoImport.AutoRename}))
+	if added == 0 && previousStage == "complete" && st.ProcessingKey == processingKey {
 		st.Stage, st.Error = "complete", ""
 		return nil
 	}
@@ -730,9 +741,23 @@ func (a *App) trackingImport(ctx context.Context, s trackingSubscription, activi
 	if err = trackingRefreshCloud(ctx, m, st.Remote, 0); err != nil {
 		return err
 	}
+	if *s.AutoImport.AutoRename {
+		if err = phase("rename", "TMDB 标准命名"); err != nil {
+			return err
+		}
+	}
+	names, err := a.trackingSTRMNames(ctx, s, m, st.Output, activity)
+	if err != nil {
+		return err
+	}
+	defer names.root.Close()
 	job := a.newActivity("cloud-strm", m.ID, "追新 · "+s.Title)
-	err = a.cloudGenerate(ctx, m, cloudGenerateRequest{ID: m.ID, Source: st.Remote, Output: st.Output, PublicURL: s.AutoImport.PublicURL, Library: s.AutoImport.Library, Recursive: true, Concurrency: 4}, job)
+	err = a.cloudGenerate(ctx, m, cloudGenerateRequest{ID: m.ID, Source: st.Remote, Output: st.Output, PublicURL: s.AutoImport.PublicURL, Library: s.AutoImport.Library, Recursive: true, Concurrency: 4, localPath: names.localPath}, job)
 	a.finishActivity(job, err)
+	st.RenamePending = len(names.issues)
+	if issueErr := a.storeMediaIssues(ctx, "naming", names.issues, names.resolved, names.observed); err == nil {
+		err = issueErr
+	}
 	if err != nil {
 		return err
 	}
@@ -753,17 +778,24 @@ func (a *App) trackingImport(ctx context.Context, s trackingSubscription, activi
 	if err = a.runConcurrentScanResult(ctx, s.AutoImport.Library, true, false, []string{st.Output}); err != nil {
 		return errors.New("媒体库扫描失败，请查看扫描日志")
 	}
-	if err = phase("scrape", "刮削新视频"); err != nil {
-		return err
-	}
-	if err = a.trackingScrape(ctx, s.AutoImport.Library, st.Output); err != nil {
-		return err
+	if *s.AutoImport.AutoScrape {
+		if err = phase("scrape", "刮削新视频"); err != nil {
+			return err
+		}
+		if err = a.trackingScrape(ctx, s.AutoImport.Library, st.Output); err != nil {
+			return err
+		}
 	}
 	_, err = a.db.Exec("UPDATE feature_tracking_resources SET status='seen' WHERE id=? AND status<>'ignored'", resource.ID)
 	if err != nil {
 		return err
 	}
-	return phase("complete", fmt.Sprintf("入库完成 · 新增 %d 个视频", added))
+	st.ProcessingKey = processingKey
+	label := fmt.Sprintf("入库完成 · 新增 %d 个视频", added)
+	if len(names.issues) > 0 {
+		label += fmt.Sprintf(" · %d 项命名需核对", len(names.issues))
+	}
+	return phase("complete", label)
 }
 func trackingConfirmSaved(ctx context.Context, p trackingShareProvider, parent string, files []trackingShareFile) error {
 	for attempt := 0; attempt < 10; attempt++ {

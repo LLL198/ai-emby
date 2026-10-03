@@ -19,6 +19,7 @@ type cloudGenerateRequest struct {
 	ID, Source, Output, PublicURL, Library string
 	Recursive, Overwrite                   bool
 	Limit, Concurrency                     int
+	localPath                              func(context.Context, string, string) (string, error)
 }
 
 var cloudOutputs = map[string]string{}
@@ -338,6 +339,12 @@ func (a *App) cloudGenerate(ctx context.Context, m cloudMount, b cloudGenerateRe
 					continue
 				}
 				found++
+				if b.localPath != nil {
+					childLocal, e = b.localPath(ctx, childRemote, childLocal)
+					if e != nil {
+						return e
+					}
+				}
 				mu.Lock()
 				total = found
 				mu.Unlock()

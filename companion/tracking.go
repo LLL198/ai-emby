@@ -19,6 +19,7 @@ import (
 type trackingSettings struct {
 	URL, Token, Username, Password string
 	Enabled                        bool
+	AutoScrape, AutoRename         *bool `json:",omitempty"`
 }
 type trackingSubscription struct {
 	ID, Title, Query, ItemID, Source string
@@ -49,7 +50,14 @@ func (a *App) trackingConfig() trackingSettings {
 	return c
 }
 func trackingPublicConfig(c trackingSettings) M {
-	return M{"URL": c.URL, "Enabled": c.Enabled, "Username": c.Username, "HasToken": c.Token != "", "HasPassword": c.Password != ""}
+	return M{"URL": c.URL, "Enabled": c.Enabled, "Username": c.Username, "HasToken": c.Token != "", "HasPassword": c.Password != "", "AutoScrape": trackingOption(c.AutoScrape, true), "AutoRename": trackingOption(c.AutoRename, false)}
+}
+
+func trackingOption(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 func trackingBase(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
@@ -111,6 +119,12 @@ func (a *App) trackingAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		old := a.trackingConfig()
+		if b.AutoScrape == nil {
+			b.AutoScrape = old.AutoScrape
+		}
+		if b.AutoRename == nil {
+			b.AutoRename = old.AutoRename
+		}
 		if b.ClearCredentials {
 			old.Token = ""
 			old.Password = ""

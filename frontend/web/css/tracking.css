@@ -171,3 +171,14 @@ body.panel-view .tracking-auto-sheet .cloud-path-edit { min-height:30px;padding:
 @media(max-width:1100px) { .tracking-auto-sheet .tracking-cloud-choices { grid-template-columns:repeat(4,minmax(0,1fr)); } }
 @media(max-width:760px) { dialog.tracking-auto-sheet { width:calc(100vw - 24px);height:calc(100dvh - 24px);max-height:calc(100dvh - 24px);padding:20px;margin:auto;border-radius:18px; }.tracking-editor-heading { margin-bottom:18px; }body.panel-view .tracking-editor-heading h2 { font-size:22px; }.tracking-editor-card { padding:18px; }.tracking-editor-basics .feature-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.tracking-auto-sheet .tracking-cloud-choices { grid-template-columns:repeat(3,minmax(0,1fr)); }.tracking-auto-sheet .tracking-cloud-choices label { padding:10px;gap:6px; }.tracking-auto-sheet .form-actions { padding-top:16px; } }
 @media(max-width:450px) { .tracking-editor-basics .feature-grid { grid-template-columns:minmax(0,1fr); }.tracking-auto-sheet .tracking-cloud-choices { grid-template-columns:repeat(2,minmax(0,1fr)); }.tracking-editor-section-head { align-items:flex-start; }.tracking-editor-section-head>span { width:100%; }.tracking-editor-content { padding-right:0; } }
+
+.tracking-processing-section { margin-top:24px; }
+.tracking-processing-section h3 { margin:0 0 14px;font-size:16px; }
+.tracking-processing { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px; }
+.tracking-sheet .tracking-processing>label { display:flex;flex-direction:row;align-items:center;gap:14px;padding:18px 20px;min-height:80px;border:1px solid var(--border);border-radius:12px;background:var(--surface);cursor:pointer; }
+.tracking-processing>label:has(input:checked) { border-color:color-mix(in srgb,var(--accent) 35%,var(--border));background:var(--accent-soft,var(--surface-2)); }
+.tracking-sheet .tracking-processing input[type="checkbox"] { flex:none;width:18px!important;height:18px;min-height:18px!important;padding:0;margin:0; }
+.tracking-processing span { display:flex;flex-direction:column;gap:7px;min-width:0; }
+.tracking-processing strong { font-size:15px;font-weight:600; }
+.tracking-processing small { color:var(--muted);font-size:12px;line-height:1.5; }
+@media(max-width:600px) { .tracking-processing { grid-template-columns:1fr; } }
