@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"io/fs"
 	"net/http"
@@ -337,13 +338,14 @@ type browseSortSpec struct {
 }
 
 type catalogBatch struct {
-	metadata map[string]sidecar
-	media    map[string]M
-	child    map[string]int
-	versions map[string][]Item
-	remote   map[string]tmdbData
-	items    map[string]Item
-	tmdb     tmdbConfig
+	metadata     map[string]sidecar
+	media        map[string]M
+	child        map[string]int
+	versions     map[string][]Item
+	remote       map[string]tmdbData
+	items        map[string]Item
+	tmdb         tmdbConfig
+	nanShareFast bool
 }
 
 type catalogGroupedRow struct {
@@ -424,6 +426,10 @@ type introSessionSlot struct {
 }
 
 type introState struct {
+	ctx            context.Context
+	cancel         context.CancelFunc
+	workers        sync.WaitGroup
+	learningDone   chan struct{}
 	enabled        atomic.Bool
 	mu             sync.Mutex
 	persistMu      sync.Mutex
@@ -464,6 +470,8 @@ type notificationJob struct {
 type probeBatchState struct {
 	mu       sync.Mutex
 	running  bool
+	stopped  bool
+	workers  sync.WaitGroup
 	cancel   func()
 	activity string
 }
@@ -581,11 +589,12 @@ type subtitleFlight struct {
 }
 
 type subtitleState struct {
+	storage  sync.Mutex
 	matches  map[string][]subtitleMatch
 	mu       sync.Mutex
 	flights  map[string]*subtitleFlight
 	retry    map[string]time.Time
-	sessions map[string]map[string]bool
+	sessions map[string]map[string]time.Time
 	nextAPI  time.Time
 	client   *http.Client
 }

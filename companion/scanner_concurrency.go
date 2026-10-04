@@ -157,8 +157,18 @@ func (a *App) runConcurrentScanResult(parent context.Context, lib string, increm
 		category = "update"
 	}
 	job := a.newActivity(category, lib, "扫描媒体库")
+	var newItems []string
+	var collectNewItems *[]string
+	if os.Getenv("SCRAPER_SERVICE_ONLY") != "1" && telegramEventEnabled(a.telegramSettings(), NotifyEvent{Type: "new-media"}) {
+		collectNewItems = &newItems
+	}
 	defer func() {
 		a.finishActivity(job, scanErr)
+		if scanErr == nil {
+			for _, id := range newItems {
+				a.notify(NotifyEvent{Type: "new-media", Action: "added", ItemID: id})
+			}
+		}
 		if scanErr == nil && a.features.ctx != nil {
 			a.featureAfterScan(lib)
 		}
@@ -196,6 +206,9 @@ func (a *App) runConcurrentScanResult(parent context.Context, lib string, increm
 	// the live in-memory status; the original scanner's status UPDATE waits here.
 	defer func() {
 		if ctx.Err() != nil {
+			if scanErr == nil {
+				scanErr = ctx.Err()
+			}
 			return
 		}
 		status, message := "idle", ""
@@ -279,7 +292,7 @@ func (a *App) runConcurrentScanResult(parent context.Context, lib string, increm
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := a.writeScanBatch(ctx, cache, batch, idGeneration(job)); err != nil {
+		if err := a.writeScanBatch(ctx, cache, batch, idGeneration(job), collectNewItems); err != nil {
 			return err
 		}
 		batch = batch[:0]

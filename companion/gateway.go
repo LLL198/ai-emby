@@ -64,7 +64,8 @@ func (a *App) gatewayFor(targetURL string) http.Handler {
 func isVideoRequest(path string) bool {
 	p := strings.ToLower(path)
 	p = strings.TrimPrefix(p, "/emby")
-	return strings.HasPrefix(p, "/videos/")
+	_, fast := fastPlaybackItem(path)
+	return strings.HasPrefix(p, "/videos/") || fast
 }
 
 func isStreamRoute(route string) bool {

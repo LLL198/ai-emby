@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -59,6 +60,19 @@ func (a *App) scheduleNext(x Item, r *http.Request) {
 }
 
 var probeURL = regexp.MustCompile(`https?://[^\s"']+`)
+
+func probeTransientNetworkTimeout(err error) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && strings.Contains(strings.ToLower(string(exit.Stderr)), "connection timed out")
+}
+
+func probeOutputWithRetry(ctx context.Context, output func() ([]byte, error)) ([]byte, error) {
+	data, err := output()
+	if err != nil && ctx.Err() == nil && probeTransientNetworkTimeout(err) {
+		return output()
+	}
+	return data, err
+}
 
 func probeFailure(ctx context.Context, err error) error {
 	if ctx.Err() != nil {

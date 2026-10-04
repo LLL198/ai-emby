@@ -7,13 +7,17 @@ import (
 	"strings"
 )
 
+func (a *App) favoritesEnabled() bool {
+	return a.defaultOn("enable_favorites")
+}
+
 func (a *App) defaultOn(key string) bool {
 	var value string
 	return a.db.QueryRow("SELECT v FROM settings WHERE k=?", key).Scan(&value) != nil || value != "false"
 }
 func (a *App) hideMissingActors() bool { return a.defaultOn("hide_missing_actor_images") }
 func (a *App) enhancementValues() M {
-	return M{"ProxyDebug": a.proxyDebugEnabled(), "ThirdPartyProxyPorts": a.thirdPartyProxyPorts(), "FastCDN": a.defaultOn("fast_cdn"), "WatchEnabled": a.defaultOn("watch_enabled"), "ScanConcurrency": a.jobLimit(false), "UpdateConcurrency": a.jobLimit(true), "ServerName": a.displayName(), "WatchDelaySeconds": a.watchDelay(), "SearchByInitials": a.defaultOn("search_by_initials"), "HideMissingActorImages": a.hideMissingActors(), "MergeVersionsInFolder": a.defaultOn("merge_versions_folder"), "MergeVersionsAcrossLibraries": a.defaultOn("merge_versions_libraries")}
+	return M{"EnableFavorites": a.favoritesEnabled(), "ShowEpisodeCount": a.defaultOn("show_episode_count"), "NanShareFastPath": a.nanShareFastEnabled(), "FastPathWaitSeconds": a.fastPathWaitSeconds(), "ProxyDebug": a.proxyDebugEnabled(), "ThirdPartyProxyPorts": a.thirdPartyProxyPorts(), "FastCDN": a.defaultOn("fast_cdn"), "WatchEnabled": a.defaultOn("watch_enabled"), "ScanConcurrency": a.jobLimit(false), "UpdateConcurrency": a.jobLimit(true), "ServerName": a.displayName(), "WatchDelaySeconds": a.watchDelay(), "SearchByInitials": a.defaultOn("search_by_initials"), "HideMissingActorImages": a.hideMissingActors(), "MergeVersionsInFolder": a.defaultOn("merge_versions_folder"), "MergeVersionsAcrossLibraries": a.defaultOn("merge_versions_libraries")}
 }
 func (a *App) enhancementSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
@@ -31,12 +35,19 @@ func (a *App) enhancementSettings(w http.ResponseWriter, r *http.Request) {
 		ServerName                                                                                                           *string
 		FastCDN, WatchEnabled, SearchByInitials, HideMissingActorImages, MergeVersionsInFolder, MergeVersionsAcrossLibraries *bool
 		WatchDelaySeconds                                                                                                    *int
+		NanShareFastPath                                                                                                     *bool
+		FastPathWaitSeconds                                                                                                  *int
+		EnableFavorites, ShowEpisodeCount                                                                                    *bool
 	}
 	if !body(w, r, &b) {
 		return
 	}
-	if b.ProxyDebug == nil && b.ThirdPartyProxyPorts == nil && b.FastCDN == nil && b.WatchEnabled == nil && b.SearchByInitials == nil && b.HideMissingActorImages == nil && b.MergeVersionsInFolder == nil && b.MergeVersionsAcrossLibraries == nil && b.WatchDelaySeconds == nil && b.ScanConcurrency == nil && b.UpdateConcurrency == nil && b.ServerName == nil {
+	if b.ProxyDebug == nil && b.ThirdPartyProxyPorts == nil && b.FastCDN == nil && b.WatchEnabled == nil && b.SearchByInitials == nil && b.HideMissingActorImages == nil && b.MergeVersionsInFolder == nil && b.MergeVersionsAcrossLibraries == nil && b.WatchDelaySeconds == nil && b.ScanConcurrency == nil && b.UpdateConcurrency == nil && b.ServerName == nil && b.NanShareFastPath == nil && b.FastPathWaitSeconds == nil && b.EnableFavorites == nil && b.ShowEpisodeCount == nil {
 		fail(w, 400, "缺少增强功能设置")
+		return
+	}
+	if b.FastPathWaitSeconds != nil && (*b.FastPathWaitSeconds < 1 || *b.FastPathWaitSeconds > 20) {
+		fail(w, 400, "快速解析等待上限范围 1–20 秒")
 		return
 	}
 	if b.WatchDelaySeconds != nil && (*b.WatchDelaySeconds < 10 || *b.WatchDelaySeconds > 86400) {
@@ -76,7 +87,7 @@ func (a *App) enhancementSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	for k, v := range map[string]*bool{"proxy_debug": b.ProxyDebug, "fast_cdn": b.FastCDN, "watch_enabled": b.WatchEnabled, "search_by_initials": b.SearchByInitials, "hide_missing_actor_images": b.HideMissingActorImages, "merge_versions_folder": b.MergeVersionsInFolder, "merge_versions_libraries": b.MergeVersionsAcrossLibraries} {
+	for k, v := range map[string]*bool{"enable_favorites": b.EnableFavorites, "show_episode_count": b.ShowEpisodeCount, "nanshare_fast_path": b.NanShareFastPath, "proxy_debug": b.ProxyDebug, "fast_cdn": b.FastCDN, "watch_enabled": b.WatchEnabled, "search_by_initials": b.SearchByInitials, "hide_missing_actor_images": b.HideMissingActorImages, "merge_versions_folder": b.MergeVersionsInFolder, "merge_versions_libraries": b.MergeVersionsAcrossLibraries} {
 		if v == nil {
 			continue
 		}
@@ -95,7 +106,7 @@ func (a *App) enhancementSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	for k, n := range map[string]*int{"scan_concurrency": b.ScanConcurrency, "update_concurrency": b.UpdateConcurrency} {
+	for k, n := range map[string]*int{"fast_path_wait_seconds": b.FastPathWaitSeconds, "scan_concurrency": b.ScanConcurrency, "update_concurrency": b.UpdateConcurrency} {
 		if n != nil {
 			if _, e = tx.Exec("INSERT INTO settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", k, strconv.Itoa(*n)); e != nil {
 				fail(w, 500, "保存失败")

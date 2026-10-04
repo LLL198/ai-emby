@@ -58,9 +58,16 @@ func localInfo(path string, x *Item) {
 	}
 }
 func (a *App) scanAll() {
-	for _, l := range a.libraries() {
-		go a.scanLibrary(l["Id"].(string))
+	a.requestLibraryScans(a.libraryIDs(), false, false)
+}
+
+func (a *App) libraryIDs() []string {
+	libraries := a.libraries()
+	ids := make([]string, 0, len(libraries))
+	for _, library := range libraries {
+		ids = append(ids, library["Id"].(string))
 	}
+	return ids
 }
 func (a *App) scanLibrary(lib string) { a.scanLibraryMode(lib, false) }
 func (a *App) scanLibraryMode(lib string, incremental bool) {

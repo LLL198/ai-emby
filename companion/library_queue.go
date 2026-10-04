@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -11,10 +13,11 @@ type libraryJob struct {
 	ready  chan struct{}
 }
 type libraryJobQueue struct {
-	mu      sync.Mutex
-	pending []*libraryJob
-	active  map[string]bool
-	running [2]int
+	mu        sync.Mutex
+	pending   []*libraryJob
+	active    map[string]bool
+	running   [2]int
+	requested map[string]bool
 }
 
 func (a *App) jobLimit(update bool) int {
@@ -93,3 +96,108 @@ func (a *App) acquireLibraryJob(lib string, update bool) func() {
 	}
 }
 func (a *App) wakeLibraryJobs() { a.jobs.mu.Lock(); defer a.jobs.mu.Unlock(); a.dispatchLibraryJobs() }
+
+func (a *App) requestLibraryScans(libraries []string, update, scheduled bool) bool {
+	a.jobs.mu.Lock()
+	a.scanner.mu.Lock()
+	modern := a.scanner.locks != nil
+	busy := len(a.jobs.requested) > 0 || len(a.jobs.pending) > 0 || len(a.jobs.active) > 0 || a.jobs.running[0] > 0 || a.jobs.running[1] > 0 || len(a.scanner.active) > 0
+	if scheduled && busy {
+		a.scanner.mu.Unlock()
+		a.jobs.mu.Unlock()
+		activity := a.newActivity("scan", "", "定时扫描")
+		a.changeActivity(activity, func(entry *activityEntry) {
+			entry.State, entry.Current = "complete", "跳过：已有扫描运行或排队"
+		})
+		return false
+	}
+	if a.jobs.requested == nil {
+		a.jobs.requested = map[string]bool{}
+	}
+	selected := []string{}
+	for _, library := range libraries {
+		library = strings.TrimSpace(library)
+		if library == "" || a.jobs.requested[library] || a.jobs.active[library] {
+			continue
+		}
+		pending := false
+		for _, job := range a.jobs.pending {
+			if job.lib == library {
+				pending = true
+				break
+			}
+		}
+		if pending {
+			continue
+		}
+		if modern {
+			if _, ok := a.reserveConcurrentScanLocked(library); !ok {
+				continue
+			}
+		}
+		a.jobs.requested[library] = true
+		selected = append(selected, library)
+	}
+	a.scanner.mu.Unlock()
+	a.jobs.mu.Unlock()
+	if len(selected) == 0 {
+		return false
+	}
+	activity := ""
+	if scheduled {
+		activity = a.newActivity("scan", "", "定时扫描")
+		a.changeActivity(activity, func(entry *activityEntry) {
+			entry.State, entry.Current, entry.Total = "running", "开始", len(selected)
+		})
+	}
+	jobs := make(chan string, len(selected))
+	for _, library := range selected {
+		jobs <- library
+	}
+	close(jobs)
+	var workers sync.WaitGroup
+	var progress sync.Mutex
+	done := 0
+	failures := []error{}
+	workerCount := min(len(selected), a.jobLimit(update))
+	for worker := 0; worker < workerCount; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for library := range jobs {
+				var err error
+				if modern {
+					err = a.runConcurrentScanResult(a.scanner.ctx, library, update, false, nil)
+				} else {
+					a.scanLibraryScopedLegacy(library, update, false, nil)
+					var state, message string
+					err = a.db.QueryRow("SELECT status,error FROM libraries WHERE id=?", library).Scan(&state, &message)
+					if err == nil && (state == "error" || message != "") {
+						err = errors.New(message)
+					}
+				}
+				a.jobs.mu.Lock()
+				delete(a.jobs.requested, library)
+				a.jobs.mu.Unlock()
+				if activity != "" {
+					progress.Lock()
+					done++
+					if err != nil {
+						failures = append(failures, err)
+					}
+					a.changeActivity(activity, func(entry *activityEntry) {
+						entry.Done, entry.Current = done, library
+					})
+					progress.Unlock()
+				}
+			}
+		}()
+	}
+	if activity != "" {
+		go func() {
+			workers.Wait()
+			a.finishActivity(activity, errors.Join(failures...))
+		}()
+	}
+	return true
+}

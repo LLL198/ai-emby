@@ -1,0 +1,17 @@
+BinaryFunction,ReplacementDeclaration,Responsibility,ReviewStatus,Difference
+main.(*App).filesExtraAPI,companion/files_managed.go:29,文件操作分发,source_replacement_reviewed_not_equivalence_verified,使用现行 local-files 接口和多路径配置；旧 api/files 扩展地址未全部保留
+main.fileLeaf,companion/files_managed.go:140,单个文件名校验,source_replacement_reviewed_not_equivalence_verified,复用 fileName 并拒绝根目录与无效名称
+main.(*App).filesMkdir,companion/files_managed.go:29,创建目录,source_replacement_reviewed_not_equivalence_verified,在操作分发内实现 mkdir；增加多路径与只读检查
+main.(*App).filesMove,companion/files_managed.go:450,批量移动,source_replacement_reviewed_not_equivalence_verified,保留不覆盖与占用检查；现行请求和响应结构不同
+main.(*App).filesUpload,companion/files_managed.go:559,流式上传,source_replacement_reviewed_not_equivalence_verified,使用临时文件和不覆盖提交；接入现行路径选择
+main.(*App).filesDownload,companion/files_managed.go:29,下载普通文件,source_replacement_reviewed_not_equivalence_verified,在操作分发内实现下载；使用标准 Content-Disposition 编码
+main.(*App).filesRenameAPI,companion/files_managed.go:450,目录改名,source_replacement_reviewed_not_equivalence_verified,目录改名复用移动实现；文件规范命名由 namingApply 承担
+main.compareReleaseVersions,gateway/release_checker.go:12,版本日期校验和比较,source_reconstruction_moved_to_gateway_not_equivalence_verified,恢复严格日期格式及较新版本判断；由网关调用
+main.(*releaseChecker).latest,gateway/release_checker.go:37,更新查询缓存与合并,source_reconstruction_moved_to_gateway_not_equivalence_verified,合并并发查询；成功缓存一分钟错误缓存五秒；代理变更不复用旧缓存
+main.(*releaseChecker).fetch,gateway/release_update.go:124,发布版本查询,source_replacement_reviewed_not_equivalence_verified,查询本项目 GitHub Release 并校验更新清单；不恢复旧容器仓库查询
+main.(*App).releaseUpdate,gateway/release_update.go:177,更新接口分发,source_replacement_reviewed_not_equivalence_verified,由网关处理 System/Updates；仅管理员账号可读取和更新
+main.releaseControlRequest,gateway/release_update.go:177,更新服务通信,source_replacement_reviewed_not_equivalence_verified,使用宿主机控制目录；不恢复旧 HTTP Unix socket 协议
+main.startReleaseControl,gateway/release_update.go:177,提交受控更新请求,source_replacement_reviewed_not_equivalence_verified,原子创建 request.json；宿主机 updater.py 读取并执行
+main.releaseControlStatus,gateway/release_update.go:177,读取更新状态,source_replacement_reviewed_not_equivalence_verified,读取 status.json 和 ready.json；不恢复旧 status HTTP 请求
+main.(*App).startReleaseUpdate,gateway/release_update.go:177,管理员启动更新,source_replacement_reviewed_not_equivalence_verified,校验仓库架构清单版本和宿主服务；更新队列原子提交
+main.(*App).releaseUpdateStatus,gateway/release_update.go:177,更新状态接口,source_replacement_reviewed_not_equivalence_verified,网关提供当前版本和宿主机更新任务状态

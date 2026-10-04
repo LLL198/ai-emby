@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+ARG CORE_IMPLEMENTATION=source
 FROM postgres:17-bookworm AS runtime-base
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg \
@@ -25,8 +26,17 @@ COPY gateway/ ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -buildvcs=false -trimpath -ldflags="-s -w -X main.releaseVersion=$VERSION" -o /out/ai-emby-gateway .
 RUN printf '%s\n' "$VERSION" > /out/VERSION
 
+FROM scratch AS core-binary
+COPY runtime/ai-emby-core-linux-amd64 /ai-emby-core
+
+FROM scratch AS core-source
+COPY --from=build /out/ai-emby-worker /ai-emby-core
+
+FROM core-${CORE_IMPLEMENTATION} AS selected-core
+
 FROM runtime-base
-COPY runtime/ai-emby-core-linux-amd64 /usr/local/bin/ai-emby-core
+ARG CORE_IMPLEMENTATION
+COPY --from=selected-core /ai-emby-core /usr/local/bin/ai-emby-core
 COPY --from=build /out/ai-emby-worker /out/ai-emby-gateway /usr/local/bin/
 COPY --from=cloud-engine /out/ai-emby-cloud-engine /usr/local/bin/
 COPY third_party/ /app/third_party/
@@ -34,7 +44,8 @@ COPY --from=build /out/VERSION /app/VERSION
 COPY frontend/ /app/frontend/
 RUN chmod 755 /usr/local/bin/ai-emby-core /usr/local/bin/ai-emby-worker /usr/local/bin/ai-emby-gateway
 LABEL org.opencontainers.image.title="ai-emby" \
-      org.opencontainers.image.source="https://github.com/LLL198/ai-emby"
+      org.opencontainers.image.source="https://github.com/LLL198/ai-emby" \
+      org.opencontainers.image.core-implementation="$CORE_IMPLEMENTATION"
 WORKDIR /app
 ENV LISTEN=:8097 MEDIA_INFO_ROOT=/app/data FILE_MANAGER_ROOT=/media
 EXPOSE 8097

@@ -92,10 +92,7 @@ func (a *App) manageMediaItem(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate every target before removing anything; never delete a library root or shared directory.
 	for _, p := range targets {
-		real, err := filepath.EvalSymlinks(p)
-		if os.IsNotExist(err) && !b.DeleteDirectory {
-			continue
-		}
+		real, err := resolveMissingMediaPath(p)
 		if err != nil || !allowedMediaPath(real) {
 			fail(w, 400, "路径无效或超出媒体目录")
 			return
@@ -175,4 +172,24 @@ func prefixedCols(prefix string) string {
 		parts[i] = prefix + "." + strings.TrimSpace(parts[i])
 	}
 	return strings.Join(parts, ",")
+}
+
+func resolveMissingMediaPath(path string) (string, error) {
+	path = filepath.Clean(path)
+	real, err := filepath.EvalSymlinks(path)
+	if !os.IsNotExist(err) {
+		return real, err
+	}
+	if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+		return "", err
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return "", err
+	}
+	resolved, err := resolveMissingMediaPath(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, filepath.Base(path)), nil
 }

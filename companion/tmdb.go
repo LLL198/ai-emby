@@ -56,18 +56,22 @@ func (a *App) tmdbUnlock() {
 
 // Use the parent series provider ID for season and episode cache keys.
 func (a *App) tmdbIdentity(item Item) (key, endpoint string) {
+	return tmdbIdentityWith(item, a.item, a.metadata)
+}
+
+func tmdbIdentityWith(item Item, lookup func(string) (Item, error), metadataFor func(Item) sidecar) (key, endpoint string) {
 	original := item
 	season, episode := item.Season, item.Episode
 
 	switch item.Kind {
 	case "Season":
-		series, err := a.item(item.Parent)
+		series, err := lookup(item.Parent)
 		if err != nil || series.Kind != "Series" {
 			return "", ""
 		}
 		item = series
 	case "Episode":
-		seasonItem, err := a.item(item.Parent)
+		seasonItem, err := lookup(item.Parent)
 		if err != nil || (seasonItem.Kind != "Season" && seasonItem.Kind != "Series") {
 			return "", ""
 		}
@@ -78,7 +82,7 @@ func (a *App) tmdbIdentity(item Item) (key, endpoint string) {
 		if season == 0 {
 			season = seasonItem.Season
 		}
-		series, err := a.item(seasonItem.Parent)
+		series, err := lookup(seasonItem.Parent)
 		if err != nil || series.Kind != "Series" {
 			return "", ""
 		}
@@ -93,7 +97,7 @@ func (a *App) tmdbIdentity(item Item) (key, endpoint string) {
 		mediaType = "tv"
 	}
 
-	metadata := a.metadata(item)
+	metadata := metadataFor(item)
 	providerID := strings.TrimSpace(original.scraperTMDBID)
 	if providerID == "" {
 		providerID = strings.TrimSpace(metadata.TMDB)

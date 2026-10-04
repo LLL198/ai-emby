@@ -153,12 +153,7 @@ func (a *App) runScanSchedule() {
 		}
 		a.libraryConfig.Unlock()
 		if due {
-			a.jobs.mu.Lock()
-			busy := len(a.jobs.pending) > 0 || a.jobs.running[0] > 0
-			a.jobs.mu.Unlock()
-			if !busy {
-				a.scanAll()
-			}
+			a.requestLibraryScans(a.libraryIDs(), false, true)
 		}
 	}
 }

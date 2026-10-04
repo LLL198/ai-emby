@@ -81,6 +81,10 @@ func (a *App) scanSettingsAPI(w http.ResponseWriter, r *http.Request) {
 func (a *App) reserveConcurrentScan(lib string) (string, bool) {
 	a.scanner.mu.Lock()
 	defer a.scanner.mu.Unlock()
+	return a.reserveConcurrentScanLocked(lib)
+}
+
+func (a *App) reserveConcurrentScanLocked(lib string) (string, bool) {
 	if a.scanner.ctx == nil || a.scanner.ctx.Err() != nil {
 		return "", false
 	}

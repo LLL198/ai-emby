@@ -1,9 +1,21 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"strings"
 	"time"
 )
+
+func premiereDate(metadata sidecar, year int) string {
+	if value, err := time.Parse("2006-01-02", strings.TrimSpace(metadata.Premiered)); err == nil {
+		return value.Format("2006-01-02")
+	}
+	if year > 0 && year <= 9999 {
+		return fmt.Sprintf("%04d-01-01", year)
+	}
+	return ""
+}
 
 func (a *App) sortSchema() error {
 	if _, err := a.db.Exec(sortSchemaSQL); err != nil {

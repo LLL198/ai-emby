@@ -139,13 +139,13 @@ func (a *App) enrich(x Item, m M) {
 		}
 	}
 	m["ProviderIds"] = ids
-	a.applyDisplayName(x, m, n, a.cachedTMDB(x))
 	if n.Plot != "" {
 		m["Overview"] = n.Plot
 	}
 	if n.Rating > 0 {
 		m["CommunityRating"] = n.Rating
 	}
+	a.enrichTMDB(x, m, n)
 	a.enrichMedia(x, n, m)
 	a.decorateImages(x, m)
 	var cover int
@@ -169,6 +169,11 @@ func (a *App) enrich(x Item, m M) {
 	}
 }
 func (a *App) enrichMedia(x Item, n sidecar, m M) {
+	enrichSidecarMedia(n, m)
+	mergeCachedMedia(m, a.cachedMedia(x))
+}
+
+func enrichSidecarMedia(n sidecar, m M) {
 	streams := []M{}
 	duration := n.Runtime * 60
 	for _, v := range n.Streams.Video {
@@ -187,7 +192,6 @@ func (a *App) enrichMedia(x Item, n sidecar, m M) {
 	if duration > 0 {
 		m["RunTimeTicks"] = int64(duration * 1e7)
 	}
-	mergeCachedMedia(m, a.cachedMedia(x))
 }
 func (a *App) playURL(x Item, t string) string {
 	// The STRM filename usually preserves the original container; opaque URLs do not.
@@ -216,8 +220,17 @@ func (a *App) viewerSource(x Item, r *http.Request, u User) M {
 		m["RunTimeTicks"] = v
 	}
 	mergeCachedMedia(m, a.cachedMedia(x))
+	playbackURL := a.playURL(x, token(r))
+	if !u.API && a.nanShareFastEnabled() {
+		playbackURL = fastPlaybackSourceURL(playbackURL, x.URL)
+	}
+	viewerSourceURL(m, playbackURL, r, u)
+	a.appendSubtitles(x, m, r, u)
+	return m
+}
+
+func viewerSourceURL(m M, p string, r *http.Request, u User) {
 	if !u.API {
-		p := a.playURL(x, token(r))
 		m["DirectStreamUrl"] = strings.TrimPrefix(p, "/emby")
 		scheme := "http"
 		if r.TLS != nil {
@@ -231,29 +244,55 @@ func (a *App) viewerSource(x Item, r *http.Request, u User) M {
 		if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]); forwarded != "" && !strings.ContainsAny(forwarded, "/\\?#@ \t\r\n") {
 			host = forwarded
 		}
-		m["Path"] = scheme + "://" + host + p
+		if !strings.HasSuffix(strings.ToLower(r.URL.Path), "/playbackinfo") || !backendPlaybackSourceLookup(r) {
+			m["Path"] = scheme + "://" + host + p
+		}
 		m["Container"] = strings.TrimPrefix(filepath.Ext(strings.Split(p, "?")[0]), ".")
 		m["SupportsDirectPlay"] = true
 	}
-	return m
 }
 func (a *App) viewerDTO(x Item, r *http.Request, u User) M {
 	m := a.dto(x)
+	tags, backdrops := M{}, []string{}
+	for _, kind := range []string{"Primary", "Backdrop", "Thumb", "Logo", "Banner"} {
+		if path := a.imagePathForViewer(r, x.ID, kind); path != "" {
+			tag := a.imageTag(x.ID, kind, path)
+			if kind == "Backdrop" {
+				backdrops = append(backdrops, tag)
+			} else {
+				tags[kind] = tag
+			}
+		}
+	}
+	m["ImageTags"], m["BackdropImageTags"] = tags, backdrops
+	if people, ok := m["People"].([]M); ok {
+		for _, person := range people {
+			delete(person, "PrimaryImageTag")
+			if id, ok := person["Id"].(string); ok {
+				if path := a.imagePathForViewer(r, id, "Primary"); path != "" {
+					person["PrimaryImageTag"] = a.imageTag(id, "Primary", path)
+				}
+			}
+		}
+	}
 	if !u.API {
 		delete(m, "Path")
-		var pos int64
-		var played bool
-		a.db.QueryRow("SELECT position,played FROM userdata WHERE user_id=? AND item=?", u.ID, x.ID).Scan(&pos, &played)
-		m["UserData"] = M{"PlaybackPositionTicks": pos, "Played": played, "IsFavorite": false, "Key": x.ID}
+		if !listStateDeferred(r) {
+			var pos int64
+			var played bool
+			a.db.QueryRow("SELECT position,played FROM userdata WHERE user_id=? AND item=?", u.ID, x.ID).Scan(&pos, &played)
+			m["UserData"] = M{"PlaybackPositionTicks": pos, "Played": played, "IsFavorite": false, "Key": x.ID}
+		}
 	}
 	if x.URL != "" {
 		m["MediaSources"] = a.versionSources(x, r, u, true)
 		m["MediaSourceCount"] = len(m["MediaSources"].([]M))
 	}
+	a.applyViewerImageTags(m, u)
 	return m
 }
 func (a *App) similar(w http.ResponseWriter, r *http.Request, u User, i string) {
-	x, e := a.item(i)
+	x, e := a.itemForUser(r, i)
 	if e != nil {
 		fail(w, 404, "媒体不存在")
 		return
@@ -276,7 +315,7 @@ func (a *App) similar(w http.ResponseWriter, r *http.Request, u User, i string) 
 	params := []any{x.ID, x.Kind, x.Year, x.ID, x.Kind, x.ID}
 	params = append(params, filterArgs...)
 	params = append(params, x.ID, x.Year, limit)
-	rows, e := a.db.Query(`WITH candidates AS (
+	rows, e := a.mediaReader(r).Query(`WITH candidates AS (
  (SELECT item AS id FROM item_genres WHERE genre IN (SELECT genre FROM item_genres WHERE item=?) LIMIT 512)
  UNION
  (SELECT id FROM items WHERE kind=? AND year=? AND id<>? ORDER BY name,id LIMIT 128)
@@ -326,6 +365,13 @@ func (a *App) libraryImageTags(i string) M {
 	p := a.imagePath(i, "Primary")
 	if p != "" {
 		return M{"Primary": a.imageTag(i, "Primary", p)}
+	}
+	return M{}
+}
+
+func (a *App) libraryImageTagsForViewer(r *http.Request, i string) M {
+	if path := a.imagePathForViewer(r, i, "Primary"); path != "" {
+		return M{"Primary": a.imageTag(i, "Primary", path)}
 	}
 	return M{}
 }

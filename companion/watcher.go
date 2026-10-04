@@ -69,9 +69,13 @@ func (a *App) watchMediaContext(ctx context.Context) {
 		next := map[string]string{}
 		libs := a.libraries()
 		if !a.defaultOn("watch_enabled") {
-			libs = nil
 			clear(pending)
 			clear(changes)
+			probe := a.probeAutomation()
+			scraper := a.scraperSettings()
+			if !probe.MonitorEnabled && !(scraper.Enabled && scraper.MonitorEnabled) {
+				libs = nil
+			}
 		}
 		for _, l := range libs {
 			for _, p := range l["Locations"].([]string) {
@@ -84,7 +88,7 @@ func (a *App) watchMediaContext(ctx context.Context) {
 		for p := range watched {
 			keep := false
 			for root := range next {
-				if p == root || strings.HasPrefix(p, root+"/") {
+				if mediaPathWithin(root, p) {
 					keep = true
 					break
 				}
@@ -113,11 +117,8 @@ func (a *App) watchMediaContext(ctx context.Context) {
 				continue
 			}
 			for root, lib := range roots {
-				if ev.Name == root || strings.HasPrefix(ev.Name, root+"/") {
-					pending[lib] = time.Now()
-					if changes[lib] == nil {
-						changes[lib] = map[string]bool{}
-					}
+				if mediaPathWithin(root, ev.Name) {
+					a.mediaEvents.publish(mediaFsEvent{Name: ev.Name, Op: uint32(ev.Op), Library: lib, Root: root})
 					target := filepath.Dir(ev.Name)
 					if strings.EqualFold(filepath.Ext(ev.Name), ".strm") {
 						target = ev.Name
@@ -127,8 +128,14 @@ func (a *App) watchMediaContext(ctx context.Context) {
 					} else if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
 						target = ev.Name
 					}
-					if target == root || strings.HasPrefix(target, root+"/") {
-						changes[lib][target] = true
+					if a.defaultOn("watch_enabled") {
+						pending[lib] = time.Now()
+						if changes[lib] == nil {
+							changes[lib] = map[string]bool{}
+						}
+						if mediaPathWithin(root, target) {
+							changes[lib][target] = true
+						}
 					}
 					if ev.Has(fsnotify.Create) {
 						if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
@@ -139,7 +146,7 @@ func (a *App) watchMediaContext(ctx context.Context) {
 			}
 			if ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 				for p := range watched {
-					if p == ev.Name || strings.HasPrefix(p, ev.Name+"/") {
+					if mediaPathWithin(ev.Name, p) {
 						w.Remove(p)
 						delete(watched, p)
 					}
@@ -173,7 +180,7 @@ func (a *App) watchMediaContext(ctx context.Context) {
 					for path := range changes[lib] {
 						covered := false
 						for other := range changes[lib] {
-							if other != path && strings.HasPrefix(path, other+"/") {
+							if other != path && mediaPathWithin(other, path) {
 								covered = true
 								break
 							}

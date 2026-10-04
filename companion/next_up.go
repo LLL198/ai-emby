@@ -8,7 +8,7 @@ import (
 // Select the first unplayed episode after the last played episode in each series.
 func (a *App) nextUp(w http.ResponseWriter, r *http.Request, user User) {
 	seriesID := q(r, "SeriesId")
-	rows, err := a.db.Query(`SELECT i.id, CASE WHEN p.kind='Season' THEN p.parent ELSE p.id END AS series,
+	rows, err := a.mediaReader(r).Query(`SELECT i.id, CASE WHEN p.kind='Season' THEN p.parent ELSE p.id END AS series,
  COALESCE(d.played,0) FROM items i JOIN items p ON p.id=i.parent
  LEFT JOIN userdata d ON d.user_id=? AND d.item=i.id
  WHERE i.kind='Episode' AND (p.kind='Season' OR p.kind='Series')

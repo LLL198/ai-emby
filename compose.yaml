@@ -43,6 +43,7 @@ services:
       context: .
       args:
         VERSION: ${IMAGE_TAG:-development}
+        CORE_IMPLEMENTATION: ${CORE_IMPLEMENTATION:-source}
     restart: unless-stopped
     user: ${PUID:-0}:${PGID:-0}
     depends_on:

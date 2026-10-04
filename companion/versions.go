@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"path/filepath"
+	"strings"
 )
 
 // Stable identity, independent of video encoding. Unknown episodes stay separate.
@@ -17,13 +18,24 @@ func (a *App) versionsSchema() error {
 	return e
 }
 func (a *App) versionGrouping() string {
+	return a.versionGroupingFor("")
+}
+
+func (a *App) versionGroupingFor(alias string) string {
+	column := func(name string) string {
+		if alias != "" {
+			return alias + "." + name
+		}
+		return name
+	}
+	expr := "media_version_key_v2(" + strings.Join([]string{column("kind"), column("path"), column("name"), column("year"), column("season"), column("episode"), column("id")}, ",") + ")"
 	if a.defaultOn("merge_versions_libraries") {
-		return versionExpr
+		return expr
 	}
 	if a.defaultOn("merge_versions_folder") {
-		return versionExpr + "||':'||lib||':'||CASE WHEN kind='Series' THEN path ELSE regexp_replace(path,'/[^/]*$','') END"
+		return expr + "||':'||" + column("lib") + "||':'||CASE WHEN " + column("kind") + "='Series' THEN " + column("path") + " ELSE regexp_replace(" + column("path") + ",'/[^/]*$','') END"
 	}
-	return "id"
+	return column("id")
 }
 func (a *App) mergeWhere(where string, args []any) (string, []any) {
 	group := a.versionGrouping()
@@ -62,7 +74,28 @@ func (a *App) versionSources(x Item, r *http.Request, u User, display bool) []M 
 	out := []M{}
 	versions := []Item{x}
 	if !u.API {
-		versions = a.versions(x)
+		group := a.versionGrouping()
+		rows, err := a.mediaReader(r).Query("SELECT "+cols+" FROM items WHERE "+group+"=(SELECT "+group+" FROM items WHERE id=?) AND url<>'' ORDER BY id", x.ID)
+		if err == nil {
+			loaded := []Item{x}
+			for rows.Next() {
+				item, e := readItem(rows)
+				if e != nil {
+					err = e
+					break
+				}
+				if item.ID != x.ID {
+					loaded = append(loaded, item)
+				}
+			}
+			if err == nil {
+				err = rows.Err()
+			}
+			rows.Close()
+			if err == nil {
+				versions = loaded
+			}
+		}
 	}
 	for _, v := range versions {
 		m := a.viewerSource(v, r, u)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -74,7 +75,7 @@ func (a *App) indexMetadataGeneration(lib, generation string, jobs ...string) er
 		metas := make([]sidecar, len(batch))
 		for j, x := range batch {
 			a.waitScan(job)
-			metas[j] = readSidecar(x)
+			metas[j] = a.refreshSidecar(x)
 		}
 		tx, e := a.db.Begin()
 		if e != nil {
@@ -157,14 +158,25 @@ func actorImage(x Item, name, thumb string) string {
 	return ""
 }
 func (a *App) imagePath(i, kind string) string {
+	return a.imagePathWithReader(a.mediaForUser(context.Background(), User{API: true}), i, kind)
+}
+
+func (a *App) imagePathForViewer(r *http.Request, i, kind string) string {
+	return a.imagePathWithReader(a.mediaReader(r), i, kind)
+}
+
+func (a *App) imagePathWithReader(reader *mediaReader, i, kind string) string {
 	if kind == "Primary" {
+		if i == "favorites" {
+			return a.favoriteImagePath(reader)
+		}
 		var n int
-		if a.db.QueryRow("SELECT 1 FROM covers WHERE id=?", i).Scan(&n) == nil {
+		if reader.QueryRow("SELECT 1 FROM covers WHERE id=?", i).Scan(&n) == nil {
 			return "cover"
 		}
 		if strings.HasPrefix(i, "person-") {
 			var p string
-			a.db.QueryRow("SELECT thumb FROM item_people WHERE person=? AND thumb<>'' ORDER BY item LIMIT 1", i).Scan(&p)
+			reader.QueryRow("SELECT thumb FROM item_people WHERE person=? AND thumb<>'' ORDER BY item LIMIT 1", i).Scan(&p)
 			var failed int
 			if a.db.QueryRow("SELECT 1 FROM actor_image_failures WHERE person=? AND path=? AND expires>?", i, p, time.Now().Unix()).Scan(&failed) == nil {
 				return ""
@@ -175,12 +187,20 @@ func (a *App) imagePath(i, kind string) string {
 			return safeImage(p)
 		}
 	}
-	x, e := a.item(i)
+	x, e := readItem(reader.QueryRow("SELECT "+cols+" FROM items WHERE id=?", canonicalPlaybackID(i)))
 	if e != nil {
 		if kind != "Primary" {
 			return ""
 		}
-		x, e = readItem(a.db.QueryRow("SELECT "+cols+" FROM items WHERE lib=? AND poster<>'' ORDER BY name,id LIMIT 1", i))
+		var source string
+		source, x = a.libraryPosterWithReader(reader, i)
+		if source != "" {
+			return source
+		}
+		if x.ID == "" {
+			return ""
+		}
+		e = nil
 	}
 	if e != nil {
 		return ""
@@ -220,9 +240,14 @@ func (a *App) imagePath(i, kind string) string {
 			}
 		}
 	}
+	if a.tmdbImageEligible(x, kind) {
+		if cached := a.cachedTMDBImage(x, kind); cached != "" {
+			return cached
+		}
+	}
 	if kind == "Primary" && x.Parent != x.Lib && x.Parent != x.ID {
-		if parent, e := a.item(x.Parent); e == nil {
-			return a.imagePath(parent.ID, kind)
+		if parent, e := readItem(reader.QueryRow("SELECT "+cols+" FROM items WHERE id=?", x.Parent)); e == nil {
+			return a.imagePathWithReader(reader, parent.ID, kind)
 		}
 	}
 	return ""
@@ -233,7 +258,9 @@ func (a *App) imageTag(i, kind, p string) string {
 		a.db.QueryRow("SELECT v FROM settings WHERE k='image_secret'").Scan(&secret)
 	}
 	revision := p
-	if p == "cover" {
+	if strings.HasPrefix(p, "collage:") {
+		revision += "|" + strconv.FormatInt(time.Now().Unix()/600, 10)
+	} else if p == "cover" {
 		var b []byte
 		a.db.QueryRow("SELECT data FROM covers WHERE id=?", i).Scan(&b)
 		revision = digest(string(b))
@@ -303,13 +330,16 @@ func (a *App) taggedImage(w http.ResponseWriter, r *http.Request, p string) bool
 	if tag == "" {
 		return false
 	}
+	if !a.visibleImage(r, i) {
+		return false
+	}
 	if k == "Primary" {
 		if x, e := a.item(i); e == nil && x.Poster != "" && hmac.Equal([]byte(tag), []byte(a.listImageTag(x))) {
 			a.serveImage(w, r, i)
 			return true
 		}
 	}
-	path := a.imagePath(i, k)
+	path := a.imagePathForViewer(r, i, k)
 	if path == "" || !hmac.Equal([]byte(tag), []byte(a.imageTag(i, k, path))) {
 		return false
 	}
@@ -322,12 +352,16 @@ func (a *App) serveImage(w http.ResponseWriter, r *http.Request, i string) {
 		fail(w, 405, "GET or HEAD required")
 		return
 	}
+	if !a.visibleImage(r, i) {
+		fail(w, 404, "图片不存在")
+		return
+	}
 	p := strings.TrimPrefix(strings.ToLower(r.URL.Path), "/emby")
 	parts := strings.Split(strings.Trim(p, "/"), "/")
 	if len(parts) == 3 {
 		out := []M{}
 		for _, k := range []string{"Primary", "Backdrop", "Thumb", "Logo", "Banner"} {
-			if path := a.imagePath(i, k); path != "" {
+			if path := a.imagePathForViewer(r, i, k); path != "" {
 				out = append(out, M{"ImageType": k, "ImageIndex": 0, "ImageTag": a.imageTag(i, k, path)})
 			}
 		}
@@ -343,7 +377,7 @@ func (a *App) serveImage(w http.ResponseWriter, r *http.Request, i string) {
 		fail(w, 404, "图片索引不存在")
 		return
 	}
-	path := a.imagePath(i, kind)
+	path := a.imagePathForViewer(r, i, kind)
 	if path == "" {
 		if kind != "Primary" {
 			fail(w, 404, "图片不存在")
@@ -373,6 +407,22 @@ func (a *App) serveImage(w http.ResponseWriter, r *http.Request, i string) {
 		w.WriteHeader(304)
 		return
 	}
+	if strings.HasPrefix(path, "collage:") {
+		a.serveLibraryCollage(w, r, i)
+		return
+	}
+	if i == "favorites" && strings.HasPrefix(path, "cover:") {
+		data := a.collageSource(a.mediaReader(r), path, i)
+		if len(data) == 0 {
+			fail(w, 404, "图片不存在")
+			return
+		}
+		w.Header().Set("Content-Type", http.DetectContentType(data))
+		if !serveThumbnail(w, r, bytes.NewReader(data)) {
+			http.ServeContent(w, r, "favorite-cover", time.Time{}, bytes.NewReader(data))
+		}
+		return
+	}
 	if path == "cover" {
 		var b []byte
 		var mime string
@@ -388,6 +438,10 @@ func (a *App) serveImage(w http.ResponseWriter, r *http.Request, i string) {
 		return
 	}
 	if strings.HasPrefix(path, "https://image.tmdb.org/") {
+		if !strings.HasPrefix(i, "person-") {
+			a.serveTMDBImage(w, r, i, path)
+			return
+		}
 		req, e := http.NewRequestWithContext(r.Context(), "GET", path, nil)
 		if e != nil {
 			fail(w, 502, "图片地址无效")
@@ -454,11 +508,11 @@ func (a *App) browseRoute(w http.ResponseWriter, r *http.Request, u User, p stri
 		return false
 	}
 	if l == "/library/mediafolders" {
-		respond(w, M{"Items": a.libraryDTOs(), "TotalRecordCount": len(a.libraries()), "StartIndex": 0})
+		a.respondUserLibraries(w, r, u)
 		return true
 	}
 	if len(parts) == 4 && strings.EqualFold(parts[0], "users") && strings.EqualFold(parts[2], "items") && strings.EqualFold(parts[3], "root") {
-		respond(w, a.rootDTO())
+		respond(w, a.userRootDTO(r, u))
 		return true
 	}
 	if len(parts) == 3 && strings.EqualFold(parts[0], "users") && strings.EqualFold(parts[2], "groupingoptions") {
@@ -522,7 +576,7 @@ func (a *App) browseRoute(w http.ResponseWriter, r *http.Request, u User, p stri
 	}
 	if l == "/movies/recommendations" {
 		var seed, name string
-		err := a.db.QueryRow("SELECT i.id,i.name FROM items i JOIN userdata d ON d.item=i.id LEFT JOIN resume_activity ra ON ra.item=i.id AND ra.user_id=d.user_id WHERE d.user_id=? AND (d.played=1 OR d.position>0) AND i.kind='Movie' AND (?='' OR i.lib=?) ORDER BY ra.updated DESC,i.id LIMIT 1", u.ID, q(r, "ParentId"), q(r, "ParentId")).Scan(&seed, &name)
+		err := a.mediaReader(r).QueryRow("SELECT i.id,i.name FROM items i JOIN userdata d ON d.item=i.id LEFT JOIN resume_activity ra ON ra.item=i.id AND ra.user_id=d.user_id WHERE d.user_id=? AND (d.played=1 OR d.position>0) AND i.kind='Movie' AND (?='' OR i.lib=?) ORDER BY ra.updated DESC,i.id LIMIT 1", u.ID, q(r, "ParentId"), q(r, "ParentId")).Scan(&seed, &name)
 		if err != nil {
 			respond(w, []M{})
 			return true
@@ -564,11 +618,20 @@ func (a *App) personDTO(i, name string) M {
 }
 func (a *App) personDetail(w http.ResponseWriter, r *http.Request, i string) {
 	var name string
-	if a.db.QueryRow("SELECT name FROM item_people WHERE person=? LIMIT 1", i).Scan(&name) != nil {
+	if a.mediaReader(r).QueryRow("SELECT name FROM item_people WHERE person=? LIMIT 1", i).Scan(&name) != nil {
 		fail(w, 404, "演员不存在")
 		return
 	}
-	respond(w, a.personDTO(i, name))
+	dto := M{"Id": i, "Name": name, "Type": "Person", "ServerId": a.serverID, "IsFolder": false, "ImageTags": a.libraryImageTagsForViewer(r, i), "BackdropImageTags": []string{}, "Overview": "", "PrimaryImageAspectRatio": 2.0 / 3, "UserData": M{"Played": false, "IsFavorite": false}}
+	var count int
+	if a.mediaReader(r).QueryRow("SELECT count(DISTINCT item) FROM item_people WHERE person=?", i).Scan(&count) != nil {
+		fail(w, 500, "演员查询失败")
+		return
+	}
+	dto["MovieCount"] = count
+	user, _ := r.Context().Value(mediaViewerKey{}).(User)
+	a.applyViewerImageTags(dto, user)
+	respond(w, dto)
 }
 func (a *App) persons(w http.ResponseWriter, r *http.Request) {
 	where := "1=1"
@@ -595,7 +658,7 @@ func (a *App) persons(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Count < 0 && !strings.EqualFold(q(r, "EnableTotalRecordCount"), "false") {
-		if e = a.db.QueryRow("SELECT count(DISTINCT person) FROM item_people WHERE "+where, args...).Scan(&p.Count); e != nil {
+		if e = a.mediaReader(r).QueryRow("SELECT count(DISTINCT person) FROM item_people WHERE "+where, args...).Scan(&p.Count); e != nil {
 			fail(w, 500, "演员查询失败")
 			return
 		}
@@ -614,7 +677,7 @@ func (a *App) persons(w http.ResponseWriter, r *http.Request) {
 		sql += " OFFSET ?"
 		args = append(args, p.Position)
 	}
-	rows, e := a.db.Query(sql, args...)
+	rows, e := a.mediaReader(r).Query(sql, args...)
 	if e != nil {
 		fail(w, 500, "演员查询失败")
 		return
@@ -649,7 +712,10 @@ func (a *App) persons(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []M{}
 	for _, pair := range pairs {
-		out = append(out, M{"Id": pair[0], "Name": pair[1], "Type": "Person", "ImageTags": a.libraryImageTags(pair[0]), "IsFolder": false})
+		dto := M{"Id": pair[0], "Name": pair[1], "Type": "Person", "ImageTags": a.libraryImageTagsForViewer(r, pair[0]), "IsFolder": false}
+		user, _ := r.Context().Value(mediaViewerKey{}).(User)
+		a.applyViewerImageTags(dto, user)
+		out = append(out, dto)
 	}
 	if p.Count < 0 {
 		p.Count = p.Position + len(out)
@@ -661,7 +727,7 @@ func (a *App) persons(w http.ResponseWriter, r *http.Request) {
 
 }
 func (a *App) genres(w http.ResponseWriter, r *http.Request, list bool) {
-	rows, e := a.db.Query("SELECT DISTINCT g.genre FROM item_genres g JOIN items i ON i.id=g.item WHERE (?='' OR i.lib=?) ORDER BY g.genre", q(r, "ParentId"), q(r, "ParentId"))
+	rows, e := a.mediaReader(r).Query("SELECT DISTINCT g.genre FROM item_genres g JOIN items i ON i.id=g.item WHERE (?='' OR i.lib=?) ORDER BY g.genre", q(r, "ParentId"), q(r, "ParentId"))
 	if e != nil {
 		fail(w, 500, "类型查询失败")
 		return
@@ -690,6 +756,10 @@ func (a *App) genres(w http.ResponseWriter, r *http.Request, list bool) {
 	}
 }
 func (a *App) browseFilters(r *http.Request, u User, where string, args []any, latest bool) (string, []any) {
+	if favoriteQuery(r) {
+		where += " AND id IN (SELECT item FROM userdata_extra WHERE user_id=? AND favorite=1)"
+		args = append(args, u.ID)
+	}
 	filters := strings.ToLower(q(r, "Filters"))
 	if strings.EqualFold(q(r, "IsPlayed"), "true") || strings.Contains(filters, "isplayed") {
 		where += " AND id IN (SELECT item FROM userdata WHERE user_id=? AND played=1)"
@@ -738,7 +808,7 @@ func (a *App) browseFilters(r *http.Request, u User, where string, args []any, l
 			wanted[v] = true
 		}
 		names := []string{}
-		rows, e := a.db.Query("SELECT DISTINCT genre FROM item_genres")
+		rows, e := a.mediaReader(r).Query("SELECT DISTINCT genre FROM item_genres")
 		if e == nil {
 			for rows.Next() {
 				var name string
@@ -785,8 +855,11 @@ func browseOrder(r *http.Request) string {
 		dir = " DESC"
 	}
 	for _, key := range strings.Split(strings.ToLower(q(r, "SortBy")), ",") {
-		if col := map[string]string{"sortname": "name", "name": "name", "productionyear": "year", "datecreated": "mtime", "premieredate": "year", "indexnumber": "episode", "parentindexnumber": "season", "random": "id"}[key]; col != "" {
+		key = strings.TrimSpace(key)
+		if col := map[string]string{"sortname": "sort_name", "name": "name", "productionyear": "year", "datecreated": "added_at", "premieredate": "premiere_date", "indexnumber": "episode", "parentindexnumber": "season", "random": "random_key"}[key]; col != "" {
 			out = append(out, col+dir)
+		} else if _, ok := browseSortSpecs[key]; ok {
+			out = append(out, key+dir)
 		}
 	}
 	if len(out) == 0 {

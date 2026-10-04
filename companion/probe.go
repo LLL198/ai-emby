@@ -35,7 +35,7 @@ func (a *App) probeMedia(w http.ResponseWriter, r *http.Request, u User, i strin
 	select {
 	case <-job.done:
 		if job.err != nil {
-			fail(w, 502, job.err.Error())
+			fail(w, 502, safeProbeError(job.err))
 			return
 		}
 		respond(w, job.data)
@@ -64,13 +64,19 @@ func (a *App) extractMedia(ctx context.Context, x Item, t, ua string) (M, error)
 			return nil, err
 		}
 	}
+	input, sourceHost := probeHostSource(ctx, input)
+	if sourceHost != "" {
+		a.mediaProbeLog(x.ID, "已映射到容器宿主机，保留原 Host")
+	}
 	args := append([]string{"-v", "error"}, featureInputArgs(input)...)
 	if strings.HasPrefix(input, "http") {
 		args = append(args, "-user_agent", ua)
+		if sourceHost != "" {
+			args = append(args, "-headers", "Host: "+sourceHost+"\r\n")
+		}
 	}
 	args = append(args, "-show_entries", "format=duration,format_name,size,bit_rate:stream=index,codec_name,codec_type,width,height,channels,channel_layout,sample_rate,bit_rate,avg_frame_rate,r_frame_rate,profile,level,display_aspect_ratio,field_order,bits_per_raw_sample,pix_fmt,color_transfer,color_primaries:stream_tags=language,title:stream_disposition=default,forced", "-of", "json", input)
-	cmd := exec.CommandContext(ctx, "ffprobe", args...)
-	data, e := cmd.Output()
+	data, e := probeOutputWithRetry(ctx, func() ([]byte, error) { return exec.CommandContext(ctx, "ffprobe", args...).Output() })
 	if e != nil {
 		return nil, probeFailure(ctx, e)
 	}
@@ -199,7 +205,7 @@ func (a *App) extractMedia(ctx context.Context, x Item, t, ua string) (M, error)
 	size, _ := strconv.ParseInt(b.Format.Size, 10, 64)
 	if size <= 0 {
 		if strings.HasPrefix(input, "http") {
-			size = remoteMediaSize(ctx, input, ua)
+			size = remoteMediaSizeWithHost(ctx, input, ua, sourceHost)
 		} else if info, err := os.Stat(input); err == nil {
 			size = info.Size()
 		}
@@ -256,6 +262,10 @@ func (a *App) cachedMedia(x Item) M {
 
 // Remote ffprobe inputs may omit format.size; a one-byte range exposes total size.
 func remoteMediaSize(ctx context.Context, address, ua string) int64 {
+	return remoteMediaSizeWithHost(ctx, address, ua, "")
+}
+
+func remoteMediaSizeWithHost(ctx context.Context, address, ua, host string) int64 {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	req, e := http.NewRequestWithContext(ctx, "GET", address, nil)
@@ -264,6 +274,9 @@ func remoteMediaSize(ctx context.Context, address, ua string) int64 {
 	}
 	req.Header.Set("Range", "bytes=0-0")
 	req.Header.Set("User-Agent", ua)
+	if host != "" {
+		req.Host = host
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
 	res, e := client.Do(req)
 	if e != nil {

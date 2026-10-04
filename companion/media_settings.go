@@ -26,11 +26,17 @@ type probeJob struct {
 	data                M
 	err                 error
 	autoNext            bool
+	autoBrowse          bool
+	owners              map[string]bool
+	canceledOwner       bool
+	force               bool
 	cancel              context.CancelFunc
 }
 type probeState struct {
 	mu      sync.Mutex
 	storage sync.Mutex
+	workers sync.WaitGroup
+	stopped bool
 	jobs    map[string]*probeJob
 	queue   []*probeJob
 	running int
@@ -135,47 +141,21 @@ func (a *App) mediaSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.probes.mu.Lock()
-	for _, j := range a.probes.jobs {
-		if !c.PreloadNext && j.autoNext && j.cancel != nil {
-			j.cancel()
-		}
-	}
 	a.dispatchProbesLocked(c.Concurrency)
 	a.probes.mu.Unlock()
+	if !c.PreloadNext {
+		a.cancelProbeOwner("next-episode")
+	}
+	if !c.Browse {
+		a.cancelProbeOwner("browse")
+	}
 	respond(w, c)
 }
 func (a *App) queueProbe(x Item, t, ua string, force bool, automatic ...bool) *probeJob {
-	if x.URL == "" {
-		return nil
-	}
-	if !force {
-		if m := a.cachedMedia(x); len(m) > 0 && m["Partial"] != true {
-			j := &probeJob{done: make(chan struct{}), data: m}
-			close(j.done)
-			return j
-		}
-	}
-	a.probes.mu.Lock()
-	defer a.probes.mu.Unlock()
-	if a.probes.jobs == nil {
-		a.probes.jobs = map[string]*probeJob{}
-	}
-	key := digest(x.URL)
-	if j := a.probes.jobs[key]; j != nil {
-		return j
-	}
-	if len(a.probes.queue) >= 1000 {
-		return nil
-	}
-	j := &probeJob{x: x, token: t, ua: ua, activity: a.newActivity("probe", x.ID, a.mediaLabel(x)), done: make(chan struct{})}
-	j.autoNext = len(automatic) > 0 && automatic[0]
-	a.probes.jobs[key] = j
-	a.probes.queue = append(a.probes.queue, j)
-	a.dispatchProbesLocked(a.probeSettings().Concurrency)
-	return j
+	return a.queueProbeContext(x, t, ua, force, automatic...)
 }
 func (a *App) dispatchProbesLocked(limit int) {
-	for a.probes.running < limit && len(a.probes.queue) > 0 {
+	for !a.probes.stopped && a.probes.running < limit && len(a.probes.queue) > 0 {
 		j := a.probes.queue[0]
 		a.probes.queue[0] = nil
 		a.probes.queue = a.probes.queue[1:]
@@ -184,13 +164,13 @@ func (a *App) dispatchProbesLocked(limit int) {
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		j.cancel = cancel
-		if j.autoNext && !a.probeSettings().PreloadNext {
-			cancel()
-		}
 		a.probes.running++
+		a.probes.workers.Add(1)
 		a.changeActivity(j.activity, func(v *activityEntry) { v.State = "running" })
 		go func() {
-			if m := a.cachedMedia(j.x); len(m) > 0 && m["Partial"] != true {
+			defer a.probes.workers.Done()
+			m := a.cachedMedia(j.x)
+			if !j.force && len(m) > 0 && m["Partial"] != true {
 				j.data = m
 			} else {
 				if ctx.Err() != nil {
@@ -200,15 +180,14 @@ func (a *App) dispatchProbesLocked(limit int) {
 				}
 			}
 			cancel()
-			a.finishActivity(j.activity, j.err)
-			if j.autoNext && !a.probeSettings().PreloadNext {
-				a.changeActivity(j.activity, func(v *activityEntry) { v.State = "cancelled"; v.Error = "" })
-			}
+			a.probeError(j.activity, j.err)
 			a.probes.mu.Lock()
 			a.probes.running--
 			key := digest(j.x.URL)
 			if j.err == nil {
-				delete(a.probes.jobs, key)
+				if a.probes.jobs[key] == j {
+					delete(a.probes.jobs, key)
+				}
 			} else {
 				time.AfterFunc(30*time.Second, func() {
 					a.probes.mu.Lock()

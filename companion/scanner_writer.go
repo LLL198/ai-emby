@@ -58,7 +58,7 @@ func (cache *scanCache) actorImage(item Item, name, thumb string) string {
 	return ""
 }
 
-func (a *App) writeScanBatch(ctx context.Context, cache *scanCache, batch []parsedScanItem, generation string) error {
+func (a *App) writeScanBatch(ctx context.Context, cache *scanCache, batch []parsedScanItem, generation string, newItems *[]string) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -67,7 +67,66 @@ func (a *App) writeScanBatch(ctx context.Context, cache *scanCache, batch []pars
 		return err
 	}
 	defer tx.Rollback()
+	var added []string
+	if newItems != nil {
+		paths := make([]string, 0, len(batch))
+		for _, parsed := range batch {
+			if parsed.Item.Kind == "Movie" || parsed.Item.Kind == "Episode" {
+				paths = append(paths, parsed.Item.Path)
+			}
+		}
+		rows, err := tx.QueryContext(ctx, "SELECT path FROM items WHERE path=ANY($1)", pq.Array(paths))
+		if err != nil {
+			return err
+		}
+		existing := make(map[string]bool, len(paths))
+		for rows.Next() {
+			var path string
+			if err = rows.Scan(&path); err != nil {
+				break
+			}
+			existing[path] = true
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, parsed := range batch {
+			if (parsed.Item.Kind == "Movie" || parsed.Item.Kind == "Episode") && !existing[parsed.Item.Path] {
+				added = append(added, parsed.Item.ID)
+				existing[parsed.Item.Path] = true
+			}
+		}
+	}
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('go_emby.scanner_upsert','true',true)"); err != nil {
+		return err
+	}
+	itemIDs := make([]string, 0, len(batch))
+	for _, parsed := range batch {
+		itemIDs = append(itemIDs, parsed.Item.ID)
+	}
+	metadataRows, err := tx.QueryContext(ctx, "SELECT item,data FROM item_metadata WHERE item=ANY($1)", pq.Array(itemIDs))
+	if err != nil {
+		return err
+	}
+	previousMetadata := make(map[string]sidecar, len(batch))
+	for metadataRows.Next() {
+		var itemID, raw string
+		if err = metadataRows.Scan(&itemID, &raw); err != nil {
+			metadataRows.Close()
+			return err
+		}
+		var metadata sidecar
+		if json.Unmarshal([]byte(raw), &metadata) == nil {
+			previousMetadata[itemID] = metadata
+		}
+	}
+	err = metadataRows.Err()
+	metadataRows.Close()
+	if err != nil {
 		return err
 	}
 	args := make([]any, 0, len(batch)*15)
@@ -76,6 +135,7 @@ func (a *App) writeScanBatch(ctx context.Context, cache *scanCache, batch []pars
 	byID := make(map[string]parsedScanItem, len(batch))
 	for _, parsed := range batch {
 		item := parsed.Item
+		parsed.Metadata = mergeRefreshSidecar(item, parsed.Metadata, previousMetadata[item.ID])
 		args = append(args, item.ID, item.Lib, item.Parent, item.Name, item.Kind, item.Path, item.URL, item.Overview, item.Poster, item.Year, item.Season, item.Episode, item.Mtime, item.Size, generation)
 		data, err := json.Marshal(parsed.Metadata)
 		if err != nil {
@@ -156,5 +216,11 @@ func (a *App) writeScanBatch(ctx context.Context, cache *scanCache, batch []pars
 	if _, err = tx.ExecContext(ctx, bind(dateSQL), dateArgs...); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if newItems != nil {
+		*newItems = append(*newItems, added...)
+	}
+	return nil
 }

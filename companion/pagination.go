@@ -20,6 +20,8 @@ type pageToken struct {
 	Position int
 	Expires  int64
 	Count    int
+	Pivot    string
+	Wrapped  bool
 }
 type pageEntry struct {
 	Token string
@@ -31,7 +33,7 @@ type pageCache struct {
 }
 
 func (a *App) pageSignature(r *http.Request, where, order string, args []any) string {
-	b, _ := json.Marshal([]any{where, order, args, token(r), q(r, "Limit"), q(r, "EnableTotalRecordCount")})
+	b, _ := json.Marshal([]any{where, order, args, token(r), q(r, "Limit"), q(r, "EnableTotalRecordCount"), q(r, "RandomSeed")})
 	return digest(string(b))
 }
 func (a *App) encodePage(p pageToken) string {
@@ -67,6 +69,9 @@ func (a *App) decodePage(s, key string) (pageToken, error) {
 	}
 	if p.Query != key || p.Expires < time.Now().Unix() {
 		return p, errors.New("cursor expired or query changed; restart from first page")
+	}
+	if p.Position < 0 || p.Count < -1 {
+		return p, errors.New("invalid cursor position")
 	}
 	return p, nil
 }
@@ -134,6 +139,14 @@ func itemSortValue(x Item, col string) string {
 		return strconv.Itoa(x.Year)
 	case "mtime":
 		return strconv.FormatInt(x.Mtime, 10)
+	case "added_at":
+		return strconv.FormatInt(x.AddedAt, 10)
+	case "premiere_date":
+		return x.PremiereDate
+	case "sort_name":
+		return x.SortName
+	case "random_key":
+		return x.RandomKey
 	case "season":
 		return strconv.Itoa(x.Season)
 	case "episode":
@@ -142,102 +155,28 @@ func itemSortValue(x Item, col string) string {
 	return ""
 }
 func (a *App) pageItems(r *http.Request, u User, where string, args []any, order string, limit int) ([]Item, pageToken, string, bool, error) {
-	key := a.pageSignature(r, where, order, args)
-	p, e := a.pageStart(r, key)
-	if e != nil {
-		return nil, p, "", false, e
+	if limit < 1 || limit > 10000 {
+		return nil, pageToken{}, "", false, errors.New("invalid page limit")
 	}
-	// Optional totals are calculated once per cursor chain, never on every deep page.
-	if p.Count < 0 && !strings.EqualFold(q(r, "EnableTotalRecordCount"), "false") {
-		if e = a.db.QueryRow("SELECT count(*) FROM items WHERE "+where, args...).Scan(&p.Count); e != nil {
-			return nil, p, "", false, e
-		}
+	if strings.TrimSpace(q(r, "SearchTerm")) != "" {
+		return a.relevancePage(r, u, where, args, order, limit)
 	}
-	columns := []string{}
-	desc := strings.Contains(order, "DESC")
+	if strings.HasPrefix(order, "random_key ") {
+		return a.randomPage(r, where, args, order, limit)
+	}
 	if order == "resume" {
-		columns = []string{"COALESCE((SELECT updated FROM resume_activity WHERE user_id='" + strings.ReplaceAll(u.ID, "'", "''") + "' AND item=items.id),0)", "id"}
-		desc = true
-	} else {
-		for _, part := range strings.Split(order, ",") {
-			columns = append(columns, strings.Fields(part)[0])
+		order = "resumeupdated DESC,id DESC"
+		if strings.EqualFold(q(r, "IncludePlayedAtEnd"), "true") {
+			order = "resumegroup DESC," + order
 		}
 	}
-	direction, op := " ASC", ">"
-	if desc {
-		direction = " DESC"
-		op = "<"
-	}
-	orderParts := []string{}
-	for _, col := range columns {
-		orderParts = append(orderParts, col+direction)
-	}
-	params := append([]any{}, args...)
-	if len(p.Values) > 0 {
-		if len(p.Values) != len(columns) {
-			return nil, p, "", false, errors.New("invalid cursor keys")
-		}
-		where += " AND (" + strings.Join(columns, ",") + ") " + op + " (" + strings.TrimRight(strings.Repeat("?,", len(columns)), ",") + ")"
-		for _, v := range p.Values {
-			params = append(params, v)
-		}
-	}
-	params = append(params, limit+1)
-	sql := "SELECT " + cols + " FROM items WHERE " + where + " ORDER BY " + strings.Join(orderParts, ",") + " LIMIT ?"
-	if len(p.Values) == 0 && p.Position > 0 {
-		sql += " OFFSET ?"
-		params = append(params, p.Position)
-	}
-	rows, e := a.db.Query(sql, params...)
-	if e != nil {
-		return nil, p, "", false, e
-	}
-	loaded := []Item{}
-	for rows.Next() {
-		x, e := readItem(rows)
-		if e != nil {
-			rows.Close()
-			return nil, p, "", false, e
-		}
-		loaded = append(loaded, x)
-	}
-	e = rows.Err()
-	rows.Close()
-	if e != nil {
-		return nil, p, "", false, e
-	}
-	more := len(loaded) > limit
-	if more {
-		loaded = loaded[:limit]
-	}
-	next := ""
-	if more {
-		last := loaded[len(loaded)-1]
-		n := p
-		n.Expires = time.Now().Add(15 * time.Minute).Unix()
-		n.Position += len(loaded)
-		n.Values = nil
-		for _, col := range columns {
-			if strings.HasPrefix(col, "COALESCE") {
-				var updated int64
-				e = a.db.QueryRow("SELECT COALESCE((SELECT updated FROM resume_activity WHERE user_id=? AND item=?),0)", u.ID, last.ID).Scan(&updated)
-				if e != nil {
-					return nil, p, "", false, e
-				}
-				n.Values = append(n.Values, fmt.Sprint(updated))
-			} else {
-				n.Values = append(n.Values, itemSortValue(last, col))
-			}
-		}
-		next = a.savePage(n)
-	}
-	return loaded, p, next, more, nil
+	return a.browsePlanPage(r, u, where, args, order, limit)
 }
 
 // Listing avoids sidecar parsing, actor lookups, filesystem image discovery and probing.
 func (a *App) listDTO(x Item, r *http.Request, u User) M {
 	// Clients such as Infuse use episode lists as their detail payload.
-	if hasBrowseDetailFields(r) {
+	if hasBrowseDetailFields(r) && catalogBatchFrom(r) == nil {
 		m := a.viewerDTO(x, r, u)
 		if requestedField(r, "Etag") {
 			b, _ := json.Marshal(m)
@@ -246,7 +185,7 @@ func (a *App) listDTO(x Item, r *http.Request, u User) M {
 		return m
 	}
 	folder := x.Kind == "Series" || x.Kind == "Season"
-	m := M{"Id": x.ID, "ServerId": a.serverID, "ParentId": x.Parent, "Name": x.Name, "SortName": x.Name, "Overview": x.Overview, "Type": x.Kind, "IsFolder": folder, "MediaType": "Video", "LocationType": "FileSystem", "ProductionYear": x.Year, "IndexNumber": x.Episode, "ParentIndexNumber": x.Season, "ImageTags": M{}, "BackdropImageTags": []string{}, "PrimaryImageAspectRatio": 2.0 / 3, "DateCreated": time.Unix(0, x.Mtime).UTC().Format(time.RFC3339), "UserData": M{"Played": false, "IsFavorite": false, "PlaybackPositionTicks": 0, "Key": x.ID}}
+	m := M{"Id": x.ID, "ServerId": a.serverID, "ParentId": x.Parent, "Name": x.Name, "SortName": x.Name, "Overview": x.Overview, "Type": x.Kind, "IsFolder": folder, "MediaType": "Video", "LocationType": "FileSystem", "ProductionYear": x.Year, "IndexNumber": x.Episode, "ParentIndexNumber": x.Season, "ImageTags": M{}, "BackdropImageTags": []string{}, "PrimaryImageAspectRatio": 2.0 / 3, "DateCreated": catalogCreatedAt(x), "UserData": M{"Played": false, "IsFavorite": false, "PlaybackPositionTicks": 0, "Key": x.ID}}
 	if x.Poster != "" {
 		m["ImageTags"] = M{"Primary": a.listImageTag(x)}
 	}
@@ -263,7 +202,11 @@ func (a *App) listDTO(x Item, r *http.Request, u User) M {
 		}
 	}
 	if !u.API && r != nil && x.URL != "" && strings.Contains(strings.ToLower(q(r, "Fields")), "mediasources") {
-		m["MediaSources"] = []M{a.viewerSource(x, r, u)}
+		m["MediaSources"] = a.versionSourcesForList(x, r, u)
+		m["MediaSourceCount"] = len(m["MediaSources"].([]M))
+	}
+	if hasBrowseDetailFields(r) {
+		a.applyCardFields(x, r, u, m)
 	}
 	if x.Kind == "Movie" {
 		delete(m, "IndexNumber")
@@ -274,38 +217,28 @@ func (a *App) listDTO(x Item, r *http.Request, u User) M {
 		m["IndexNumber"] = x.Season
 		m["SeriesId"] = x.Parent
 	}
+	if requestedField(r, "Etag") {
+		data, _ := json.Marshal(m)
+		m["Etag"] = digest(string(data))
+	}
 	return m
 }
 
 func (a *App) listDTOs(items []Item, r *http.Request, u User) []M {
+	if prepared, err := a.prepareCardList(r, u, items); err == nil {
+		r = prepared
+	}
 	out := make([]M, 0, len(items))
-	positions := map[string]int{}
-	args := []any{u.ID}
 	for _, x := range items {
-		positions[x.ID] = len(out)
-		args = append(args, x.ID)
 		m := a.listDTO(x, r, u)
-		if !m["IsFolder"].(bool) {
+		a.applyCardCover(x, r, m)
+		if !m["IsFolder"].(bool) && m["MediaSourceCount"] == nil {
 			m["MediaSourceCount"] = 1
 		}
 		out = append(out, m)
+		a.applyViewerImageTags(m, u)
 	}
-	if !u.API && len(items) > 0 && !strings.EqualFold(q(r, "EnableUserData"), "false") {
-		rows, e := a.db.Query("SELECT item,position,played FROM userdata WHERE user_id=? AND item IN ("+strings.TrimRight(strings.Repeat("?,", len(items)), ",")+")", args...)
-		if e == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var item string
-				var pos int64
-				var played bool
-				if rows.Scan(&item, &pos, &played) == nil {
-					if i, ok := positions[item]; ok {
-						out[i]["UserData"] = M{"Played": played, "IsFavorite": false, "PlaybackPositionTicks": pos, "Key": item}
-					}
-				}
-			}
-		}
-	}
+	_ = a.fillPlayState(r, u, out)
 	a.fillEpisodeCounts(items, out, u)
 	return out
 }

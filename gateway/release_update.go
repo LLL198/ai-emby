@@ -21,11 +21,14 @@ const updateRepository = "LLL198/ai-emby"
 
 var releaseVersion = "development"
 var updateMu sync.Mutex
-var releaseTag = regexp.MustCompile(`^\d{4}\.\d{2}\.\d{2}-\d{6}$`)
+var releaseSHA256 = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func currentVersion() string {
-	if data, err := os.ReadFile("/app/VERSION"); err == nil && releaseTag.MatchString(strings.TrimSpace(string(data))) {
-		return strings.TrimSpace(string(data))
+	if data, err := os.ReadFile("/app/VERSION"); err == nil {
+		version := strings.TrimSpace(string(data))
+		if known, _ := compareReleaseVersions(version, version); known {
+			return version
+		}
 	}
 	return releaseVersion
 }
@@ -118,7 +121,7 @@ func updateHTTPJSON(ctx context.Context, client *http.Client, endpoint string, o
 	return nil
 }
 
-func latestRelease(ctx context.Context, proxy string) (releaseInfo, updateManifest, string, error) {
+func (checker *releaseChecker) fetch(ctx context.Context, proxy string) (releaseInfo, updateManifest, string, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	defer transport.CloseIdleConnections()
 	if proxy != "" {
@@ -135,7 +138,8 @@ func latestRelease(ctx context.Context, proxy string) (releaseInfo, updateManife
 	if err != nil {
 		return release, manifest, "", err
 	}
-	if release.Draft || release.Prerelease || !releaseTag.MatchString(release.Tag) {
+	versionKnown, _ := compareReleaseVersions(release.Tag, release.Tag)
+	if release.Draft || release.Prerelease || !versionKnown {
 		return release, manifest, "", fmt.Errorf("发布版本无效")
 	}
 	assetName := "ai-emby-linux-" + runtime.GOARCH + ".tar.gz"
@@ -155,7 +159,7 @@ func latestRelease(ctx context.Context, proxy string) (releaseInfo, updateManife
 	if err = updateHTTPJSON(ctx, client, manifestURL, &manifest); err != nil {
 		return release, manifest, "", err
 	}
-	if manifest.Repository != updateRepository || manifest.Version != release.Tag || manifest.Architecture != runtime.GOARCH || manifest.Asset != assetName || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(manifest.SHA256) {
+	if manifest.Repository != updateRepository || manifest.Version != release.Tag || manifest.Architecture != runtime.GOARCH || manifest.Asset != assetName || !releaseSHA256.MatchString(manifest.SHA256) {
 		return release, manifest, "", fmt.Errorf("更新包清单校验失败")
 	}
 	return release, manifest, manifestURL, nil
@@ -175,6 +179,7 @@ func serveReleaseUpdates(db *sql.DB, w http.ResponseWriter, r *http.Request) boo
 	if path != "/System/Updates" && path != "/System/Updates/Status" {
 		return false
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet && (path != "/System/Updates" || r.Method != http.MethodPost) {
 		sessionError(w, 405, "GET/POST required")
 		return true
@@ -207,21 +212,21 @@ func serveReleaseUpdates(db *sql.DB, w http.ResponseWriter, r *http.Request) boo
 		sessionError(w, 503, err.Error())
 		return true
 	}
-	release, _, manifestURL, err := latestRelease(ctx, proxy)
+	release, _, manifestURL, err := updates.latest(ctx, proxy)
 	if err != nil {
 		sessionError(w, 502, err.Error())
 		return true
 	}
+	known, newer := compareReleaseVersions(currentVersion(), release.Tag)
 	if r.Method == http.MethodGet {
-		known := releaseTag.MatchString(currentVersion())
-		scanRespond(w, map[string]any{"CurrentVersion": currentVersion(), "LatestVersion": release.Tag, "VersionKnown": known, "UpdateAvailable": !known || release.Tag > currentVersion(), "Repository": updateRepository, "Enabled": updateEnabled()})
+		scanRespond(w, map[string]any{"CurrentVersion": currentVersion(), "LatestVersion": release.Tag, "VersionKnown": known, "UpdateAvailable": !known || newer, "Repository": updateRepository, "Enabled": updateEnabled()})
 		return true
 	}
 	if !updateEnabled() {
 		sessionError(w, 503, "宿主机更新服务未启动，请先运行仓库 scripts/install-updater.sh")
 		return true
 	}
-	if releaseTag.MatchString(currentVersion()) && release.Tag <= currentVersion() {
+	if known && !newer {
 		sessionError(w, 409, "已是最新版本")
 		return true
 	}

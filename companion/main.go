@@ -126,7 +126,7 @@ func (a *App) init() {
 		}
 		h, e := bcrypt.GenerateFromPassword([]byte(p), 12)
 		must(e)
-		_, e = a.db.Exec("INSERT INTO users VALUES(?,?,?,?,?,?)", id(), "admin", string(h), 1, 1, 5)
+		_, e = a.db.Exec("INSERT INTO users(id,name,hash,admin,first_admin,max_devices) VALUES(?,?,?,?,?,?)", id(), "admin", string(h), 1, 1, 5)
 		must(e)
 	}
 	if k := os.Getenv("BOOTSTRAP_API_KEY"); k != "" {
@@ -217,16 +217,17 @@ func (a *App) auth(r *http.Request) (User, error) {
 func (a *App) userDTO(u User) M {
 	return M{"Id": u.ID, "Name": u.Name, "ServerId": a.serverID, "HasPassword": true, "HasConfiguredPassword": true, "HasConfiguredEasyPassword": false,
 		"Policy": M{"IsAdministrator": u.Admin, "IsDisabled": false, "IsHidden": true, "IsHiddenRemotely": true, "IsHiddenFromUnusedDevices": true,
-			"EnableMediaPlayback": a.canPlay(u.ID), "EnableVideoPlaybackTranscoding": false, "EnableAudioPlaybackTranscoding": false, "EnablePlaybackRemuxing": false,
+			"CanViewHiddenLibraries": a.canViewHiddenLibraries(u.ID),
+			"EnableMediaPlayback":    a.canPlay(u.ID), "EnableVideoPlaybackTranscoding": false, "EnableAudioPlaybackTranscoding": false, "EnablePlaybackRemuxing": false,
 			"EnableContentDeletion": false, "EnableContentDownloading": false, "EnableSubtitleDownloading": false, "EnableSubtitleManagement": false, "EnableSyncTranscoding": false,
 			"EnableAllFolders": true, "EnableAllDevices": true, "EnableAllChannels": false, "EnableRemoteAccess": true,
 			"EnableRemoteControlOfOtherUsers": false, "EnableSharedDeviceControl": false, "EnableLiveTvAccess": false, "EnableLiveTvManagement": false,
 			"EnablePublicSharing": false, "EnableMediaConversion": false, "EnableUserPreferenceAccess": false,
 			"BlockedTags": []string{}, "IncludeTags": []string{}, "AccessSchedules": []M{}, "BlockUnratedItems": []string{}, "EnabledFolders": []string{}, "EnabledDevices": []string{}, "EnabledChannels": []string{}, "ExcludedSubFolders": []string{}, "EnableContentDeletionFromFolders": []string{},
 			"RemoteClientBitrateLimit": 0, "InvalidLoginAttemptCount": 0, "SimultaneousStreamLimit": u.Max},
-		"Configuration": M{"OrderedViews": a.orderedViews(), "DisplayMissingEpisodes": false, "PlayDefaultAudioTrack": true, "SubtitleMode": "Smart",
+		"Configuration": a.managedUserConfiguration(u.ID, M{"OrderedViews": a.orderedViews(), "DisplayMissingEpisodes": false, "PlayDefaultAudioTrack": true, "SubtitleMode": "Smart",
 			"LatestItemsExcludes": []string{}, "MyMediaExcludes": []string{}, "HidePlayedInLatest": false, "HidePlayedInMoreLikeThis": false, "HidePlayedInSuggestions": false,
-			"RememberAudioSelections": false, "RememberSubtitleSelections": false, "EnableNextEpisodeAutoPlay": true, "ResumeRewindSeconds": 0, "IntroSkipMode": "ShowButton", "EnableLocalPassword": false},
+			"RememberAudioSelections": false, "RememberSubtitleSelections": false, "EnableNextEpisodeAutoPlay": true, "ResumeRewindSeconds": 0, "IntroSkipMode": "ShowButton", "EnableLocalPassword": false}),
 		"FirstAdmin": u.First, "MaxDevices": u.Max}
 }
 
@@ -299,6 +300,9 @@ func (a *App) serverInfo() M {
 	return M{"Id": a.serverID, "ServerName": a.displayName(), "Version": "4.8.0.80", "OperatingSystem": "Linux", "ProductName": "AI Emby", "LocalAddress": os.Getenv("PUBLIC_URL"), "WanAddress": os.Getenv("PUBLIC_URL"), "LocalAddresses": []string{os.Getenv("PUBLIC_URL")}, "RemoteAddresses": []string{os.Getenv("PUBLIC_URL")}, "StartupWizardCompleted": true, "SupportsLibraryMonitor": false, "HasUpdateAvailable": false}
 }
 func (a *App) serve(w http.ResponseWriter, r *http.Request) {
+	if isVideoRequest(r.URL.Path) {
+		r = r.WithContext(context.WithValue(r.Context(), redirectTraceKey{}, &redirectTrace{}))
+	}
 	if done := a.beginProxyDebug(&w, r); done != nil {
 		defer done()
 	}
@@ -347,8 +351,8 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	p := embyPath(r.URL.Path)
 	l := strings.ToLower(p)
-	if strings.Contains(l, "/download") || strings.Contains(l, "/subtitles") || strings.HasPrefix(l, "/sync") {
-		fail(w, 403, "下载媒体与字幕已禁用")
+	if strings.Contains(l, "/download") || strings.HasPrefix(l, "/sync") {
+		fail(w, 403, "媒体下载已禁用")
 		return
 	}
 	if l == "/health" {
@@ -419,7 +423,7 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 		a.checkPlayback(w, r)
 		return
 	}
-	if a.taggedImage(w, r, p) {
+	if a.scopedTaggedImage(w, r, p) || a.taggedImage(w, r, p) {
 		return
 	}
 	u, e := a.auth(r)
@@ -428,7 +432,15 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 		fail(w, 401, "请先登录")
 		return
 	}
-	if a.imageUploadRoute(w, r, u, p) {
+	r = r.WithContext(context.WithValue(r.Context(), mediaViewerKey{}, u))
+	if parts, ok := subtitleRouteParts(p); ok {
+		a.serveSubtitle(w, r, u, parts)
+		return
+	}
+	if a.resumeHideRoute(w, r, u, p) || (r.Method == http.MethodDelete && a.resumeDeleteRoute(w, r, u, p)) || a.playStateRoute(w, r, u, p) {
+		return
+	}
+	if a.favoriteCoverRoute(w, r, u, p) || a.imageUploadRoute(w, r, u, p) {
 		return
 	}
 	if a.browseRoute(w, r, u, p) {
@@ -466,6 +478,9 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 		respond(w, a.userDTO(u))
 		return
 	}
+	if a.userManagement(w, r, u, p) {
+		return
+	}
 	if l == "/users" {
 		if !u.Admin && !u.API {
 			fail(w, 403, "无权限")
@@ -480,7 +495,7 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if l == "/library/virtualfolders" {
-		respond(w, a.libraries())
+		a.queryVirtualFolders(w, r, u)
 		return
 	}
 	if l == "/library/refresh" && r.Method == "POST" {
@@ -496,14 +511,10 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 		m := M{}
 		for k, v := range map[string]string{"MovieCount": "Movie", "EpisodeCount": "Episode", "SeriesCount": "Series"} {
 			var n int
-			a.db.QueryRow("SELECT count(*) FROM items WHERE kind=?", v).Scan(&n)
+			a.mediaReader(r).QueryRow("SELECT count(*) FROM items WHERE kind=?", v).Scan(&n)
 			m[k] = n
 		}
 		respond(w, m)
-		return
-	}
-	if l == "/sessions" {
-		respond(w, []any{})
 		return
 	}
 	if strings.HasPrefix(l, "/sessions/playing") {
@@ -516,6 +527,7 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 			PositionTicks *clientTicks
 			RunTimeTicks  clientTicks
 			MediaSourceId string
+			PlaySessionId string
 		}
 		if !body(w, r, &b) {
 			return
@@ -523,8 +535,15 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 		if b.ItemId == "" {
 			b.ItemId = b.MediaSourceId
 		}
+		b.ItemId = canonicalPlaybackID(b.ItemId)
 		if b.ItemId == "" {
 			a.db.QueryRow("SELECT item FROM plays WHERE user_id=? AND device=?", u.ID, u.Device).Scan(&b.ItemId)
+		}
+		if b.ItemId != "" {
+			if _, err := a.itemForUser(r, b.ItemId); err != nil {
+				fail(w, 404, "媒体不存在")
+				return
+			}
 		}
 		if l == "/sessions/playing/stopped" {
 			a.db.Exec("DELETE FROM plays WHERE user_id=? AND device=?", u.ID, u.Device)
@@ -543,6 +562,17 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 				a.playbackProgress(u, b.ItemId, int64(*b.PositionTicks), int64(b.RunTimeTicks))
 			}
 			a.updatePlaybackActivity(u, b.ItemId, l == "/sessions/playing/stopped")
+			a.subtitleSession(u, b.ItemId, b.PlaySessionId, l == "/sessions/playing/stopped")
+			position := int64(0)
+			if b.PositionTicks != nil {
+				position = int64(*b.PositionTicks)
+			}
+			a.notifyPlayback(r, u, b.ItemId, b.PlaySessionId, position, int64(b.RunTimeTicks), l == "/sessions/playing/stopped")
+			var introPosition *int64
+			if b.PositionTicks != nil {
+				introPosition = &position
+			}
+			a.recordIntroEvent(u, b.ItemId, b.PlaySessionId, l, introPosition, int64(b.RunTimeTicks))
 			if b.PositionTicks != nil {
 				a.db.Exec("INSERT INTO userdata(user_id,item,position) VALUES(?,?,?) ON CONFLICT(user_id,item) DO UPDATE SET position=excluded.position", u.ID, b.ItemId, max(int64(*b.PositionTicks), 0))
 			}
@@ -579,7 +609,7 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 				a.password(w, r, u, uid)
 				return
 			case "views":
-				respond(w, M{"Items": a.libraryDTOs(), "TotalRecordCount": len(a.libraries())})
+				a.respondUserLibraries(w, r, u)
 				return
 			case "items":
 				if len(s) > 4 && strings.ToLower(s[4]) != "latest" && strings.ToLower(s[4]) != "resume" {
@@ -593,6 +623,10 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if l == "/items" || l == "/items/resume" {
 		a.items(w, r, u, false)
+		return
+	}
+	if itemID, ok := fastPlaybackItem(p); ok {
+		a.stream(w, r, u, itemID)
 		return
 	}
 	if strings.HasPrefix(l, "/items/") {
@@ -647,20 +681,29 @@ func (a *App) serve(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) users() []M {
 	out := []M{}
-	rows, e := a.db.Query("SELECT id,name,hash,admin,first_admin,max_devices FROM users ORDER BY first_admin DESC,name")
+	rows, e := a.db.Query("SELECT u.id,u.name,u.hash,u.admin,u.first_admin,u.max_devices,COALESCE(l.last_login,0) FROM users u LEFT JOIN user_logins l ON l.user_id=u.id ORDER BY u.first_admin DESC,u.name")
 	if e != nil {
 		return out
 	}
-	defer rows.Close()
+	users := []User{}
+	logins := []int64{}
 	for rows.Next() {
 		var u User
-		if rows.Scan(&u.ID, &u.Name, &u.Hash, &u.Admin, &u.First, &u.Max) == nil {
-			dto := a.userDTO(u)
-			var last int64
-			a.db.QueryRow("SELECT last_login FROM user_logins WHERE user_id=?", u.ID).Scan(&last)
-			dto["LastLoginDate"] = last
-			out = append(out, dto)
+		var last int64
+		if rows.Scan(&u.ID, &u.Name, &u.Hash, &u.Admin, &u.First, &u.Max, &last) == nil {
+			users = append(users, u)
+			logins = append(logins, last)
 		}
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil {
+		return out
+	}
+	for index, user := range users {
+		dto := a.userDTO(user)
+		dto["LastLoginDate"] = logins[index]
+		out = append(out, dto)
 	}
 	return out
 }
@@ -681,10 +724,6 @@ func (a *App) password(w http.ResponseWriter, r *http.Request, u User, uid strin
 		fail(w, 400, "密码需要 10–72 字节")
 		return
 	}
-	if uid == u.ID && bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(b.CurrentPw)) != nil {
-		fail(w, 403, "当前密码不正确")
-		return
-	}
 	h, e := bcrypt.GenerateFromPassword([]byte(b.NewPw), 12)
 	if e != nil {
 		fail(w, 500, "密码生成失败")
@@ -696,6 +735,24 @@ func (a *App) password(w http.ResponseWriter, r *http.Request, u User, uid strin
 		return
 	}
 	defer tx.Rollback()
+	var targetHash string
+	var targetAdmin bool
+	if e = tx.QueryRow("SELECT hash,admin FROM users WHERE id=? FOR UPDATE", uid).Scan(&targetHash, &targetAdmin); e != nil {
+		if errors.Is(e, sql.ErrNoRows) {
+			fail(w, 404, "用户不存在")
+		} else {
+			fail(w, 500, "读取用户失败")
+		}
+		return
+	}
+	if uid != u.ID && !u.Admin {
+		fail(w, 403, "无权限")
+		return
+	}
+	if (uid == u.ID || targetAdmin) && bcrypt.CompareHashAndPassword([]byte(targetHash), []byte(b.CurrentPw)) != nil {
+		fail(w, 403, "当前密码不正确")
+		return
+	}
 	_, e = tx.Exec("UPDATE users SET hash=? WHERE id=?", string(h), uid)
 	if e == nil {
 		_, e = tx.Exec("DELETE FROM tokens WHERE user_id=?", uid)
@@ -715,6 +772,28 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request, u User, p string) {
 		defer a.write.Unlock()
 	}
 	switch p {
+	case "/admin/tmdb":
+		a.tmdbAdmin(w, r)
+	case "/admin/dashboard":
+		a.adminDashboard(w, r)
+	case "/admin/telegram":
+		a.telegramAdmin(w, r)
+	case "/admin/telegram/test":
+		a.telegramTest(w, r)
+	case "/admin/intro-credits":
+		a.introSettingsAPI(w, r)
+	case "/admin/intro-credits/records":
+		a.clearIntroRecords(w, r)
+	case "/admin/subtitle":
+		a.subtitleSettingsAPI(w, r)
+	case "/admin/subtitle/cache":
+		a.subtitleClearCache(w, r)
+	case "/admin/tmdb/secret", "/admin/subtitle/secret", "/admin/telegram/secret":
+		a.settingsSecret(w, r, u, p)
+	case "/admin/library-visibility":
+		a.updateLibraryVisibility(w, r)
+	case "/admin/library-settings":
+		a.librarySettings(w, r)
 	case "/admin/proxy-settings":
 		a.proxySettingsAPI(w, r)
 	case "/admin/proxy-settings/test":
@@ -729,6 +808,12 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request, u User, p string) {
 		a.enhancementSettings(w, r)
 	case "/admin/media-info":
 		a.mediaSettings(w, r)
+	case "/admin/media-info/status":
+		a.mediaProbeStatus(w, r)
+	case "/admin/media-info/automation":
+		a.mediaProbeAutomationAPI(w, r)
+	case "/admin/media-info/batch/status", "/admin/media-info/batch/start", "/admin/media-info/batch/stop":
+		a.mediaProbeBatchAPI(w, r, p)
 	case "/admin/directories", "/admin/order", "/admin/cover":
 		a.extraAdmin(w, r, p)
 	case "/admin/library-folders":
@@ -776,10 +861,7 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request, u User, p string) {
 			fail(w, 405, "POST required")
 			return
 		}
-		for _, lib := range a.libraries() {
-			go a.scanLibraryMode(lib["Id"].(string), true)
-		}
-		respond(w, M{"queued": true})
+		respond(w, M{"queued": a.requestLibraryScans(a.libraryIDs(), true, false)})
 	case "/admin/scan-schedule":
 		a.scanScheduleAPI(w, r)
 	case "/admin/scan":
@@ -800,8 +882,7 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request, u User, p string) {
 			fail(w, 400, "无效扫描模式")
 			return
 		}
-		go a.scanLibraryMode(b.ID, b.Mode == "update")
-		respond(w, M{"queued": true})
+		respond(w, M{"queued": a.requestLibraryScans([]string{b.ID}, b.Mode == "update", false)})
 	case "/admin/user-identity":
 		a.userIdentity(w, r)
 	case "/admin/users":
@@ -819,19 +900,7 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request, u User, p string) {
 			return
 		}
 		if r.Method == "DELETE" {
-			var first bool
-			e := a.db.QueryRow("SELECT first_admin FROM users WHERE id=?", b.ID).Scan(&first)
-			if e != nil {
-				fail(w, 404, "用户不存在")
-				return
-			}
-			if first || b.ID == u.ID {
-				fail(w, 403, "不能删除首位管理员或当前账号")
-				return
-			}
-			_, e = a.db.Exec("DELETE FROM users WHERE id=?", b.ID)
-			if e != nil {
-				fail(w, 500, "删除失败")
+			if !a.deleteUserCompletely(w, u, b.ID) {
 				return
 			}
 			respond(w, M{"ok": true})
@@ -842,29 +911,14 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request, u User, p string) {
 			return
 		}
 		if r.Method == "PUT" {
-			var first bool
-			if a.db.QueryRow("SELECT first_admin FROM users WHERE id=?", b.ID).Scan(&first) != nil {
-				fail(w, 404, "用户不存在")
+			if !a.saveManagedUserPolicy(w, b.ID, managedUserPolicy{IsAdministrator: &b.Admin, Password: b.Password, SimultaneousStreamLimit: &b.MaxDevices, EnableMediaPlayback: b.AllowPlayback}) {
 				return
-			}
-			if first {
-				b.Admin = true
-			}
-			_, e := a.db.Exec("UPDATE users SET max_devices=?,admin=? WHERE id=?", b.MaxDevices, b.Admin, b.ID)
-			if e != nil {
-				fail(w, 500, "保存失败")
-				return
-			}
-			if b.AllowPlayback != nil {
-				if _, e := a.db.Exec("INSERT INTO user_playback(user_id,allowed) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET allowed=excluded.allowed", b.ID, *b.AllowPlayback); e != nil {
-					fail(w, 500, "播放权限保存失败")
-					return
-				}
-				if !*b.AllowPlayback {
-					a.db.Exec("DELETE FROM plays WHERE user_id=?", b.ID)
-				}
 			}
 			respond(w, M{"ok": true})
+			return
+		}
+		if r.Method != http.MethodPost {
+			fail(w, 405, "GET, POST, PUT or DELETE required")
 			return
 		}
 		if len(b.Password) < 10 || len(b.Password) > 72 || strings.TrimSpace(b.Name) == "" {
@@ -883,7 +937,7 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request, u User, p string) {
 			return
 		}
 		defer tx.Rollback()
-		_, e = tx.Exec("INSERT INTO users VALUES(?,?,?,?,?,?)", uid, b.Name, string(h), b.Admin, false, b.MaxDevices)
+		_, e = tx.Exec("INSERT INTO users(id,name,hash,admin,first_admin,max_devices) VALUES(?,?,?,?,?,?)", uid, b.Name, string(h), b.Admin, false, b.MaxDevices)
 		if e == nil && b.AllowPlayback != nil {
 			_, e = tx.Exec("INSERT INTO user_playback(user_id,allowed) VALUES(?,?)", uid, *b.AllowPlayback)
 		}
@@ -973,14 +1027,14 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request, u User, p string) {
 	case "/admin/status":
 		var n int
 		a.db.QueryRow("SELECT count(*) FROM items").Scan(&n)
-		respond(w, M{"Items": n, "Database": "SQLite WAL / synchronous FULL", "Transcoding": false, "Playback": "302 redirect only", "DeviceLeaseSeconds": 180})
+		respond(w, M{"Items": n, "Database": "PostgreSQL", "Transcoding": false, "Playback": "302 redirect only", "DeviceLeaseSeconds": 180})
 	default:
 		fail(w, 404, "not found")
 	}
 }
 func (a *App) libraries() []M {
 	out := []M{}
-	rows, e := a.db.Query("SELECT id,name,path,kind,status,scanned,error,count,duration FROM libraries ORDER BY COALESCE((SELECT position FROM library_order WHERE library_id=libraries.id),2147483647),name")
+	rows, e := a.db.Query("SELECT id,name,path,kind,status,scanned,error,count,duration,hidden FROM libraries ORDER BY COALESCE((SELECT position FROM library_order WHERE library_id=libraries.id),2147483647),name")
 	if e != nil {
 		return out
 	}
@@ -989,8 +1043,11 @@ func (a *App) libraries() []M {
 		var i, n, p, k, s, er string
 		var t, c int64
 		var d float64
-		rows.Scan(&i, &n, &p, &k, &s, &t, &er, &c, &d)
-		out = append(out, M{"Id": i, "ItemId": i, "Name": n, "Path": p, "Locations": []string{p}, "CollectionType": k, "Status": s, "Scanned": t, "Error": er, "Count": c, "Duration": d})
+		var hidden bool
+		if rows.Scan(&i, &n, &p, &k, &s, &t, &er, &c, &d, &hidden) != nil {
+			return []M{}
+		}
+		out = append(out, M{"Id": i, "ItemId": i, "Name": n, "Path": p, "Locations": []string{p}, "CollectionType": k, "Status": s, "Scanned": t, "Error": er, "Count": c, "Duration": d, "Hidden": hidden})
 	}
 	rows.Close()
 	for _, lib := range out {
@@ -1024,7 +1081,7 @@ func readItem(s interface{ Scan(...any) error }) (Item, error) {
 	return x, e
 }
 func (a *App) item(i string) (Item, error) {
-	return readItem(a.db.QueryRow("SELECT "+cols+" FROM items WHERE id=?", i))
+	return readItem(a.db.QueryRow("SELECT "+cols+" FROM items WHERE id=?", canonicalPlaybackID(i)))
 }
 func (a *App) dto(x Item) M {
 	folder := x.Kind == "Series" || x.Kind == "Season"
@@ -1052,16 +1109,16 @@ func (a *App) source(x Item, t string) M {
 }
 func (a *App) single(w http.ResponseWriter, r *http.Request, u User, i string) {
 	if i == "root" || i == a.serverID {
-		respond(w, a.rootDTO())
+		respond(w, a.userRootDTO(r, u))
 		return
 	}
 	if strings.HasPrefix(i, "person-") {
 		a.personDetail(w, r, i)
 		return
 	}
-	x, e := a.item(i)
+	x, e := a.itemForUser(r, i)
 	if e != nil {
-		for _, v := range a.libraryDTOs() {
+		for _, v := range a.userLibraryDTOs(r, u) {
 			if v["Id"] == i {
 				respond(w, v)
 				return
@@ -1073,15 +1130,13 @@ func (a *App) single(w http.ResponseWriter, r *http.Request, u User, i string) {
 	// Respond with local/cached metadata first; network probing never blocks detail rendering.
 	if cfg := a.probeSettings(); !u.API && cfg.Browse {
 		defer func() {
-			a.queueProbe(x, token(r), r.UserAgent(), false)
+			a.queueBrowseMediaInfo(w, r, x)
 		}()
 	}
 	m := a.viewerDTO(x, r, u)
-	if !u.API {
-		var pos int64
-		var played bool
-		a.db.QueryRow("SELECT position,played FROM userdata WHERE user_id=? AND item=?", u.ID, i).Scan(&pos, &played)
-		m["UserData"] = M{"PlaybackPositionTicks": pos, "Played": played, "IsFavorite": false}
+	if err := a.fillPlayState(r, u, []M{m}); err != nil {
+		fail(w, 500, "读取播放状态失败")
+		return
 	}
 	respond(w, m)
 	_ = http.NewResponseController(w).Flush()
@@ -1092,24 +1147,30 @@ func (a *App) items(w http.ResponseWriter, r *http.Request, u User, latest bool)
 	resume := strings.HasSuffix(strings.ToLower(r.URL.Path), "/resume") || strings.Contains(strings.ToLower(q(r, "Filters")), "isresumable")
 	args := []any{}
 	if !resume && !latest && (parentlessBrowse(r) || libraryTypes(r)) {
-		respond(w, M{"Items": a.libraryDTOs(), "TotalRecordCount": len(a.libraries()), "StartIndex": 0})
+		a.respondUserLibraries(w, r, u)
 		return
 	}
 	if resume {
-		where += " AND kind IN ('Movie','Episode') AND id IN (SELECT item FROM userdata WHERE user_id=? AND position>0 AND played=0)"
+		where += " AND id IN (" + resumeWinner(strings.EqualFold(q(r, "IncludePlayedAtEnd"), "true")) + ")"
 		args = append(args, u.ID)
 	}
 	parent := q(r, "ParentId")
+	parent = canonicalPlaybackID(parent)
+	if parent == "favorites" {
+		parent = ""
+		where += " AND kind IN ('Movie','Series') AND id IN (SELECT item FROM userdata_extra WHERE user_id=? AND favorite=1)"
+		args = append(args, u.ID)
+	}
 	if parent == "root" || parent == a.serverID {
 		parent = ""
 		if !strings.EqualFold(q(r, "Recursive"), "true") && q(r, "IncludeItemTypes") == "" {
-			respond(w, M{"Items": a.libraryDTOs(), "TotalRecordCount": len(a.libraries()), "StartIndex": 0})
+			a.respondUserLibraries(w, r, u)
 			return
 		}
 	}
 	if parent != "" {
 		var n int
-		a.db.QueryRow("SELECT count(*) FROM libraries WHERE id=?", parent).Scan(&n)
+		a.mediaReader(r).QueryRow("SELECT count(*) FROM libraries WHERE id=?", parent).Scan(&n)
 		if n > 0 {
 			where += " AND lib=?"
 			args = append(args, parent)
@@ -1142,23 +1203,11 @@ func (a *App) items(w http.ResponseWriter, r *http.Request, u User, latest bool)
 		}
 		where += " AND id IN (" + strings.TrimRight(strings.Repeat("?,", len(parts)), ",") + ")"
 		for _, v := range parts {
-			args = append(args, v)
+			args = append(args, canonicalPlaybackID(v))
 		}
 	}
 	if s := strings.TrimSpace(q(r, "SearchTerm")); s != "" {
-		initials := a.defaultOn("search_by_initials") && isInitialsQuery(s)
-		prefix := "%"
-		if initials && len(s) <= 2 {
-			prefix = ""
-		}
-		clause := "name ILIKE ? ESCAPE '\\'"
-		s = strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(s)
-		args = append(args, prefix+s+"%")
-		if initials {
-			clause += " OR media_initials(name) LIKE ? ESCAPE '\\'"
-			args = append(args, prefix+strings.ToLower(s)+"%")
-		}
-		where += " AND (" + clause + ")"
+		where, args = a.titleSearchWhere(where, args, s, q(r, "IncludeItemTypes") == "" && parent == "" && !resume && !latest)
 	}
 	if s := strings.TrimSpace(q(r, "NameStartsWith")); s != "" {
 		s = strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(s)
@@ -1182,7 +1231,7 @@ func (a *App) items(w http.ResponseWriter, r *http.Request, u User, latest bool)
 		}
 	}
 	where, args = a.browseFilters(r, u, where, args, latest)
-	if !u.API && !resume && q(r, "Ids") == "" {
+	if !u.API && !resume && q(r, "Ids") == "" && strings.TrimSpace(q(r, "SearchTerm")) == "" {
 		where, args = a.mergeWhere(where, args)
 	}
 	limit, _ := strconv.Atoi(q(r, "Limit"))
@@ -1201,7 +1250,7 @@ func (a *App) items(w http.ResponseWriter, r *http.Request, u User, latest bool)
 	}
 	order := browseOrder(r)
 	if latest {
-		order = "mtime DESC,id DESC"
+		order = "latestadded DESC,id DESC"
 	}
 	if resume {
 		order = "resume"
@@ -1214,8 +1263,7 @@ func (a *App) items(w http.ResponseWriter, r *http.Request, u User, latest bool)
 	}
 	if !u.API && browseMediaDetails(r) && len(loaded) == 1 && loaded[0].ID == strings.TrimSpace(q(r, "Ids")) && a.probeSettings().Browse {
 		defer func() {
-			_ = http.NewResponseController(w).Flush()
-			a.queueProbe(loaded[0], token(r), r.UserAgent(), false)
+			a.queueBrowseMediaInfo(w, r, loaded[0])
 		}()
 	}
 	out := a.listDTOs(loaded, r, u)
@@ -1268,16 +1316,17 @@ func (a *App) reserve(u User, item string) error {
 	return tx.Commit()
 }
 func (a *App) playback(w http.ResponseWriter, r *http.Request, u User, i string) {
-	x, e := a.item(i)
+	x, e := a.itemForUser(r, i)
 	if e != nil || x.URL == "" {
 		fail(w, 404, "无可播放源")
 		return
 	}
 	if !u.API {
-		if e = a.reserve(u, i); e != nil {
+		if e = a.reserve(u, x.ID); e != nil {
 			fail(w, 403, e.Error())
 			return
 		}
+		a.prepareSubtitles(x)
 	}
 	respond(w, M{"MediaSources": a.versionSources(x, r, u, false), "PlaySessionId": id()})
 }
@@ -1286,13 +1335,13 @@ func (a *App) stream(w http.ResponseWriter, r *http.Request, u User, i string) {
 		fail(w, 405, "GET required")
 		return
 	}
-	x, e := a.item(i)
+	x, e := a.itemForUser(r, i)
 	if e != nil || x.URL == "" {
 		fail(w, 404, "无可播放源")
 		return
 	}
 	if !u.API {
-		if e = a.reserve(u, i); e != nil {
+		if e = a.reserve(u, x.ID); e != nil {
 			fail(w, 403, e.Error())
 			return
 		}
@@ -1314,6 +1363,12 @@ func (a *App) stream(w http.ResponseWriter, r *http.Request, u User, i string) {
 			w.WriteHeader(http.StatusFound)
 			return
 		}
+	}
+	if !u.API && a.tryFastNanShare(w, r, u.ID, u.Device, x) {
+		return
+	}
+	if r.Context().Err() != nil {
+		return
 	}
 	if endpoint := strmResolver(x.URL); !u.API && endpoint != "" {
 		a.resolveSTRM(w, r, x, endpoint)
@@ -1389,10 +1444,17 @@ func main() {
 		return
 	}
 	serviceCtx, serviceCancel := context.WithCancel(context.Background())
+	a.loadIntroSettings()
 	defer serviceCancel()
 	go a.reclaimIdleMemory()
-	go a.watchMedia()
-	go a.monitorScraper(serviceCtx)
+	var mediaWorkers sync.WaitGroup
+	for _, work := range []func(context.Context){a.watchMediaContext, a.monitorScraper, a.monitorMediaProbe} {
+		mediaWorkers.Add(1)
+		go func(work func(context.Context)) {
+			defer mediaWorkers.Done()
+			work(serviceCtx)
+		}(work)
+	}
 	go a.runScanSchedule()
 	if e := a.migrateMedia(); e != nil {
 		log.Printf("media cache migration: %v", e)
@@ -1429,6 +1491,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
+	serviceCancel()
+	mediaWorkers.Wait()
+	a.stopMediaProbes()
+	a.stopIntroLearning()
 	a.scan.Lock()
 	defer a.scan.Unlock()
 	db.Close()
