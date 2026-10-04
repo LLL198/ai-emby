@@ -538,7 +538,8 @@ func (a *App) browseRoute(w http.ResponseWriter, r *http.Request, u User, p stri
 	if len(parts) == 3 && strings.EqualFold(parts[0], "shows") && (strings.EqualFold(parts[2], "seasons") || strings.EqualFold(parts[2], "episodes")) {
 		setQuery(r, "ParentId", parts[1])
 		if strings.EqualFold(parts[2], "seasons") {
-			setQuery(r, "IncludeItemTypes", "Season")
+			a.showSeasons(w, r, u, parts[1])
+			return true
 		} else {
 			setQuery(r, "IncludeItemTypes", "Episode")
 			setQuery(r, "Recursive", "true")

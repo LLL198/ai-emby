@@ -93,6 +93,12 @@ func featureGatewayItemAllowed(db *sql.DB, user featureGatewayUser, id string) b
 	if user.Admin {
 		return true
 	}
+	if strings.HasPrefix(id, "season-") {
+		value := strings.TrimPrefix(id, "season-")
+		if index := strings.LastIndexByte(value, '-'); index > 0 {
+			id = value[:index]
+		}
+	}
 	var lib string
 	err := db.QueryRow("SELECT lib FROM items WHERE id=$1 UNION ALL SELECT id FROM libraries WHERE id=$1 LIMIT 1", id).Scan(&lib)
 	if err == sql.ErrNoRows {

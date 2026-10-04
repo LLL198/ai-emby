@@ -154,6 +154,10 @@ func (a *App) enrich(x Item, m M) {
 	}
 	if x.Kind == "Episode" {
 		parent, _ := a.item(x.Parent)
+		if parent.Kind == "Series" {
+			season := flatSeasonItem(parent, x.Season)
+			m["SeasonId"], m["SeasonName"] = season.ID, season.Name
+		}
 		if parent.Kind == "Season" {
 			m["SeasonId"] = parent.ID
 			m["SeasonName"] = parent.Name

@@ -1108,6 +1108,16 @@ func (a *App) source(x Item, t string) M {
 	return M{"Id": x.ID, "Name": x.Name, "Path": x.URL, "Protocol": "Http", "Type": "Default", "Container": ext, "IsRemote": true, "SupportsDirectPlay": true, "SupportsDirectStream": true, "SupportsTranscoding": false, "RequiresOpening": false, "RequiresClosing": false, "MediaStreams": []any{}, "DirectStreamUrl": "/emby/Videos/" + x.ID + "/stream." + ext + "?Static=true&api_key=" + url.QueryEscape(t), "AddApiKeyToDirectStreamUrl": false}
 }
 func (a *App) single(w http.ResponseWriter, r *http.Request, u User, i string) {
+	if seriesID, number, ok := parseFlatSeasonID(i); ok {
+		series, err := a.itemForUser(r, seriesID)
+		var total, unplayed int
+		if err != nil || series.Kind != "Series" || a.mediaReader(r).QueryRow("SELECT count(*),count(*) FILTER (WHERE COALESCE(d.played,0)=0) FROM items i LEFT JOIN userdata d ON d.item=i.id AND d.user_id=? WHERE i.kind='Episode' AND i.parent IN ("+a.seriesParents(u)+") AND i.season=?", u.ID, series.ID, number).Scan(&total, &unplayed) != nil || total == 0 {
+			fail(w, 404, "季不存在")
+			return
+		}
+		respond(w, a.flatSeasonDTO(flatSeasonItem(series, number), r, u, total, unplayed))
+		return
+	}
 	if i == "root" || i == a.serverID {
 		respond(w, a.userRootDTO(r, u))
 		return
@@ -1156,6 +1166,18 @@ func (a *App) items(w http.ResponseWriter, r *http.Request, u User, latest bool)
 	}
 	parent := q(r, "ParentId")
 	parent = canonicalPlaybackID(parent)
+	if seriesID, number, ok := parseFlatSeasonID(parent); ok {
+		series, err := a.itemForUser(r, seriesID)
+		if err != nil || series.Kind != "Series" {
+			fail(w, 404, "剧集不存在")
+			return
+		}
+		// Restrict to direct episodes; nested season folders have their own IDs.
+		where += " AND kind='Episode' AND season=?"
+		args = append(args, number)
+		parent = series.ID
+		setQuery(r, "Recursive", "false")
+	}
 	if parent == "favorites" {
 		parent = ""
 		where += " AND kind IN ('Movie','Series') AND id IN (SELECT item FROM userdata_extra WHERE user_id=? AND favorite=1)"

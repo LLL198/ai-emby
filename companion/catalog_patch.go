@@ -170,6 +170,10 @@ func (a *App) applyCardFields(item Item, r *http.Request, user User, dto M) {
 	}
 	if batch := catalogBatchFrom(r); batch != nil && (item.Kind == "Season" || item.Kind == "Episode") {
 		parent := batch.items[item.Parent]
+		if item.Kind == "Episode" && parent.Kind == "Series" {
+			season := flatSeasonItem(parent, item.Season)
+			dto["SeasonId"], dto["SeasonName"] = season.ID, season.Name
+		}
 		if parent.Kind == "Season" {
 			dto["SeasonId"] = parent.ID
 			dto["SeasonName"] = parent.Name
