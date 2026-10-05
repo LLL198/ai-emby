@@ -14,8 +14,8 @@ const variant=isNailong ? {
   film:'ai-emby-boot-v4.mp4',poster:'ai-emby-boot-poster-v4.jpg',
   label:'GOLD / AZURE',subtitle:'欢迎进入你的私人影院'
 };
-if(isLogin){variant.film='ai-emby-login-background-v4-4k.mp4';variant.poster='ai-emby-login-poster-v4-4k.jpg';}
-else if(is4K&&!isNailong){variant.film='ai-emby-boot-v5-4k.mp4';variant.poster='ai-emby-boot-poster-v5-4k.jpg';}
+if(isLogin){variant.film='ai-emby-login-background-v5-4k.mp4';variant.poster='ai-emby-login-poster-v5-4k.jpg';}
+else if(is4K&&!isNailong){variant.film='ai-emby-boot-v6-4k.mp4';variant.poster='ai-emby-boot-poster-v6-4k.jpg';}
 const { createCanvas, loadImage, GlobalFonts } = require(renderArgs[0] || '@napi-rs/canvas');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
@@ -68,7 +68,7 @@ function makeEdges(image) {
 // Both keyframes share the same camera and character. Only the eye socket is
 // animated, keeping hair, cheek, brow and background completely stable.
 function makeEyeMotion(openImage,closedImage,geometry={
-  left:1255,span:183,region:[1205,276,265,153],base:[345,22],closed:[350,17,18],
+  left:1210,span:235,region:[1175,250,315,205],base:[345,22],closed:[350,17,18],
   upperArc:42,lowerArc:30,iris:[1349,350,47]
 }) {
   const open=createCanvas(W,H),closed=createCanvas(W,H),pose=createCanvas(W,H);
@@ -98,9 +98,9 @@ function makeEyeMotion(openImage,closedImage,geometry={
     if(p>=1)return pose;
     for(let x=0;x<region.w;x++) {
       const eye=contours(x+region.x),upper=eye.c+(eye.upper-eye.c)*p,lower=eye.c+(eye.lower-eye.c)*p;
-      // The iris bounds are narrower than the lash tips. Taper lid motion into
-      // stationary corners instead of leaving a closed-skin rectangle there.
-      const motionWeight=geometry.round?1:smooth(0,.16,eye.u)*smooth(0,.16,1-eye.u);
+      // Motion covers the complete lash outline, including the outer corner.
+      // Taper only the ends so no fixed skin patch interrupts the moving lid.
+      const motionWeight=geometry.round?1:smooth(0,.08,eye.u)*smooth(0,.08,1-eye.u);
       for(let y=0;y<region.h;y++) {
         const gy=y+region.y,i=(y*region.w+x)*4;
         const feather=Math.min(smooth(0,22,x),smooth(0,22,region.w-1-x),smooth(0,20,y),smooth(0,20,region.h-1-y));
@@ -109,14 +109,16 @@ function makeEyeMotion(openImage,closedImage,geometry={
           if(gy<upper) {
             // The upper lid's skin and lash line physically travel upwards.
             sourceY=region.y+(gy-region.y)*(eye.c-region.y)/(upper-region.y);
-            fromOpen=geometry.round?0:p*p;
+            // Keep the final lash line out of the skin above the moving lid.
+            // Mixing it in early would leave two lash lines and a skin strip.
+            fromOpen=geometry.round?0:p*p*smooth(24*sy,48*sy,eye.upper-gy);
             const lash=1-smooth(4*sy,22*sy,Math.abs(gy-upper));
             if(lash>0&&!geometry.round) { openY=eye.upper+(gy-upper);fromOpen=Math.max(fromOpen,lash*smooth(0,.16,p)); }
           } else if(gy>lower) {
             const lashMargin=12*sy*smooth(0,.2,p)*eye.arc;
             const start=eye.c+lashMargin,bottom=region.y+region.h;
             sourceY=start+(gy-lower)*(bottom-start)/(bottom-lower);
-            fromOpen=geometry.round?0:p*p;
+            fromOpen=geometry.round?0:p*p*smooth(24*sy,48*sy,gy-eye.lower);
             const lash=1-smooth(4*sy,18*sy,Math.abs(gy-lower));
             if(lash>0&&!geometry.round) { openY=eye.lower+(gy-lower);fromOpen=Math.max(fromOpen,lash*smooth(0,.25,p)); }
           } else {

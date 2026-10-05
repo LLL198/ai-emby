@@ -17,7 +17,7 @@ body.panel-view.cinema-login .login-cinema-title {margin:0;line-height:0}
 /* 140px lettering on a 1920 × 1080 stage, matching the opening film's scale. */
 .login-title-canvas {display:block;width:100%;height:auto;aspect-ratio:720/170}
 .login-backdrop {position:fixed;inset:0;z-index:-2;background:#020508 center/cover no-repeat;pointer-events:none}
-.scene-still .login-backdrop {background-image:url('/web/assets/ai-emby-login-poster-v4-4k.jpg')}
+.scene-still .login-backdrop {background-image:url('/web/assets/ai-emby-login-poster-v5-4k.jpg')}
 .login-film {display:block;width:100%;height:100%;max-height:none;margin:0;background:#020508;object-fit:cover;object-position:center;opacity:0}
 .film-ready .login-film {opacity:1}
 .login-title-block .login-mark {opacity:var(--title-caption,0)}
