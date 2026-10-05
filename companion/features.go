@@ -206,6 +206,8 @@ func (a *App) featureRoute(w http.ResponseWriter, r *http.Request, user User) bo
 		a.featureLibraryAction(w, r)
 	case path == "/admin/features/cache":
 		a.featureCacheAPI(w, r)
+	case path == "/admin/features/playback-control":
+		a.featurePlaybackControl(w, r, user)
 	case path == "/admin/features/devices":
 		a.featureDevicesAPI(w, r)
 	case path == "/admin/features/playback":
@@ -253,6 +255,8 @@ func (a *App) featureRoute(w http.ResponseWriter, r *http.Request, user User) bo
 		a.featureInspectPlayback(w, r, user)
 	case path == "/features/playback-status":
 		a.featurePlaybackStatus(w, r, user)
+	case path == "/features/playback-control":
+		a.featurePlaybackControl(w, r, user)
 	case path == "/features/subtitle":
 		a.featureSubtitleAPI(w, r, user)
 	case path == "/features/chapters":

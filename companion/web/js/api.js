@@ -15,6 +15,7 @@ async function api(path, method = "GET", data, options = {}) {
           ? data
           : JSON.stringify(data),
     signal: options.signal,
+    keepalive: options.keepalive === true,
   });
   let body = await res.text();
   try {

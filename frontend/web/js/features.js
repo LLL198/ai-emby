@@ -54,6 +54,17 @@ const Features = (() => {
     error: "失败",
     cancelled: "取消",
     interrupted: "已中断",
+    "reading-disc": "读取光盘目录",
+    caching: "完整镜像下载中",
+    extracting: "提取正片中",
+    probing: "检查媒体格式",
+    remuxing: "封装播放视频",
+    transcoding: "转码中",
+    stopping: "停止中",
+    stopped: "已停止",
+    deleting: "删除中",
+    "delete-failed": "删除失败",
+    failed: "失败",
   };
   function ensureSections() {
     const app = $("#app");
@@ -215,10 +226,10 @@ const Features = (() => {
         const b = await api(endpoint("cache"));
         if (!still()) return;
         host.innerHTML = `<div class="feature-stats"><article><small>播放缓存</small><strong>${bytes(b.Size)}</strong><span>上限 ${bytes(b.Limit)}</span></article><article><small>作品资料缓存</small><strong>${bytes(b.MetadataSize)}</strong></article><article><small>本地弹幕</small><strong>${bytes(b.DanmakuSize)}</strong></article></div><div class="feature-actions"><button class="secondary" id="feature-clean-cache">清理空闲播放缓存</button><button class="secondary" onclick="Features.load(18)">刷新</button></div>${table(
-          ["作品", "大小", "最近使用", "状态", "操作"],
+          ["作品", "缓存大小", "处理方式", "最近使用", "状态", "操作"],
           b.Items.map(
             (x) =>
-              `<tr><td>${esc(x.Name || x.ID)}${x.Error ? `<small>${esc(x.Error)}</small>` : ""}</td><td>${bytes(x.Size)}</td><td>${date(x.Updated)}</td><td>${x.Active ? "使用中" : "空闲"}</td><td><button class="secondary" data-cache="${x.ID}" ${x.Active ? "disabled" : ""}>删除</button></td></tr>`,
+              `<tr><td>${esc(x.Name || x.ID)}${x.Error ? `<small>${esc(x.Error)}</small>` : ""}</td><td>${bytes(x.Size)}${x.State === "caching" && x.Total > 0 ? `<small>镜像下载 ${Math.min(100, Math.floor(x.Downloaded / x.Total * 100))}%</small>` : ""}</td><td>${x.SourceMode === "range" ? "按需读取，无需完整下载" : x.SourceMode === "cache" ? "完整镜像缓存" : "网页播放缓存"}${x.FallbackReason ? `<small>${esc(x.FallbackReason)}</small>` : ""}</td><td>${date(x.Updated)}</td><td>${x.Paused ? "已暂停" : states[x.State] || (x.Active ? "使用中" : "空闲")}</td><td><div class="feature-actions">${!x.Done && x.State && !["interrupted", "stopping", "deleting"].includes(x.State) ? `<button class="secondary" data-playback-control="${x.ID}" data-action="${x.Paused ? "resume" : "pause"}">${x.Paused ? "继续" : "暂停"}</button><button class="secondary" data-playback-control="${x.ID}" data-action="stop">停止</button>` : ""}${x.State ? `<button class="secondary" data-playback-control="${x.ID}" data-action="delete" ${x.State === "deleting" ? "disabled" : ""}>删除任务和缓存</button>` : `<button class="secondary" data-cache="${x.ID}" ${x.Active ? "disabled" : ""}>删除缓存</button>`}</div></td></tr>`,
           ),
         )}`;
         const clean = async (data) => {
@@ -234,6 +245,18 @@ const Features = (() => {
           .forEach(
             (b) => (b.onclick = run(() => clean({ IDs: [b.dataset.cache] }))),
           );
+        host.querySelectorAll("[data-playback-control]").forEach(button => {
+          button.onclick = run(async () => {
+            button.disabled = true;
+            try {
+              await api(endpoint("playback-control"), "POST", {ID:button.dataset.playbackControl, Action:button.dataset.action});
+              toast({pause:"后台任务已暂停", resume:"后台任务已继续", stop:"正在停止任务", delete:"正在删除任务和缓存"}[button.dataset.action]);
+              await load(18);
+            } finally { button.disabled = false; }
+          });
+        });
+        if (b.Items.some(x => x.State === "deleting" || x.State === "stopping"))
+          timer = setTimeout(() => { if (still()) load(18); }, 1000);
       }
       if (index === 19) {
         const b = await api(endpoint("devices"));

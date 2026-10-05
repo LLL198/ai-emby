@@ -51,8 +51,14 @@ type featureTranscode struct {
 	Error                            string
 	State                            string
 	SourceMode                       string
+	FallbackReason                   string
+	Paused                           bool
 	Downloaded, Total                int64
 	cancel                           context.CancelFunc
+	control                          *playbackTaskControl
+	finished                         chan struct{}
+	deleting                         bool
+	heartbeat                        time.Time
 }
 
 func (a *App) featurePlaybackConfig() featurePlaybackConfig {
@@ -455,7 +461,21 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 	dir := filepath.Join(featureDataRoot(), "playback", key)
 	a.features.cacheMu.Lock()
 	job := a.features.transcodes[key]
+	if job != nil && job.deleting {
+		a.features.cacheMu.Unlock()
+		fail(w, 409, "此播放任务正在删除，请稍后重试")
+		return
+	}
 	if job != nil && job.Done && job.Error != "" {
+		if job.finished != nil {
+			select {
+			case <-job.finished:
+			default:
+				a.features.cacheMu.Unlock()
+				fail(w, 409, "旧播放任务正在退出，请稍后重试")
+				return
+			}
+		}
 		delete(a.features.transcodes, key)
 		job = nil
 	}
@@ -477,20 +497,23 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 			return
 		}
 		ctx, cancel := context.WithCancel(a.features.ctx)
-		job = &featureTranscode{ID: key, Item: x.ID, Owner: user.ID, Name: x.Name, Directory: dir, Started: time.Now(), Used: time.Now(), State: "queued", cancel: cancel}
+		job = &featureTranscode{ID: key, Item: x.ID, Owner: user.ID, Name: x.Name, Directory: dir, Started: time.Now(), Used: time.Now(), State: "queued", cancel: cancel, control: newPlaybackTaskControl(), finished: make(chan struct{})}
 		a.features.transcodes[key] = job
 		if data, e := os.ReadFile(filepath.Join(dir, "record.json")); e == nil {
 			var record featureTranscode
 			output, outputErr := os.Stat(filepath.Join(dir, "video.mp4"))
 			if json.Unmarshal(data, &record) == nil && record.Done && record.Error == "" && outputErr == nil && output.Mode().IsRegular() && output.Size() >= 32 {
 				job.Done, job.State = true, "complete"
+				job.SourceMode, job.FallbackReason = record.SourceMode, record.FallbackReason
 			}
 		}
 		if !job.Done {
+			_ = os.WriteFile(filepath.Join(dir, "record.json"), []byte(featureJSON(job)), 0600)
 			_ = os.Remove(filepath.Join(dir, "video.mp4"))
 			a.features.wg.Add(1)
 			go func() {
 				defer a.features.wg.Done()
+				defer close(job.finished)
 				defer cancel()
 				var err error
 				var online *isoOnlineInput
@@ -505,6 +528,13 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 					} else if ctx.Err() == nil {
 						a.features.cacheMu.Lock()
 						job.SourceMode = "cache"
+						job.FallbackReason = "镜像结构暂不支持在线解析"
+						if errors.Is(err, errISORangeUnavailable) {
+							job.FallbackReason = "网盘源不支持可靠的分段读取"
+						}
+						if errors.Is(err, context.DeadlineExceeded) {
+							job.FallbackReason = "在线读取镜像目录超时"
+						}
 						a.features.cacheMu.Unlock()
 						input, err = a.prepareISOPlayback(ctx, input, dir, isoInfo, job)
 					}
@@ -512,7 +542,7 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 				if err == nil {
 					copyVideo := false
 					if online != nil {
-						probeCtx, probeCancel := context.WithTimeout(ctx, 20*time.Second)
+						probeCtx, probeCancel := playbackTaskTimeout(ctx, job.control, 20*time.Second)
 						probeArgs := append([]string{"-v", "error"}, featureInputArgs(input)...)
 						probeArgs = append(probeArgs, online.Args...)
 						probeArgs = append(probeArgs, "-i", input, "-show_streams", "-of", "json")
@@ -526,7 +556,7 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 						var output transferLogBuffer
 						probeCommand := exec.CommandContext(probeCtx, "ffprobe", probeArgs...)
 						probeCommand.Stdout = &output
-						probeErr := probeCommand.Run()
+						probeErr := job.control.run(probeCtx, probeCommand)
 						if probeErr == nil {
 							probeErr = json.Unmarshal(output.Bytes(), &probe)
 						}
@@ -562,24 +592,33 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 						args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-threads", strconv.Itoa(c.Threads), "-b:v", strconv.Itoa(c.Bitrate)+"k")
 					}
 					args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", filepath.Join(dir, "video.mp4"))
-					if exec.CommandContext(ctx, "ffmpeg", args...).Run() != nil {
+					if job.control.run(ctx, exec.CommandContext(ctx, "ffmpeg", args...)) != nil {
 						err = errors.New("转码失败，请检查媒体源、音轨或 FFmpeg 支持")
 					}
 				}
 				a.features.cacheMu.Lock()
-				job.Done, job.State = true, "complete"
+				job.Done, job.State, job.Paused = true, "complete", false
 				if err != nil {
 					job.Error, job.State = err.Error(), "failed"
 				}
-				record := *job
+				if ctx.Err() != nil {
+					job.State, job.Error = "stopped", "播放任务已停止"
+				}
+				if job.deleting {
+					job.State = "deleting"
+				}
+				if !job.deleting {
+					_ = os.WriteFile(filepath.Join(dir, "record.json"), []byte(featureJSON(job)), 0600)
+				}
 				a.features.cacheMu.Unlock()
-				_ = os.WriteFile(filepath.Join(dir, "record.json"), []byte(featureJSON(record)), 0600)
 			}()
 		} else {
 			cancel()
+			close(job.finished)
 		}
 	}
 	job.Used = time.Now()
+	job.heartbeat = job.Used
 	snapshot := *job
 	a.features.cacheMu.Unlock()
 	respond(w, M{"ID": key, "URL": "/features/stream/" + key + "/video.mp4", "Done": snapshot.Done, "Error": snapshot.Error, "Start": request.Start})

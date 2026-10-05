@@ -33,6 +33,7 @@ type isoRangeReader struct {
 	order      list.List
 	downloaded int64
 	metadata   bool
+	control    *playbackTaskControl
 }
 
 type isoRangeCacheBlock struct {
@@ -90,6 +91,9 @@ func (reader *isoRangeReader) block(offset int64) ([]byte, error) {
 }
 
 func (reader *isoRangeReader) ReadAt(data []byte, offset int64) (int, error) {
+	if err := reader.control.wait(reader.ctx); err != nil {
+		return 0, err
+	}
 	reader.mu.Lock()
 	defer reader.mu.Unlock()
 	if err := reader.ctx.Err(); err != nil {
@@ -106,6 +110,9 @@ func (reader *isoRangeReader) ReadAt(data []byte, offset int64) (int, error) {
 	}
 	read := 0
 	for read < len(data) && offset < reader.size {
+		if err := reader.control.wait(reader.ctx); err != nil {
+			return read, err
+		}
 		base := offset / isoRangeBlock * isoRangeBlock
 		block, err := reader.block(base)
 		if err != nil {
@@ -391,9 +398,10 @@ func (a *App) prepareISOOnline(ctx context.Context, input string, info isoMediaI
 	a.features.cacheMu.Lock()
 	job.State = "reading-disc"
 	a.features.cacheMu.Unlock()
-	metadataCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	metadataCtx, cancel := playbackTaskTimeout(ctx, job.control, 30*time.Second)
 	defer cancel()
 	reader := newISORangeReader(metadataCtx, input, info.Size)
+	reader.control = job.control
 	files, err := isoUDFFiles(reader)
 	if err != nil {
 		return nil, err

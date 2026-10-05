@@ -12,11 +12,14 @@ import (
 )
 
 type featureCacheEntry struct {
-	ID, Name, Item string
-	Size           int64
-	Updated        time.Time
-	Active         bool
-	Error          string
+	ID, Name, Item                    string
+	Size                              int64
+	Updated                           time.Time
+	Active                            bool
+	Error                             string
+	State, SourceMode, FallbackReason string
+	Done, Paused                      bool
+	Downloaded, Total                 int64
 }
 
 func featureDirectorySize(path string) int64 {
@@ -47,6 +50,8 @@ func (a *App) featureCacheEntries() []featureCacheEntry {
 			continue
 		}
 		entry := featureCacheEntry{ID: dir.Name(), Name: rec.Name, Item: rec.Item, Size: featureDirectorySize(path), Updated: info.ModTime(), Error: rec.Error}
+		entry.State, entry.SourceMode, entry.FallbackReason = rec.State, rec.SourceMode, rec.FallbackReason
+		entry.Done, entry.Paused, entry.Downloaded, entry.Total = rec.Done, rec.Paused, rec.Downloaded, rec.Total
 		if !rec.Used.IsZero() {
 			entry.Updated = rec.Used
 		}
@@ -57,6 +62,10 @@ func (a *App) featureCacheEntries() []featureCacheEntry {
 			entry.Item = job.Item
 			entry.Updated = job.Used
 			entry.Error = job.Error
+			entry.State, entry.SourceMode, entry.FallbackReason = job.State, job.SourceMode, job.FallbackReason
+			entry.Done, entry.Paused, entry.Downloaded, entry.Total = job.Done, job.Paused, job.Downloaded, job.Total
+		} else if rec.ID != "" && !rec.Done {
+			entry.State, entry.Paused = "interrupted", false
 		}
 		a.features.cacheMu.Unlock()
 		a.features.playMu.Lock()
@@ -77,7 +86,7 @@ func (a *App) featureDeleteCache(id string) bool {
 	}
 	a.features.cacheMu.Lock()
 	defer a.features.cacheMu.Unlock()
-	if job := a.features.transcodes[id]; job != nil && (!job.Done || time.Since(job.Used) < 2*time.Minute) {
+	if job := a.features.transcodes[id]; job != nil && (job.deleting || !job.Done || time.Since(job.Used) < 2*time.Minute) {
 		return false
 	}
 	var item string
@@ -142,6 +151,25 @@ func (a *App) featureCacheAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, M{"Items": entries, "Size": size, "Limit": int64(a.featurePlaybackConfig().CacheGB) << 30, "MetadataSize": featureDirectorySize(filepath.Join(featureDataRoot(), "metadata")), "DanmakuSize": featureDirectorySize(filepath.Join(featureDataRoot(), "danmaku"))})
 }
+func (a *App) expirePlaybackTasks() {
+	// A closed or disconnected browser stops renewing its task heartbeat.
+	a.features.cacheMu.Lock()
+	for _, job := range a.features.transcodes {
+		lastHeartbeat := job.heartbeat
+		if lastHeartbeat.IsZero() {
+			lastHeartbeat = job.Used
+		}
+		if !job.Done && !job.deleting && time.Since(lastHeartbeat) > 5*time.Minute && job.cancel != nil {
+			if job.control != nil {
+				_ = job.control.change("stop")
+			}
+			job.Paused, job.State = false, "stopping"
+			job.cancel()
+		}
+	}
+	a.features.cacheMu.Unlock()
+}
+
 func (a *App) featureCleanup(ctx context.Context) {
 	c := a.featurePlaybackConfig()
 	entries := a.featureCacheEntries()

@@ -189,7 +189,7 @@ const WebPlayer = (() => {
     on(autoNext, "change", () => { state.autoNext = autoNext.checked; save(); });
     for (const event of ["timeupdate", "durationchange", "loadedmetadata", "seeked"]) on(video, event, update);
     on(video, "loadedmetadata", () => { video.playbackRate = state.rate; });
-    on(video, "waiting", () => { if (!video.error) { feedback.textContent = "正在缓冲…"; feedback.hidden = false; } });
+    on(video, "waiting", () => { if (!video.error && video.dataset.taskStopped !== "true") { feedback.textContent = "正在缓冲…"; feedback.hidden = false; } });
     on(video, "seeking", () => { feedback.textContent = "正在跳转…"; feedback.hidden = false; });
     on(video, "playing", () => { feedback.hidden = failure.hidden = centerPlay.hidden = true; update(); reveal(); });
     on(video, "canplay", () => { feedback.hidden = true; centerPlay.hidden = !video.paused; update(); });

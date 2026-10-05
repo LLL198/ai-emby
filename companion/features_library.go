@@ -212,6 +212,7 @@ func (a *App) featureBackground(ctx context.Context) {
 				}
 			}
 			if now.Sub(lastMonitor) >= time.Minute {
+				a.expirePlaybackTasks()
 				a.loadProxySettings()
 				lastMonitor = now
 				a.featureMonitorLibraries(ctx, stamps)

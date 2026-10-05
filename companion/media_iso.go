@@ -165,6 +165,13 @@ func (a *App) featureInspectPlayback(w http.ResponseWriter, r *http.Request, use
 
 // Keep a complete image in the existing playback cache. Partial downloads are never reusable.
 func downloadISO(ctx context.Context, input, target string, expected, available int64, progress func(int64, int64)) error {
+	return downloadISOControlled(ctx, input, target, expected, available, progress, nil)
+}
+
+func downloadISOControlled(ctx context.Context, input, target string, expected, available int64, progress func(int64, int64), control *playbackTaskControl) error {
+	if err := control.wait(ctx); err != nil {
+		return err
+	}
 	if info, err := os.Lstat(target); err == nil && info.Mode().IsRegular() && expected > 0 && info.Size() == expected {
 		progress(expected, expected)
 		return nil
@@ -175,7 +182,14 @@ func downloadISO(ctx context.Context, input, target string, expected, available 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	// A large disc has no total transfer timeout, but stalled reads stop after 90 seconds.
-	idle := time.AfterFunc(90*time.Second, cancel)
+	var idle *time.Timer
+	idle = time.AfterFunc(90*time.Second, func() {
+		if control.isPaused() {
+			idle.Reset(90 * time.Second)
+		} else {
+			cancel()
+		}
+	})
 	defer idle.Stop()
 	response, err := isoSourceRequest(ctx, input, "")
 	if err != nil {
@@ -197,7 +211,7 @@ func downloadISO(ctx context.Context, input, target string, expected, available 
 		return errors.New("无法写入 ISO 缓存，请检查磁盘空间")
 	}
 	defer os.Remove(partial)
-	reader := &transferProgressReader{reader: io.LimitReader(response.Body, available+1), update: func(n int64) {
+	reader := &transferProgressReader{reader: &playbackControlledReader{ctx: ctx, reader: io.LimitReader(response.Body, available+1), control: control}, update: func(n int64) {
 		idle.Reset(90 * time.Second)
 		progress(n, expected)
 	}}
@@ -300,7 +314,7 @@ func (a *App) prepareISOPlayback(ctx context.Context, input, dir string, info is
 		update("caching", 0, info.Size)
 		image = filepath.Join(dir, "source.iso")
 		available := limit - featureDirectorySize(filepath.Join(featureDataRoot(), "playback"))
-		if err := downloadISO(ctx, input, image, info.Size, available, func(done, total int64) { update("caching", done, total) }); err != nil {
+		if err := downloadISOControlled(ctx, input, image, info.Size, available, func(done, total int64) { update("caching", done, total) }, job.control); err != nil {
 			return "", err
 		}
 	}
@@ -315,7 +329,7 @@ func (a *App) prepareISOPlayback(ctx context.Context, input, dir string, info is
 	var listing transferLogBuffer
 	command := exec.CommandContext(ctx, tool, "l", "-slt", "-bd", "-p-", "--", image)
 	command.Stdout = &listing
-	if err := command.Run(); err != nil {
+	if err := job.control.run(ctx, command); err != nil {
 		return "", errors.New("无法读取光盘镜像，文件可能损坏、加密或格式不受支持")
 	}
 	files, bluray := isoMainFiles(isoArchiveFiles(listing.String()))
@@ -356,7 +370,7 @@ func (a *App) prepareISOPlayback(ctx context.Context, input, dir string, info is
 		args = append(args, file.Path)
 	}
 	if !complete {
-		if err := exec.CommandContext(ctx, tool, args...).Run(); err != nil {
+		if err := job.control.run(ctx, exec.CommandContext(ctx, tool, args...)); err != nil {
 			return "", errors.New("光盘正片提取失败，请检查镜像或缓存空间")
 		}
 	}
@@ -379,12 +393,11 @@ func (a *App) featurePlaybackStatus(w http.ResponseWriter, r *http.Request, user
 	a.features.cacheMu.Lock()
 	job := a.features.transcodes[key]
 	var record featureTranscode
-	if job != nil && job.Owner == user.ID && !user.API {
+	if job != nil && (job.Owner == user.ID || user.Admin) && !user.API {
 		record = *job
-		job.Used = time.Now()
 	}
 	a.features.cacheMu.Unlock()
-	if job == nil || record.Owner != user.ID || user.API {
+	if job == nil || (record.Owner != user.ID && !user.Admin) || user.API {
 		fail(w, 404, "播放任务不存在")
 		return
 	}
@@ -396,7 +409,13 @@ func (a *App) featurePlaybackStatus(w http.ResponseWriter, r *http.Request, user
 		fail(w, 403, "该账号没有播放权限")
 		return
 	}
+	a.features.cacheMu.Lock()
+	if a.features.transcodes[key] == job {
+		job.Used = time.Now()
+		job.heartbeat = job.Used
+	}
+	a.features.cacheMu.Unlock()
 	output, err := os.Stat(filepath.Join(record.Directory, "video.mp4"))
 	ready := err == nil && output.Mode().IsRegular() && output.Size() >= 32
-	respond(w, M{"State": record.State, "SourceMode": record.SourceMode, "Downloaded": record.Downloaded, "Total": record.Total, "Ready": ready, "Done": record.Done, "Error": record.Error})
+	respond(w, M{"State": record.State, "SourceMode": record.SourceMode, "FallbackReason": record.FallbackReason, "Paused": record.Paused, "Downloaded": record.Downloaded, "Total": record.Total, "Ready": ready, "Done": record.Done, "Error": record.Error})
 }
