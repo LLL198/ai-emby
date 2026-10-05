@@ -248,9 +248,9 @@ func viewerSourceURL(m M, p string, r *http.Request, u User) {
 		if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]); forwarded != "" && !strings.ContainsAny(forwarded, "/\\?#@ \t\r\n") {
 			host = forwarded
 		}
-		if !strings.HasSuffix(strings.ToLower(r.URL.Path), "/playbackinfo") || !backendPlaybackSourceLookup(r) {
-			m["Path"] = scheme + "://" + host + p
-		}
+		// A private address or missing player headers does not make a user
+		// session a service lookup. All viewer metadata uses the playback entry.
+		m["Path"] = scheme + "://" + host + p
 		m["Container"] = strings.TrimPrefix(filepath.Ext(strings.Split(p, "?")[0]), ".")
 		m["SupportsDirectPlay"] = true
 	}
