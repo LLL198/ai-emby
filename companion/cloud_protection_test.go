@@ -244,6 +244,26 @@ func TestCloudProtectionDefaultsAndExplicitOverride(t *testing.T) {
 	}
 }
 
+func TestCloudPlaybackRejectsConflictingCredentials(t *testing.T) {
+	a, _, _, calls := cloudProtectionFixture(t)
+	for _, query := range []string{
+		"api_key=invalid&API_KEY=viewer-token",
+		"API_KEY=viewer-token&api_key=invalid",
+		"api_key=viewer-token&api_key=invalid",
+		"X-Emby-Token=viewer-token&x-emby-token=invalid",
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			r := httptest.NewRequest(method, "/Videos/movie/stream.mkv?"+query, nil)
+			r.Header.Set("X-Emby-Token", "viewer-token")
+			w := httptest.NewRecorder()
+			a.serve(w, r)
+			if w.Code != http.StatusUnauthorized || *calls != 0 || w.Header().Get("Location") != "" {
+				t.Fatalf("conflicting playback credentials reached a media source: HTTP %d", w.Code)
+			}
+		}
+	}
+}
+
 func TestCloudProtectionRejectsRevokedAndRestrictedPlayback(t *testing.T) {
 	a, _, _, calls := cloudProtectionFixture(t)
 	setCloudProtection(t, a, true)

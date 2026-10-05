@@ -9,14 +9,24 @@ import (
 var tokenField = regexp.MustCompile(`(?i)Token\s*=\s*"([^"]*)"`)
 
 func Token(r *http.Request) string {
-	query := func(name string) string {
-		for key, values := range r.URL.Query() {
-			if strings.EqualFold(key, name) && len(values) != 0 {
-				return values[0]
-			}
+	// Reject conflicting copies before choosing a credential. Map iteration must
+	// never let the gateway count one account while playback authenticates another.
+	credentials := make(map[string]string)
+	for key, values := range r.URL.Query() {
+		key = strings.ToLower(key)
+		switch key {
+		case "api_key", "x-emby-token", "x-mediabrowser-token", "x-emby-authorization", "x-emby-api-key":
+		default:
+			continue
 		}
-		return ""
+		for _, value := range values {
+			if previous, exists := credentials[key]; exists && previous != value {
+				return ""
+			}
+			credentials[key] = value
+		}
 	}
+	query := func(name string) string { return credentials[strings.ToLower(name)] }
 	for _, token := range []string{r.Header.Get("X-Emby-Token"), r.Header.Get("X-MediaBrowser-Token"), query("api_key"), query("X-Emby-Token"), query("X-MediaBrowser-Token")} {
 		if token != "" {
 			return token
