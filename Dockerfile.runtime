@@ -1,8 +1,8 @@
 ARG RUNTIME_BASE=postgres:17-bookworm
 FROM ${RUNTIME_BASE}
 USER root
-RUN if ! command -v ffmpeg >/dev/null || ! command -v wget >/dev/null; then \
-      apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg \
+RUN if ! command -v ffmpeg >/dev/null || ! command -v wget >/dev/null || ! command -v 7z >/dev/null; then \
+      apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg p7zip-full \
       && rm -rf /var/lib/apt/lists/*; fi \
     && mkdir -p /app/data /app/backups /app/update-control /media /run/secrets \
     && rm -rf /app/frontend

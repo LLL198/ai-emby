@@ -28,6 +28,7 @@ async function featurePlayer(id, video, source) {
     list[0];
   const preferred = choose(audio, c.AudioLanguage),
     subtitle = choose(subs, c.SubtitleLanguage);
+  let transcodeStarted = false;
   const controls = UI.el("div", { class: "feature-play-controls" }),
     audioSelect = UI.el(
       "select",
@@ -53,21 +54,43 @@ async function featurePlayer(id, video, source) {
   if (preferred) audioSelect.value = String(preferred.Index);
   subtitleSelect.value =
     c.Subtitles && subtitle ? String(subtitle.Index) : "-1";
-  const transcode = async () => {
+  const transcode = async (autoplay = false) => {
+    if (video.dataset.stopping === "true" || !video.isConnected) return;
+    const initialDisc = source.IsDisc && !transcodeStarted;
+    transcodeStarted = true;
     const start = featurePlaybackPosition(video),
       playing = !video.paused;
     video.pause();
+    const feedback = video.closest(".watch-player")?.querySelector(".watch-feedback");
+    const showProgress = text => {
+      if (feedback) { feedback.textContent = text; feedback.hidden = false; }
+    };
+    showProgress(source.IsDisc ? "正在准备光盘正片…" : "正在转换为网页可播放的视频…");
     const info = await api("/features/playback", "POST", {
       ID: id,
-      Audio: Number(audioSelect.value || -1),
+      Audio: initialDisc ? -1 : Number(audioSelect.value || -1),
       Start: start,
-    });
+    }, {signal:video.webPlayerSignal});
     if (info.Error) throw Error(info.Error);
     if (!video.isConnected || video.dataset.stopping === "true") return;
+    if (source.IsDisc && !info.Done) {
+      while (video.isConnected && video.dataset.stopping !== "true") {
+        const status = await api("/features/playback-status?" + new URLSearchParams({ID:info.ID}), "GET", undefined, {signal:video.webPlayerSignal});
+        if (status.Error) throw Error(status.Error);
+        if (status.Ready) break;
+        if (status.Done) throw Error("没有生成可播放的正片视频");
+        if (status.State === "caching") {
+          const percent = status.Total > 0 ? ` ${Math.min(100, Math.floor(status.Downloaded / status.Total * 100))}%` : "";
+          showProgress("正在缓存光盘镜像…" + percent);
+        } else showProgress(status.State === "reading-disc" ? "正在读取光盘正片…" : "正在生成网页播放视频…");
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      if (!video.isConnected || video.dataset.stopping === "true") return;
+    }
     video.dataset.offset = String(start);
     video.src = info.URL + "?" + new URLSearchParams({ api_key: token });
     video.load();
-    if (playing) await video.play().catch(() => {});
+    if (playing || source.IsDisc || autoplay === true) await video.play().catch(() => {});
     toast("已切换到转码播放");
   };
   if (audio.length) {
@@ -231,9 +254,22 @@ async function featurePlayer(id, video, source) {
   video.addEventListener("pause", () => signal("pause"));
   video.addEventListener("play", () => signal("play"));
   video.addEventListener("seeked", () => signal("seek"));
+  if (source.IsISO && !source.IsDisc && settings.Transcode) {
+    const fallback = () => {
+      if (transcodeStarted || !video.isConnected || video.dataset.stopping === "true") return;
+      transcode(true).catch(e => video.webPlayerError?.(e.message));
+    };
+    video.addEventListener("error", fallback, {signal:video.webPlayerSignal});
+    // Some containers play their audio while silently dropping an unsupported video codec.
+    video.addEventListener("loadeddata", () => {
+      if (!video.videoWidth) fallback();
+    }, {signal:video.webPlayerSignal});
+    if (video.error || (video.readyState >= 2 && !video.videoWidth)) await transcode(true);
+  }
+  if (source.IsDisc && !settings.Transcode) throw Error("这是光盘镜像，请管理员在播放管理中开启浏览器转码");
   if (
-    settings.Transcode &&
-    (source.Container === "iso" ||
+    settings.Transcode && !transcodeStarted &&
+    (source.IsDisc ||
       (preferred &&
         audio.length > 1 &&
         preferred.Index !== (audio.find((x) => x.IsDefault) || audio[0]).Index))

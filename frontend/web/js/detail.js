@@ -267,8 +267,22 @@ async function detail(id, options = {}) {
           { once: true },
         );
       // Register resume metadata handlers BEFORE assigning the media source.
-      video.src = source.DirectStreamUrl;
-      featurePlayer(playbackItem,video,source).catch(e=>toast(e.message,{type:'error'}));
+      if (source.IsISO) {
+        const feedback = d.querySelector(".watch-feedback");
+        feedback.textContent = "正在识别 ISO 的实际格式…";
+        const inspection = await api("/features/playback-inspect?" + new URLSearchParams({ID:playbackItem}), "GET", undefined, {signal:video.webPlayerSignal});
+        if (generation !== detailGeneration || !video.isConnected || video.dataset.stopping === 'true') return;
+        source.Container = inspection.Container;
+        source.IsDisc = inspection.IsDisc;
+        if (inspection.Container === "unknown") throw Error("无法识别 ISO 的实际格式，请检查文件是否完整");
+      }
+      if (!source.IsDisc) video.src = source.DirectStreamUrl;
+      featurePlayer(playbackItem,video,source).catch(e=>{
+        if (video.isConnected && video.dataset.stopping !== 'true') {
+          video.webPlayerError?.(e.message);
+          toast(e.message,{type:'error'});
+        }
+      });
       heartbeat = setInterval(
         () =>
           progress().catch((e) => {
@@ -290,6 +304,7 @@ async function detail(id, options = {}) {
         if (nextEpisode && generation === detailGeneration && d.open) await detail(nextEpisode.Id, {play:true});
       };
     } catch (error) {
+      if (error.name === "AbortError") return;
       if (generation === detailGeneration && d.open) {
         await WebPlayer.exitFullscreen(d);
         await stop();

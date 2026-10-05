@@ -20,6 +20,7 @@ type featureState struct {
 	playMu           sync.Mutex
 	plays            map[string]featurePlaybackSample
 	cacheMu          sync.Mutex
+	isoMu            sync.Mutex
 	transcodes       map[string]*featureTranscode
 	trackingMu       sync.Mutex
 	trackingSearchMu sync.Mutex
@@ -248,6 +249,10 @@ func (a *App) featureRoute(w http.ResponseWriter, r *http.Request, user User) bo
 		a.featurePlaybackEvent(w, r, user)
 	case path == "/features/playback":
 		a.featurePlaybackAPI(w, r, user)
+	case path == "/features/playback-inspect":
+		a.featureInspectPlayback(w, r, user)
+	case path == "/features/playback-status":
+		a.featurePlaybackStatus(w, r, user)
 	case path == "/features/subtitle":
 		a.featureSubtitleAPI(w, r, user)
 	case path == "/features/chapters":

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM postgres:17-bookworm AS runtime-base
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg p7zip-full \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app/data /app/backups /app/update-control /media /run/secrets
 

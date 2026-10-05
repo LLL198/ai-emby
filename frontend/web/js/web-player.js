@@ -57,6 +57,12 @@ const WebPlayer = (() => {
       UI.el("p", {}, "可重试或在播放设置中选择转码。浏览器无法解码的格式，也可以使用 Emby 客户端播放。"),
       UI.el("button", {type:"button", onclick:run(options.onRetry)}, "重试播放"),
     ]);
+    video.webPlayerSignal = events.signal;
+    video.webPlayerError = message => {
+      if (disposed) return;
+      failure.querySelector("p").textContent = message;
+      feedback.hidden = centerPlay.hidden = true; failure.hidden = false; reveal();
+    };
     const progress = UI.el("input", {class:"watch-seek", type:"range", min:0, max:0, step:0.1, value:0, "aria-label":"播放进度", disabled:""});
     const clock = UI.el("span", {class:"watch-time"}, "0:00 / 0:00");
     const play = button("播放", "play", () => toggle());
@@ -266,6 +272,7 @@ const WebPlayer = (() => {
       disposed = true; ++sequence; clearTimeout(idleTimer); events.abort();
       document.documentElement.classList.remove("watch-open");
       video.webPlayerDispose = null;
+      video.webPlayerError = null;
     }
     function finish() {
       if (disposed) return;

@@ -49,6 +49,8 @@ type featureTranscode struct {
 	Started, Used                    time.Time
 	Done                             bool
 	Error                            string
+	State                            string
+	Downloaded, Total                int64
 	cancel                           context.CancelFunc
 }
 
@@ -268,6 +270,26 @@ func (a *App) featureDevicesAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) featureMediaInput(x Item) (string, error) {
+	input, err := a.featureRawMediaInput(x)
+	if err != nil || strings.HasPrefix(input, "http") {
+		return input, err
+	}
+	if info, err := os.Stat(input); err == nil && info.IsDir() {
+		return "bluray:" + input, nil
+	}
+	if isoMediaCandidate(x) {
+		info, err := inspectISOInput(context.Background(), input)
+		if err != nil {
+			return "", err
+		}
+		if info.Container == "iso" {
+			return "bluray:" + input, nil
+		}
+	}
+	return input, nil
+}
+
+func (a *App) featureRawMediaInput(x Item) (string, error) {
 	raw := x.URL
 	if strings.ToLower(filepath.Ext(x.Path)) != ".strm" {
 		raw = x.Path
@@ -290,17 +312,13 @@ func (a *App) featureMediaInput(x Item) (string, error) {
 	if err != nil || !allowedMediaPath(real) {
 		return "", errors.New("本地媒体路径不可访问")
 	}
-	info, err := os.Stat(real)
-	if err != nil {
+	if _, err := os.Stat(real); err != nil {
 		return "", err
-	}
-	if info.IsDir() || strings.EqualFold(filepath.Ext(real), ".iso") {
-		return "bluray:" + real, nil
 	}
 	return real, nil
 }
 func featureInputArgs(input string) []string {
-	protocols := "file,bluray"
+	protocols := "file,bluray,concat"
 	if strings.HasPrefix(input, "http") {
 		protocols = "http,https,tcp,tls,crypto"
 	}
@@ -413,19 +431,33 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 		fail(w, 400, "播放参数无效")
 		return
 	}
-	input, err := a.featureMediaInput(x)
+	input, err := a.featureRawMediaInput(x)
 	if err != nil {
 		featureError(w, err)
 		return
 	}
-	if strings.HasPrefix(input, "http") && strings.EqualFold(filepath.Ext(strings.Split(input, "?")[0]), ".iso") {
-		fail(w, 409, "远程光盘请先下载到媒体目录，再启动缓存播放")
-		return
+	var isoInfo isoMediaInfo
+	if isoMediaCandidate(x) {
+		isoInfo, err = inspectISOInput(r.Context(), input)
+		if err != nil {
+			fail(w, 502, err.Error())
+			return
+		}
+		if isoInfo.Container == "unknown" {
+			fail(w, 415, "无法识别 ISO 的实际格式，文件可能损坏或并非视频")
+			return
+		}
+	} else if info, err := os.Stat(input); err == nil && info.IsDir() {
+		input = "bluray:" + input
 	}
 	key := digest(x.ID + digest(x.URL) + strconv.FormatInt(x.Mtime, 10) + user.ID + featureJSON(request) + featureJSON(c))[:40]
 	dir := filepath.Join(featureDataRoot(), "playback", key)
 	a.features.cacheMu.Lock()
 	job := a.features.transcodes[key]
+	if job != nil && job.Done && job.Error != "" {
+		delete(a.features.transcodes, key)
+		job = nil
+	}
 	if job == nil {
 		active := 0
 		for _, j := range a.features.transcodes {
@@ -444,31 +476,44 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 			return
 		}
 		ctx, cancel := context.WithCancel(a.features.ctx)
-		job = &featureTranscode{ID: key, Item: x.ID, Owner: user.ID, Name: x.Name, Directory: dir, Started: time.Now(), Used: time.Now(), cancel: cancel}
+		job = &featureTranscode{ID: key, Item: x.ID, Owner: user.ID, Name: x.Name, Directory: dir, Started: time.Now(), Used: time.Now(), State: "queued", cancel: cancel}
 		a.features.transcodes[key] = job
 		if data, e := os.ReadFile(filepath.Join(dir, "record.json")); e == nil {
 			var record featureTranscode
-			if json.Unmarshal(data, &record) == nil && record.Done && record.Error == "" {
-				job.Done = true
+			output, outputErr := os.Stat(filepath.Join(dir, "video.mp4"))
+			if json.Unmarshal(data, &record) == nil && record.Done && record.Error == "" && outputErr == nil && output.Mode().IsRegular() && output.Size() >= 32 {
+				job.Done, job.State = true, "complete"
 			}
 		}
 		if !job.Done {
-			args := append([]string{"-v", "error", "-nostdin", "-y"}, featureInputArgs(input)...)
-			args = append(args, "-ss", strconv.FormatFloat(request.Start, 'f', 3, 64), "-i", input, "-map", "0:v:0?")
-			audio := "0:a:0?"
-			if request.Audio >= 0 {
-				audio = "0:" + strconv.Itoa(request.Audio)
-			}
-			args = append(args, "-map", audio, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-threads", strconv.Itoa(c.Threads), "-b:v", strconv.Itoa(c.Bitrate)+"k", "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", filepath.Join(dir, "video.mp4"))
+			_ = os.Remove(filepath.Join(dir, "video.mp4"))
 			a.features.wg.Add(1)
 			go func() {
 				defer a.features.wg.Done()
 				defer cancel()
-				err := exec.CommandContext(ctx, "ffmpeg", args...).Run()
+				var err error
+				if isoInfo.Container == "iso" {
+					input, err = a.prepareISOPlayback(ctx, input, dir, isoInfo, job)
+				}
+				if err == nil {
+					a.features.cacheMu.Lock()
+					job.State = "transcoding"
+					a.features.cacheMu.Unlock()
+					args := append([]string{"-v", "error", "-nostdin", "-y"}, featureInputArgs(input)...)
+					args = append(args, "-ss", strconv.FormatFloat(request.Start, 'f', 3, 64), "-i", input, "-map", "0:v:0?")
+					audio := "0:a:0?"
+					if request.Audio >= 0 {
+						audio = "0:" + strconv.Itoa(request.Audio)
+					}
+					args = append(args, "-map", audio, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-threads", strconv.Itoa(c.Threads), "-b:v", strconv.Itoa(c.Bitrate)+"k", "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", filepath.Join(dir, "video.mp4"))
+					if exec.CommandContext(ctx, "ffmpeg", args...).Run() != nil {
+						err = errors.New("转码失败，请检查媒体源、音轨或 FFmpeg 支持")
+					}
+				}
 				a.features.cacheMu.Lock()
-				job.Done = true
+				job.Done, job.State = true, "complete"
 				if err != nil {
-					job.Error = "转码失败，请检查媒体源、音轨或 FFmpeg 支持"
+					job.Error, job.State = err.Error(), "failed"
 				}
 				record := *job
 				a.features.cacheMu.Unlock()

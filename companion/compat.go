@@ -229,6 +229,9 @@ func (a *App) viewerSource(x Item, r *http.Request, u User) M {
 		playbackURL = fastPlaybackSourceURL(playbackURL, x.URL)
 	}
 	viewerSourceURL(m, playbackURL, r, u)
+	if isoMediaCandidate(x) {
+		m["IsISO"] = true
+	}
 	a.appendSubtitles(x, m, r, u)
 	return m
 }
