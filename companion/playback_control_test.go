@@ -241,15 +241,139 @@ func TestPlaybackTaskControlsOwnershipAndSafeDeletion(t *testing.T) {
 }
 
 func TestPlaybackTaskExpiresDisconnectedBrowser(t *testing.T) {
-	a := &App{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	control := newPlaybackTaskControl()
-	_ = control.change("pause")
-	job := &featureTranscode{Used: time.Now(), heartbeat: time.Now().Add(-6 * time.Minute), control: control, cancel: cancel, Paused: true}
-	a.features.transcodes = map[string]*featureTranscode{"old": job, "active": {Used: time.Now(), cancel: func() { t.Error("active player was stopped") }}}
-	a.expirePlaybackTasks()
-	if ctx.Err() == nil || job.State != "stopping" || job.Paused {
-		t.Fatal("abandoned paused task kept running")
+	t.Setenv("MEDIA_INFO_ROOT", t.TempDir())
+	for _, complete := range []bool{false, true} {
+		a := &App{}
+		key := strings.Repeat("b", 40)
+		dir := filepath.Join(featureDataRoot(), "playback", key)
+		_ = os.MkdirAll(dir, 0700)
+		_ = os.WriteFile(filepath.Join(dir, "video.mp4"), []byte("cached output"), 0600)
+		ctx, cancel := context.WithCancel(context.Background())
+		control := newPlaybackTaskControl()
+		_ = control.change("pause")
+		job := &featureTranscode{ID: key, Used: time.Now(), heartbeat: time.Now().Add(-6 * time.Minute), control: control, cancel: cancel, Paused: true, Done: complete, finished: make(chan struct{})}
+		a.features.transcodes = map[string]*featureTranscode{key: job, "active": {Used: time.Now(), cancel: func() { t.Error("active player was stopped") }}}
+		a.expirePlaybackTasks()
+		if !job.deleting || job.State != "deleting" || job.Paused || (!complete && ctx.Err() == nil) {
+			close(job.finished)
+			cancel()
+			a.features.wg.Wait()
+			t.Fatal("abandoned task was not scheduled for deletion")
+		}
+		close(job.finished)
+		cancel()
+		a.features.wg.Wait()
+		if a.features.transcodes[key] != nil {
+			t.Fatal("expired task still registered")
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatal("expired task left cached files")
+		}
 	}
+}
+
+func TestPlaybackTaskQuickReopenWaitsForPreviousDeletion(t *testing.T) {
+	root := os.Getenv("ISO_FIXTURE_ROOT")
+	if root == "" {
+		t.Skip("ISO_FIXTURE_ROOT required")
+	}
+	a, _, _, _ := cloudProtectionFixture(t)
+	a.features.ctx = context.Background()
+	a.features.transcodes = map[string]*featureTranscode{}
+	t.Cleanup(func() { a.stopFeatures(); a.features.wg.Wait() })
+	if err := a.saveFeatureSetting("playback", featurePlaybackConfig{Transcode: true, Threads: 2, Concurrency: 2, CacheGB: 1, Bitrate: 1000, RetentionDays: 1}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.FileServer(http.Dir(root)))
+	defer server.Close()
+	_, err := a.db.Exec("UPDATE items SET url=? WHERE id='movie'", server.URL+"/dvd.iso")
+	if err != nil {
+		t.Fatal(err)
+	}
+	play := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		isoFeatureRequest(a, w, httptest.NewRequest("POST", "/features/playback?api_key=viewer-token", strings.NewReader(`{"ID":"movie","Audio":-1,"Start":0}`)))
+		return w
+	}
+	first := play()
+	if first.Code != 200 {
+		t.Fatalf("start: %d %s", first.Code, first.Body)
+	}
+	var response struct {
+		ID   string
+		Done bool
+	}
+	_ = json.Unmarshal(first.Body.Bytes(), &response)
+	a.features.cacheMu.Lock()
+	old := a.features.transcodes[response.ID]
+	a.features.cacheMu.Unlock()
+	select {
+	case <-old.finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("first playback did not finish")
+	}
+	a.features.wg.Wait()
+	// Hold cleanup open to reproduce reopening while the old reader exits.
+	a.features.cacheMu.Lock()
+	old.finished = make(chan struct{})
+	a.features.cacheMu.Unlock()
+	t.Cleanup(func() {
+		select {
+		case <-old.finished:
+		default:
+			close(old.finished)
+		}
+	})
+	deleted := httptest.NewRecorder()
+	isoFeatureRequest(a, deleted, httptest.NewRequest("POST", "/features/playback-control?api_key=viewer-token", strings.NewReader(featureJSON(M{"ID": response.ID, "Action": "delete"}))))
+	if deleted.Code != 200 {
+		t.Fatalf("delete: %d %s", deleted.Code, deleted.Body)
+	}
+	reopened := make(chan *httptest.ResponseRecorder, 1)
+	go func() { reopened <- play() }()
+	select {
+	case w := <-reopened:
+		t.Fatalf("reopen raced cleanup: %d %s", w.Code, w.Body)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(old.finished)
+	select {
+	case w := <-reopened:
+		if w.Code != 200 {
+			t.Fatalf("reopen: %d %s", w.Code, w.Body)
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &response)
+		if response.Done {
+			t.Fatal("reopen reused old completed output")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reopen did not resume after deletion")
+	}
+	a.features.cacheMu.Lock()
+	newJob := a.features.transcodes[response.ID]
+	a.features.cacheMu.Unlock()
+	if newJob == nil || newJob == old {
+		t.Fatal("reopen did not create a new task")
+	}
+	separate := httptest.NewRecorder()
+	isoFeatureRequest(a, separate, httptest.NewRequest("POST", "/features/playback?api_key=viewer-token", strings.NewReader(`{"ID":"movie","Audio":-1,"Start":0,"Session":"11111111111111111111111111111111"}`)))
+	if separate.Code != 200 {
+		t.Fatalf("separate session: %d %s", separate.Code, separate.Body)
+	}
+	var second struct{ ID string }
+	_ = json.Unmarshal(separate.Body.Bytes(), &second)
+	if second.ID == newJob.ID {
+		t.Fatal("independent playback sessions shared a task")
+	}
+	cleanup := httptest.NewRecorder()
+	isoFeatureRequest(a, cleanup, httptest.NewRequest("POST", "/features/playback-control?api_key=viewer-token", strings.NewReader(featureJSON(M{"ID": newJob.ID, "Action": "delete"}))))
+	if cleanup.Code != 200 {
+		t.Fatal("previous session could not be deleted")
+	}
+	a.features.cacheMu.Lock()
+	secondJob := a.features.transcodes[second.ID]
+	if secondJob == nil || secondJob.deleting {
+		t.Error("previous exit deleted another session")
+	}
+	a.features.cacheMu.Unlock()
 }

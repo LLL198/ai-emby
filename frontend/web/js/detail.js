@@ -376,7 +376,7 @@ async function stop(options = {}) {
   const position = Math.floor(featurePlaybackPosition(video) * 1e7);
   if (video) {
     video.dataset.stopping='true';
-    video.webTranscodeStop?.().catch(() => {});
+    video.webTranscodeDelete?.().catch(() => {});
     if (!options.keepPlayer) video.webPlayerDispose?.();
     if (document.pictureInPictureElement === video) await document.exitPictureInPicture().catch(() => {});
     video.pause();

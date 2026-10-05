@@ -246,6 +246,9 @@ func (a *App) featurePlaybackControl(w http.ResponseWriter, r *http.Request, use
 // Hold cacheMu while scheduling deletion. Keep the job registered until all tools
 // and private ISO readers exit, so a retry cannot recreate files being removed.
 func (a *App) deletePlaybackTaskLocked(job *featureTranscode) error {
+	if len(job.ID) != 40 || strings.Trim(job.ID, "0123456789abcdef") != "" {
+		return errors.New("播放任务编号无效")
+	}
 	if !job.Done {
 		if job.control != nil {
 			if err := job.control.change("stop"); err != nil {
@@ -258,9 +261,11 @@ func (a *App) deletePlaybackTaskLocked(job *featureTranscode) error {
 		job.cancel()
 	}
 	job.deleting, job.Paused, job.State = true, false, "deleting"
+	job.deleted = make(chan struct{})
 	a.features.wg.Add(1)
 	go func() {
 		defer a.features.wg.Done()
+		defer close(job.deleted)
 		if job.finished != nil {
 			<-job.finished
 		}

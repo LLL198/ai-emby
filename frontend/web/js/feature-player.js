@@ -89,15 +89,15 @@ async function featurePlayer(id, video, source) {
     taskCommands = command;
     return command;
   };
-  video.webTranscodeStop = () => {
+  video.webTranscodeDelete = () => {
     const target = taskID;
     clearTask();
     if (!target) return Promise.resolve();
     // Exit notifications must start immediately, including during page unload.
-    return api("/features/playback-control", "POST", {ID:target, Action:"stop"}, {keepalive:true})
+    return api("/features/playback-control", "POST", {ID:target, Action:"delete"}, {keepalive:true})
       .catch(e => { if (e.status !== 404) throw e; });
   };
-  window.addEventListener("pagehide", () => video.webTranscodeStop().catch(() => {}), {signal:video.webPlayerSignal});
+  window.addEventListener("pagehide", () => video.webTranscodeDelete().catch(() => {}), {signal:video.webPlayerSignal});
   const updateTaskStatus = status => {
     taskDone = status.Done;
     taskPaused = status.Paused;
@@ -179,7 +179,7 @@ async function featurePlayer(id, video, source) {
       playing = !video.paused;
     preparing = true;
     try {
-      await video.webTranscodeStop();
+      await video.webTranscodeDelete();
       delete video.dataset.taskStopped;
       video.pause();
       showProgress(source.IsDisc ? "正在准备光盘正片…" : "正在转换为网页可播放的视频…");
@@ -187,10 +187,11 @@ async function featurePlayer(id, video, source) {
         ID: id,
         Audio: initialDisc ? -1 : Number(audioSelect.value || -1),
         Start: start,
+        Session: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""),
       });
       if (info.Error) throw Error(info.Error);
       if (!video.isConnected || video.dataset.stopping === "true") {
-        await commandTask("stop", info.ID);
+        await commandTask("delete", info.ID);
         return;
       }
       taskID = info.ID;

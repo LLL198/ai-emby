@@ -58,6 +58,7 @@ type featureTranscode struct {
 	control                          *playbackTaskControl
 	finished                         chan struct{}
 	deleting                         bool
+	deleted                          chan struct{}
 	heartbeat                        time.Time
 }
 
@@ -408,9 +409,10 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 		return
 	}
 	var request struct {
-		ID    string
-		Audio int
-		Start float64
+		ID      string
+		Audio   int
+		Start   float64
+		Session string
 	}
 	request.Audio = -1
 	if !body(w, r, &request) {
@@ -434,7 +436,7 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 		fail(w, 409, "管理员尚未启用转码")
 		return
 	}
-	if request.Start < 0 || request.Start > 86400 || request.Audio < -1 || request.Audio > 200 {
+	if request.Start < 0 || request.Start > 86400 || request.Audio < -1 || request.Audio > 200 || (request.Session != "" && (len(request.Session) != 32 || strings.Trim(request.Session, "0123456789abcdef") != "")) {
 		fail(w, 400, "播放参数无效")
 		return
 	}
@@ -459,12 +461,27 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 	}
 	key := digest(x.ID + digest(x.URL) + strconv.FormatInt(x.Mtime, 10) + user.ID + featureJSON(request) + featureJSON(c))[:40]
 	dir := filepath.Join(featureDataRoot(), "playback", key)
-	a.features.cacheMu.Lock()
-	job := a.features.transcodes[key]
-	if job != nil && job.deleting {
+	var job *featureTranscode
+	for {
+		a.features.cacheMu.Lock()
+		job = a.features.transcodes[key]
+		if job == nil || !job.deleting {
+			break
+		}
+		deleted := job.deleted
 		a.features.cacheMu.Unlock()
-		fail(w, 409, "此播放任务正在删除，请稍后重试")
-		return
+		// A quick reopen waits for the previous tools and cache removal to finish.
+		timer := time.NewTimer(10 * time.Second)
+		select {
+		case <-deleted:
+			timer.Stop()
+		case <-r.Context().Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			fail(w, 409, "上次播放仍在清理，请稍后重试")
+			return
+		}
 	}
 	if job != nil && job.Done && job.Error != "" {
 		if job.finished != nil {

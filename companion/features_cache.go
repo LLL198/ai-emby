@@ -159,12 +159,8 @@ func (a *App) expirePlaybackTasks() {
 		if lastHeartbeat.IsZero() {
 			lastHeartbeat = job.Used
 		}
-		if !job.Done && !job.deleting && time.Since(lastHeartbeat) > 5*time.Minute && job.cancel != nil {
-			if job.control != nil {
-				_ = job.control.change("stop")
-			}
-			job.Paused, job.State = false, "stopping"
-			job.cancel()
+		if !job.deleting && time.Since(lastHeartbeat) > 5*time.Minute {
+			_ = a.deletePlaybackTaskLocked(job)
 		}
 	}
 	a.features.cacheMu.Unlock()
