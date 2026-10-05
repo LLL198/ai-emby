@@ -17,6 +17,60 @@ import urllib.request
 
 REPOSITORY = "LLL198/ai-emby"
 TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
+UPDATE_DIRECTORY = re.compile(r"^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]{6}-[0-9]{9,}$")
+BACKUP_FILES = ("database.before.dump", "app-data.before.tar")
+
+
+def complete_backup(path):
+    return not path.is_symlink() and all(
+        not (path / name).is_symlink() and (path / name).is_file() and (path / name).stat().st_size > 0
+        for name in BACKUP_FILES)
+
+
+def remove_update_file(root, path):
+    # Never follow links or delete a path outside this updater's storage root.
+    root = root.resolve()
+    if path.is_symlink() or not path.resolve().is_relative_to(root) or path.resolve() == root:
+        raise ValueError("更新清理路径无效")
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def cleanup_update(work, keep_backup):
+    root = work.parent
+    if root.is_symlink() or work.is_symlink():
+        raise ValueError("更新清理目录无效")
+    if keep_backup and not complete_backup(keep_backup):
+        raise ValueError("最新备份不完整，保留原有备份")
+    # Delete only files produced by this worker, keeping recovery data and logs.
+    candidates = [work] + [p for p in root.iterdir()
+                           if p != work and not p.is_symlink() and p.is_dir()
+                           and UPDATE_DIRECTORY.fullmatch(p.name)
+                           and (p / "compose.before.yaml").is_file()]
+    for candidate in candidates:
+        for name in ("ai-emby-linux-amd64.tar.gz", "bundle"):
+            remove_update_file(root, candidate / name)
+        if keep_backup and candidate != keep_backup:
+            for name in BACKUP_FILES:
+                remove_update_file(root, candidate / name)
+
+
+def backup_data(work, postgres, application, log):
+    def save(command, filename, timeout):
+        with (work / filename).open("wb") as output:
+            subprocess.run(command, stdout=output, stderr=log, check=True, timeout=timeout)
+
+    # The application is stopped before both snapshots begin. Independent
+    # database and application volumes can be copied concurrently.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        database = pool.submit(save, ["docker", "exec", postgres, "pg_dump", "-U", "emby", "-d", "emby", "-Fc", "--no-owner"], BACKUP_FILES[0], 300)
+        application_data = pool.submit(save, ["docker", "cp", application + ":/app/data/.", "-"], BACKUP_FILES[1], 600)
+        database.result()
+        application_data.result()
+    if not complete_backup(work):
+        raise ValueError("更新前的数据备份不完整")
 
 
 def timestamp():
@@ -202,10 +256,7 @@ def perform_update(options, request):
                 require_persistent_storage(application, "/app/data", "应用数据")
                 run(["docker", "compose", "stop", options.service], options.project, log)
                 application_stopped = True
-                with (work / "database.before.dump").open("wb") as output:
-                    subprocess.run(["docker", "exec", postgres, "pg_dump", "-U", "emby", "-d", "emby", "-Fc", "--no-owner"], stdout=output, stderr=log, check=True, timeout=300)
-                with (work / "app-data.before.tar").open("wb") as output:
-                    subprocess.run(["docker", "cp", application + ":/app/data/.", "-"], stdout=output, stderr=log, check=True, timeout=600)
+                backup_data(work, postgres, application, log)
             status("restarting", "正在切换版本")
             switched = True
             for path, _, changed in previous:
@@ -216,7 +267,19 @@ def perform_update(options, request):
             installed = subprocess.check_output(["docker", "exec", active, "cat", "/app/VERSION"], text=True).strip()
             if installed != version:
                 raise ValueError("运行版本校验失败")
-        status("succeeded", "更新完成")
+        # Cleanup happens only after health and installed-version checks pass.
+        # A filesystem cleanup error must never roll back a healthy update.
+        message = "更新完成，下载包已清理"
+        try:
+            cleanup_update(work, work if complete_backup(work) else None)
+        except (OSError, ValueError) as error:
+            try:
+                with (work / "cleanup.log").open("w", encoding="utf-8") as log:
+                    log.write(str(error) + "\n")
+            except OSError:
+                pass
+            message = "更新完成；部分更新文件清理失败，请查看 cleanup.log"
+        status("succeeded", message)
     except Exception as error:
         message = str(error) if isinstance(error, (ValueError, RuntimeError)) else "更新执行失败，请查看宿主机 app-backups/updates 中的日志"
         if switched:

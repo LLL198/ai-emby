@@ -45,7 +45,9 @@ jobs:
             security/go.sum
       - name: Build release bundle
         if: steps.version.outputs.exists != 'true'
-        run: python3 scripts/package.py "$VERSION"
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          python3 scripts/package.py "$VERSION"
       - name: Download existing release bundle
         if: steps.version.outputs.exists == 'true'
         run: |
