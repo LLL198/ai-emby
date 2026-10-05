@@ -1,0 +1,35 @@
+.feature-play-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+.feature-play-controls select {
+  max-width: 220px;
+}
+.feature-player-wrap {
+  position: relative;
+}
+.feature-danmaku {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.feature-danmaku span {
+  position: absolute;
+  white-space: nowrap;
+  right: 0;
+  text-shadow: 1px 1px 3px #000;
+  font-size: 21px;
+  animation: feature-danmaku-move 8s linear forwards;
+}
+@keyframes feature-danmaku-move {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(-100vw);
+  }
+}

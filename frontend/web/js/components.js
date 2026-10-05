@@ -34,10 +34,12 @@ const UI = (() => {
     const type = options.type || (/失败|错误|无效|不支持|不能|无法|超时|拒绝/.test(title) ? "error" : "success");
     const message = String(options.message || "");
     let stack = document.querySelector(".toast-stack");
+    const watch = document.querySelector(".watch-dialog .watch-player");
     if (!stack) {
       stack = el("div", {class:"toast-stack", "aria-live":"polite", "aria-relevant":"additions removals"});
-      document.body.append(stack);
+      (watch || document.body).append(stack);
     }
+    if (watch && !watch.contains(stack)) watch.append(stack);
     const duplicate = [...stack.children].find(item => item.dataset.key === `${type}:${title}:${message}`);
     if (duplicate) return duplicate;
     while (stack.childElementCount >= 3) dismissToast(stack.firstElementChild);

@@ -184,10 +184,11 @@ async function detail(id, options = {}) {
     restart.disabled = true;
     try {
       const playingVideo = $("#player video");
-      if (current === selected && selected === id && playingVideo && Number.isFinite(playingVideo.currentTime)) {
+      if (current === selected && playingVideo && Number.isFinite(playingVideo.currentTime)) {
         item.UserData = {...item.UserData, PlaybackPositionTicks: Math.floor(featurePlaybackPosition(playingVideo) * 1e7)};
       }
       await stop();
+      if (generation !== detailGeneration || !d.open) return;
       const playback = await api.getPlaybackInfo(selected);
       if (generation !== detailGeneration || !d.open) {
         await api("/Sessions/Playing/Stopped", "POST", {
@@ -201,6 +202,7 @@ async function detail(id, options = {}) {
         playback.MediaSources?.[0];
       if (!source?.DirectStreamUrl) throw Error("未返回可播放的视频源");
       current = selected;
+      const playbackItem = selected;
       const video = UI.el("video", {
         controls: "",
         controlsList: "nodownload",
@@ -208,16 +210,40 @@ async function detail(id, options = {}) {
         playsinline: "",
       });
       d.querySelector("#player").replaceChildren(video);
+      const switchVersion = async value => {
+        if (value === selected) return;
+        item.UserData = {...item.UserData, PlaybackPositionTicks:Math.floor(featurePlaybackPosition(video) * 1e7)};
+        await stop();
+        selected = value;
+        const list = d.querySelector("#version-list");
+        if (list) list.value = value;
+        await startPlayback();
+      };
+      const webPlayer = WebPlayer.mount(d, video, item, {
+        source, versions, selected,
+        onEpisode: episode => detail(episode.Id, {play:true}),
+        onVersion:switchVersion,
+        onRetry:() => startPlayback(false),
+        onReplay:() => startPlayback(true),
+        onExit:async () => {
+          await WebPlayer.exitFullscreen(d);
+          await stop();
+          d.classList.remove("watch-dialog");
+          d.querySelector("#player").replaceChildren();
+          d.querySelector("#play").focus({preventScroll:true});
+        },
+      });
       const progress = () => {
-        if (selected === id) item.UserData = {...item.UserData, PlaybackPositionTicks:Math.floor(featurePlaybackPosition(video) * 1e7)};
+        if (current !== playbackItem || video.dataset.stopping === 'true') return Promise.resolve();
+        item.UserData = {...item.UserData, PlaybackPositionTicks:Math.floor(featurePlaybackPosition(video) * 1e7)};
         return api("/Sessions/Playing/Progress", "POST", {
-          ItemId: selected,
+          ItemId: playbackItem,
           PositionTicks: Math.floor(featurePlaybackPosition(video) * 1e7),
           IsPaused:video.paused,
           PlaybackRate:video.playbackRate,
-          RunTimeTicks: Number.isFinite(video.duration)
-            ? Math.floor(video.duration * 1e7)
-            : 0,
+          RunTimeTicks: source.RunTimeTicks || item.RunTimeTicks || (Number.isFinite(video.duration)
+            ? Math.floor((video.duration + Number(video.dataset.offset || 0)) * 1e7)
+            : 0),
         });
       };
       video.addEventListener(
@@ -230,11 +256,9 @@ async function detail(id, options = {}) {
         { once: true },
       );
       // The source is the authenticated redirect URL. The browser follows its 302 to the CDN.
-      video.onerror = () =>
-        toast("浏览器无法解码此格式或视频源不可达，请使用外部 Emby 客户端。");
       const resume = fromBeginning ? 0 : (item.UserData?.PlaybackPositionTicks || 0);
       video.dataset.resume=String(resume/1e7);
-      if (resume > 0 && selected === id)
+      if (resume > 0)
         video.addEventListener(
           "loadedmetadata",
           () => {
@@ -244,7 +268,7 @@ async function detail(id, options = {}) {
         );
       // Register resume metadata handlers BEFORE assigning the media source.
       video.src = source.DirectStreamUrl;
-      featurePlayer(selected,video,source).catch(e=>toast(e.message,{type:'error'}));
+      featurePlayer(playbackItem,video,source).catch(e=>toast(e.message,{type:'error'}));
       heartbeat = setInterval(
         () =>
           progress().catch((e) => {
@@ -254,11 +278,28 @@ async function detail(id, options = {}) {
         30000,
       );
       video.onended = async () => {
-        const finished = selected;
-        await stop();
+        if (video.dataset.stopping === 'true' || generation !== detailGeneration) return;
+        const finished = playbackItem;
+        let nextEpisode;
+        try { nextEpisode = await webPlayer.nextEpisode(); } catch (e) { toast(e.message, {type:'error'}); }
+        if (video.dataset.stopping === 'true' || generation !== detailGeneration) return;
+        await stop({keepPlayer:!nextEpisode});
+        if (!nextEpisode) webPlayer.finish();
         try { await api(`/Users/${encodeURIComponent(user.Id)}/PlayedItems/${encodeURIComponent(finished)}`, 'POST'); }
         catch (e) { toast(e.message, {type:'error'}); }
+        if (nextEpisode && generation === detailGeneration && d.open) await detail(nextEpisode.Id, {play:true});
       };
+    } catch (error) {
+      if (generation === detailGeneration && d.open) {
+        await WebPlayer.exitFullscreen(d);
+        await stop();
+        if (generation === detailGeneration && d.open) {
+          d.classList.remove("watch-dialog");
+          d.querySelector("#player").replaceChildren(UI.el("p", {role:"alert"}, "播放加载失败：" + error.message));
+          button.focus({preventScroll:true});
+        }
+      }
+      throw error;
     } finally {
       starting = false;
       if (button.isConnected) button.disabled = false;
@@ -314,15 +355,19 @@ async function detail(id, options = {}) {
       d.querySelector(".related").textContent = "相关推荐暂不可用";
   }
 }
-async function stop() {
+async function stop(options = {}) {
   clearInterval(heartbeat);
   const video = $("#player video");
   const position = Math.floor(featurePlaybackPosition(video) * 1e7);
   if (video) {
     video.dataset.stopping='true';
+    if (!options.keepPlayer) video.webPlayerDispose?.();
+    if (document.pictureInPictureElement === video) await document.exitPictureInPicture().catch(() => {});
     video.pause();
-    video.removeAttribute("src");
-    video.load();
+    if (!options.keepPlayer) {
+      video.removeAttribute("src");
+      video.load();
+    }
   }
   if (current) {
     const id = current;
@@ -338,6 +383,7 @@ async function stop() {
 async function closeModal() {
   ++detailGeneration;
   const d = $("#modal");
+  await WebPlayer.exitFullscreen(d);
   d.close();
   await stop();
   if (!d.open) {
