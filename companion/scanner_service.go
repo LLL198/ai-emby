@@ -216,7 +216,7 @@ func (a *App) lockScanLibrary(ctx context.Context, lib string) (*sql.Tx, string,
 		if status != "scanning" {
 			return tx, root, kind, name, nil
 		}
-		// The original scanner is already working. Wait without holding its row.
+		// Another scan holds this library. Release the row before waiting.
 		tx.Rollback()
 		timer := time.NewTimer(500 * time.Millisecond)
 		select {

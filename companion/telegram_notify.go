@@ -14,6 +14,41 @@ import (
 	"time"
 )
 
+type NotifyEvent struct {
+	Type         string
+	Action       string
+	UserName     string
+	ItemID       string
+	ItemName     string
+	MediaType    string
+	Year         int
+	Rating       float64
+	Progress     float64
+	IP           string
+	Client       string
+	Device       string
+	TMDBID       string
+	IMDBID       string
+	Overview     string
+	ImageURL     string
+	Time         time.Time
+	SessionID    string
+	UserID       string
+	SeriesName   string
+	EpisodeCount int
+}
+
+type episodeBatch struct {
+	event    NotifyEvent
+	deadline time.Time
+	seen     map[string]bool
+}
+
+type notificationJob struct {
+	app   *App
+	event NotifyEvent
+}
+
 func (a *App) notify(event NotifyEvent) {
 	if event.Action != "stop" && !telegramEventEnabled(a.telegramSettings(), event) {
 		return

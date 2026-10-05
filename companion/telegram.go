@@ -12,8 +12,29 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
+
+type telegramConfig struct {
+	Enabled  bool   `json:"telegram_enabled"`
+	Token    string `json:"telegram_token"`
+	ChatID   string `json:"telegram_chat_id"`
+	Notify   bool   `json:"telegram_notify_enabled"`
+	NewMedia bool   `json:"telegram_notify_new_media"`
+	Playback bool   `json:"telegram_notify_playback"`
+}
+
+type telegramState struct {
+	mu       sync.Mutex
+	configMu sync.Mutex
+	running  bool
+	wake     chan struct{}
+	debounce int64
+	queue    []notificationJob
+	sessions map[string]time.Time
+	client   *http.Client
+}
 
 var telegramTokenPattern = regexp.MustCompile(`^[0-9]+:[A-Za-z0-9_-]+$`)
 

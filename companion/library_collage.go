@@ -19,6 +19,11 @@ import (
 	"time"
 )
 
+type collageEntry struct {
+	data  []byte
+	until time.Time
+}
+
 var libraryCollages = struct {
 	sync.Mutex
 	entries map[string]collageEntry

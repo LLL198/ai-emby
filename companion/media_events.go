@@ -4,8 +4,32 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
+
+type mediaFsEvent struct {
+	Name    string
+	Op      uint32
+	Library string
+	Root    string
+}
+
+type mediaEventHub struct {
+	mu   sync.RWMutex
+	next uint64
+	subs map[uint64]chan mediaFsEvent
+}
+
+type mediaRefreshGuard struct {
+	mu             sync.Mutex
+	scraped        map[string]time.Time
+	pending        map[string]map[string]bool
+	timers         map[string]*time.Timer
+	generation     map[string]uint64
+	nextGeneration uint64
+	manual         map[string]map[string]bool
+}
 
 // Unsubscribing removes the entry without closing the event channel.
 func (hub *mediaEventHub) subscribe() (chan mediaFsEvent, func()) {

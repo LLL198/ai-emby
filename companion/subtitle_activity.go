@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+type subtitleActivityKey struct{}
+
 var subtitleLogURL = regexp.MustCompile(`(?i)https?://\S+`)
 
 type subtitleSkip string

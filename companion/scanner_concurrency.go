@@ -203,7 +203,7 @@ func (a *App) runConcurrentScanResult(parent context.Context, lib string, increm
 		entry.Current = "读取文件清单"
 	})
 	// The library status row stays locked until completion. The gateway overlays
-	// the live in-memory status; the original scanner's status UPDATE waits here.
+	// the live in-memory status while other scanner status updates wait for the row.
 	defer func() {
 		if ctx.Err() != nil {
 			if scanErr == nil {

@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+type sourceRedirectResult struct {
+	status      int
+	location    string
+	contentType string
+}
+
 // Read the first response without automatically following its redirect.
 var sourceRedirectClient = &http.Client{
 	Transport: &http.Transport{MaxIdleConnsPerHost: 16},

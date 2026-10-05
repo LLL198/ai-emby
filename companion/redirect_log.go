@@ -9,6 +9,13 @@ import (
 	"time"
 )
 
+type redirectTraceKey struct{}
+
+type redirectTrace struct {
+	source   []string
+	fallback string
+}
+
 func sourceRedirectStatus(status int) bool {
 	return status == 301 || status == 302 || status == 303 || status == 307 || status == 308
 }

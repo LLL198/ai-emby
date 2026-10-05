@@ -10,6 +10,21 @@ import (
 	"strings"
 )
 
+const catalogBatchSize = 200
+
+type catalogBatchKey struct{}
+
+type catalogBatch struct {
+	metadata     map[string]sidecar
+	media        map[string]M
+	child        map[string]int
+	versions     map[string][]Item
+	remote       map[string]tmdbData
+	items        map[string]Item
+	tmdb         tmdbConfig
+	nanShareFast bool
+}
+
 func catalogPlaceholders(count int) string {
 	if count < 1 {
 		return ""
@@ -33,9 +48,9 @@ func (a *App) prepareCatalogBatch(r *http.Request, user User, items []Item) (*ht
 	reader := a.mediaForUser(r.Context(), user)
 	if requestedField(r, "MediaSources") || requestedField(r, "AlternateMediaSources") {
 		group := a.versionGroupingFor("candidate")
-		for start := 0; start < len(items); start += 200 {
+		for start := 0; start < len(items); start += catalogBatchSize {
 			args := []any{}
-			for _, item := range items[start:min(start+200, len(items))] {
+			for _, item := range items[start:min(start+catalogBatchSize, len(items))] {
 				if item.URL != "" {
 					args = append(args, item.ID)
 				}
@@ -76,8 +91,8 @@ func (a *App) prepareCatalogBatch(r *http.Request, user User, items []Item) (*ht
 				}
 			}
 		}
-		for start := 0; start < len(parents); start += 200 {
-			ids := parents[start:min(start+200, len(parents))]
+		for start := 0; start < len(parents); start += catalogBatchSize {
+			ids := parents[start:min(start+catalogBatchSize, len(parents))]
 			rows, err := reader.Query("SELECT "+cols+" FROM items WHERE id IN ("+catalogPlaceholders(len(ids))+")", ids...)
 			if err != nil {
 				return r, err
@@ -101,8 +116,8 @@ func (a *App) prepareCatalogBatch(r *http.Request, user User, items []Item) (*ht
 	for id := range batch.items {
 		ids = append(ids, id)
 	}
-	for start := 0; start < len(ids); start += 200 {
-		args := ids[start:min(start+200, len(ids))]
+	for start := 0; start < len(ids); start += catalogBatchSize {
+		args := ids[start:min(start+catalogBatchSize, len(ids))]
 		rows, err := reader.Query("SELECT item,data FROM item_metadata WHERE item IN ("+catalogPlaceholders(len(args))+")", args...)
 		if err != nil {
 			return r, err
@@ -151,8 +166,8 @@ func (a *App) prepareCatalogBatch(r *http.Request, user User, items []Item) (*ht
 }
 
 func (a *App) loadCatalogMediaBatch(reader *mediaReader, batch *catalogBatch, ids []any) error {
-	for start := 0; start < len(ids); start += 200 {
-		args := ids[start:min(start+200, len(ids))]
+	for start := 0; start < len(ids); start += catalogBatchSize {
+		args := ids[start:min(start+catalogBatchSize, len(ids))]
 		rows, err := reader.Query("SELECT item,source,data FROM media_probe WHERE item IN ("+catalogPlaceholders(len(args))+")", args...)
 		if err != nil {
 			return err
@@ -190,8 +205,8 @@ func (a *App) loadCatalogMediaBatch(reader *mediaReader, batch *catalogBatch, id
 	for key := range sources {
 		keys = append(keys, key)
 	}
-	for start := 0; start < len(keys); start += 200 {
-		args := keys[start:min(start+200, len(keys))]
+	for start := 0; start < len(keys); start += catalogBatchSize {
+		args := keys[start:min(start+catalogBatchSize, len(keys))]
 		rows, err := reader.Query("SELECT DISTINCT ON (source) source,data FROM media_probe WHERE source IN ("+catalogPlaceholders(len(args))+") ORDER BY source,item", args...)
 		if err != nil {
 			return err

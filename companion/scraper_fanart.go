@@ -12,6 +12,12 @@ import (
 	"strings"
 )
 
+type scraperFanartImage struct {
+	URL    string `json:"url"`
+	Lang   string `json:"lang"`
+	Season string `json:"season"`
+}
+
 type fanartExternalIDs struct {
 	TVDBID int `json:"tvdb_id"`
 }

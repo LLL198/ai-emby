@@ -503,7 +503,7 @@ func (a *App) browseRoute(w http.ResponseWriter, r *http.Request, u User, p stri
 		return true
 	}
 	parts := strings.Split(strings.Trim(p, "/"), "/")
-	// Keep per-user authorization checks consistent with the original dispatcher.
+	// Ordinary accounts can access only their own user-scoped routes.
 	if len(parts) >= 2 && strings.EqualFold(parts[0], "users") && !u.Admin && !u.API && parts[1] != u.ID && parts[1] != "me" {
 		return false
 	}

@@ -9,8 +9,25 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
+
+type xiaoyaFastFlight struct {
+	done   chan struct{}
+	result xiaoyaFastResult
+}
+
+type xiaoyaFastResult struct {
+	location string
+	until    time.Time
+}
+
+type xiaoyaFastState struct {
+	mu      sync.Mutex
+	cache   map[string]xiaoyaFastResult
+	flights map[string]*xiaoyaFastFlight
+}
 
 var xiaoyaClient = &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 

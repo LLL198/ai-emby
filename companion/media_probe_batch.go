@@ -10,8 +10,35 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
+
+type probeAutomationSettings struct {
+	BatchRoots     []probeRoot
+	MonitorEnabled bool
+	MonitorRoots   []probeRoot
+	Generation     uint64
+	Cursor         string
+	Done           int64
+	Skipped        int64
+	Failed         int64
+	State          string
+}
+
+type probeRoot struct {
+	Library string
+	Root    string
+}
+
+type probeBatchState struct {
+	mu       sync.Mutex
+	running  bool
+	stopped  bool
+	workers  sync.WaitGroup
+	cancel   func()
+	activity string
+}
 
 func (a *App) probeRootOptions() []M {
 	options := []M{}

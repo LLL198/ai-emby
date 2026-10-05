@@ -10,6 +10,20 @@ import (
 	"time"
 )
 
+type scraperLanguageKey struct{}
+
+type scraperPreferencesKey struct{}
+
+type scraperPoster struct {
+	Path     string `json:"file_path"`
+	Language string `json:"iso_639_1"`
+}
+
+type scraperLocalizedData struct {
+	tmdbData
+	OriginalLanguage string `json:"original_language"`
+}
+
 func scraperPreferences(ctx context.Context) scraperConfig {
 	if ctx != nil {
 		if config, ok := ctx.Value(scraperPreferencesKey{}).(scraperConfig); ok {

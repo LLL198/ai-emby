@@ -13,6 +13,8 @@ import (
 	"strings"
 )
 
+type bangumiScraper struct{}
+
 const (
 	bangumiAPIBase = "https://api.bgm.tv/v0/"
 	bangumiAgent   = "ai-emby/1.0 (media metadata scraper)"

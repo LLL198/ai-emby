@@ -13,6 +13,22 @@ import (
 	"time"
 )
 
+type IntroRecord struct {
+	Version           int
+	ItemID            string
+	SeriesID          string
+	TMDBSeriesID      string
+	TMDBEpisodeID     string
+	Season            int
+	Episode           int
+	IntroStartTicks   int64
+	IntroEndTicks     int64
+	CreditsStartTicks int64
+	Source            string
+	Confidence        float64
+	UpdatedAt         time.Time
+}
+
 const introRecordLimit = 16384
 
 func introSourcePriority(source string) int {

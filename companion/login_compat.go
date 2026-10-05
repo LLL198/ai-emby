@@ -1,9 +1,9 @@
 package main
 
 import (
+	"mime"
 	"net/http"
- "mime"
- "strings"
+	"strings"
 	"time"
 )
 
@@ -37,28 +37,30 @@ func (a *App) loginSession(r *http.Request, u User, d string) M {
 }
 
 type loginCredentials struct {
- Username string
- Pw string
+	Username string
+	Pw       string
 }
 
 func loginBody(w http.ResponseWriter, r *http.Request, b *loginCredentials) bool {
- mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
- if !strings.EqualFold(mediaType, "application/x-www-form-urlencoded") {
-  return body(w, r, b)
- }
- r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
- if err := r.ParseForm(); err != nil {
-  fail(w, http.StatusBadRequest, "无效表单")
-  return false
- }
- for key, values := range r.PostForm {
-  if len(values) == 0 { continue }
-  switch {
-  case strings.EqualFold(key, "Username"):
-   b.Username = values[0]
-  case strings.EqualFold(key, "Pw"):
-   b.Pw = values[0]
-  }
- }
- return true
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if !strings.EqualFold(mediaType, "application/x-www-form-urlencoded") {
+		return body(w, r, b)
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := r.ParseForm(); err != nil {
+		fail(w, http.StatusBadRequest, "无效表单")
+		return false
+	}
+	for key, values := range r.PostForm {
+		if len(values) == 0 {
+			continue
+		}
+		switch {
+		case strings.EqualFold(key, "Username"):
+			b.Username = values[0]
+		case strings.EqualFold(key, "Pw"):
+			b.Pw = values[0]
+		}
+	}
+	return true
 }

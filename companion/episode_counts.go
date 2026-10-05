@@ -1,5 +1,10 @@
 package main
 
+type episodeCounts struct {
+	total    int
+	unplayed int
+}
+
 // Count Series/Season roots in one query; apply results only after reading every row.
 func (a *App) fillEpisodeCounts(items []Item, dtos []M, user User) {
 	positions := map[string][]int{}
@@ -28,10 +33,10 @@ func (a *App) fillEpisodeCounts(items []Item, dtos []M, user User) {
 		return
 	}
 	defer rows.Close()
-	byRoot := map[string]counts{}
+	byRoot := map[string]episodeCounts{}
 	for rows.Next() {
 		var root string
-		var count counts
+		var count episodeCounts
 		if err := rows.Scan(&root, &count.total, &count.unplayed); err != nil {
 			return
 		}

@@ -8,8 +8,23 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+type dashboardPlay struct {
+	Username        string  `json:"username"`
+	MediaName       string  `json:"mediaName"`
+	Device          string  `json:"device"`
+	Client          string  `json:"client"`
+	ProgressPercent float64 `json:"progressPercent"`
+}
+
+type dashboardCPUSample struct {
+	mu      sync.Mutex
+	at      time.Time
+	seconds float64
+}
 
 var processStarted = time.Now()
 
@@ -79,7 +94,7 @@ func (a *App) adminDashboard(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "读取用户统计失败")
 		return
 	}
-	type active struct {
+	type playbackRow struct {
 		userID, deviceKey, itemID, username, name, kind, parent, series string
 		season, episode                                                 int
 	}
@@ -92,9 +107,9 @@ func (a *App) adminDashboard(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "读取播放状态失败")
 		return
 	}
-	playing := []active{}
+	playing := []playbackRow{}
 	for rows.Next() {
-		var entry active
+		var entry playbackRow
 		err = rows.Scan(&entry.userID, &entry.deviceKey, &entry.itemID, &entry.username, &entry.name, &entry.kind, &entry.season, &entry.episode, &entry.parent, &entry.series)
 		if err != nil {
 			break

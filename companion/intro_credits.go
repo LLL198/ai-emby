@@ -12,7 +12,12 @@ import (
 	"time"
 )
 
-const playbackTicksPerSecond int64 = 10000000
+const (
+	// Playback clients express positions in 100-nanosecond ticks.
+	playbackTicksPerSecond int64 = 10_000_000
+	introSessionCapacity         = 1024
+	introQueueCapacity           = 128
+)
 
 func defaultIntroConfig() introConfig {
 	return introConfig{AutoIntro: true, AutoCredits: true, Directory: filepath.Join(introDataRoot(), "intro-credits"), WindowMinutes: 10, MinSamples: 3, ToleranceSeconds: 15}
@@ -56,8 +61,8 @@ func (a *App) loadIntroSettings() {
 	a.intro.active = map[string]string{}
 	a.intro.groups = map[string]*introGroup{}
 	a.intro.markers = map[string]introMarker{}
-	a.intro.queue = make(chan introCandidate, 128)
-	a.intro.recordQueue = make(chan introRecordWrite, 128)
+	a.intro.queue = make(chan introCandidate, introQueueCapacity)
+	a.intro.recordQueue = make(chan introRecordWrite, introQueueCapacity)
 	a.intro.learningDone = make(chan struct{})
 	a.intro.mu.Unlock()
 	rows, err := a.db.Query("SELECT series_id,season,parent_id,intro_start_ticks,intro_end_ticks,credits_start_ticks,intro_samples,credits_samples,source FROM intro_markers ORDER BY updated_at DESC LIMIT ?", introRecordLimit+1)
@@ -158,7 +163,7 @@ func (a *App) introSettingsAPI(w http.ResponseWriter, r *http.Request) {
 	a.intro.sessions = map[string]introPlayback{}
 	a.intro.active = map[string]string{}
 	a.intro.groups = map[string]*introGroup{}
-	a.intro.ring = [1024]introSessionSlot{}
+	a.intro.ring = [introSessionCapacity]introSessionSlot{}
 	a.intro.next = 0
 	a.intro.enabled.Store(config.Enabled)
 	a.intro.mu.Unlock()
@@ -198,7 +203,7 @@ func (a *App) clearIntroRecords(w http.ResponseWriter, r *http.Request) {
 	a.intro.active = map[string]string{}
 	a.intro.groups = map[string]*introGroup{}
 	a.intro.markers = map[string]introMarker{}
-	a.intro.ring = [1024]introSessionSlot{}
+	a.intro.ring = [introSessionCapacity]introSessionSlot{}
 	a.intro.next = 0
 	a.intro.markerOverflow = false
 	a.intro.mu.Unlock()

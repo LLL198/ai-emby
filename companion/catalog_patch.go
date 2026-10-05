@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+type catalogCoversKey struct{}
+
+type listStateDeferredKey struct{}
+
 func listStateDeferred(r *http.Request) bool {
 	return r != nil && r.Context().Value(listStateDeferredKey{}) == true
 }

@@ -12,6 +12,24 @@ import (
 	"time"
 )
 
+type assrtFile struct {
+	Name string `json:"f"`
+	URL  string `json:"url"`
+}
+
+type assrtSub struct {
+	ID       int         `json:"id"`
+	Native   string      `json:"native_name"`
+	Video    string      `json:"videoname"`
+	Filename string      `json:"filename"`
+	URL      string      `json:"url"`
+	Files    []assrtFile `json:"filelist"`
+	Lang     struct {
+		Desc string          `json:"desc"`
+		List map[string]bool `json:"langlist"`
+	} `json:"lang"`
+}
+
 var subtitleHTTPClient = &http.Client{
 	Timeout: 20 * time.Second,
 	CheckRedirect: func(r *http.Request, previous []*http.Request) error {

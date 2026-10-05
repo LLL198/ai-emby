@@ -9,6 +9,16 @@ import (
 	"time"
 )
 
+type proxySettings struct {
+	Enabled            bool
+	Type               string
+	URL                string
+	Username           string
+	Password           string `json:"-"`
+	PasswordConfigured bool
+	Scopes             map[string]bool
+}
+
 type proxySettingsRequest struct {
 	Enabled                       bool
 	Type, URL, Username, Password string

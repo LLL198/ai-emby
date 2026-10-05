@@ -5,7 +5,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 )
+
+type proxyState struct {
+	mu         sync.RWMutex
+	settings   proxySettings
+	clients    map[string]*http.Client
+	transports []*http.Transport
+}
 
 var errInvalidProxyConfiguration = errors.New("invalid proxy configuration")
 

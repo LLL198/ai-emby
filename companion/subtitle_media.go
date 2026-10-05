@@ -10,6 +10,16 @@ import (
 	"time"
 )
 
+type mediaSubtitleMarker struct {
+	Owner       string
+	ItemID      string
+	Fingerprint string
+	File        string
+	Hash        string
+	LanguageTag string
+	Ext         string
+}
+
 func subtitleMediaLocation(item Item) (directory, stem string, err error) {
 	path := item.Path
 	if !filepath.IsAbs(path) || strings.ContainsRune(path, 0) || strings.Contains(path, "://") {

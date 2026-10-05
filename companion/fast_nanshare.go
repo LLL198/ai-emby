@@ -8,10 +8,31 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-const fastContinuationParameter = "GoEmbyFastWait"
+type fastNanShareFlight struct {
+	done   chan struct{}
+	result fastNanShareResult
+}
+
+type fastNanShareResult struct {
+	source   sourceRedirectResult
+	location string
+	until    time.Time
+}
+
+type fastNanShareState struct {
+	mu      sync.Mutex
+	cache   map[string]fastNanShareResult
+	flights map[string]*fastNanShareFlight
+}
+
+const (
+	fastContinuationParameter = "GoEmbyFastWait"
+	fastNanShareCapacity      = 1024
+)
 
 func (a *App) nanShareFastEnabled() bool {
 	var value string
@@ -121,7 +142,7 @@ func (a *App) tryFastNanShare(w http.ResponseWriter, r *http.Request, userID, de
 	}
 	flight := state.flights[key]
 	if flight == nil {
-		if (canContinue && continuation > 0) || len(state.flights) >= 1024 {
+		if (canContinue && continuation > 0) || len(state.flights) >= fastNanShareCapacity {
 			state.mu.Unlock()
 			a.fastNanShareLog("fallback")
 			return false
@@ -147,7 +168,7 @@ func (a *App) tryFastNanShare(w http.ResponseWriter, r *http.Request, userID, de
 				if state.cache == nil {
 					state.cache = make(map[string]fastNanShareResult)
 				}
-				if len(state.cache) >= 1024 {
+				if len(state.cache) >= fastNanShareCapacity {
 					for cachedKey := range state.cache {
 						delete(state.cache, cachedKey)
 						break

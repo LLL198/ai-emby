@@ -14,6 +14,31 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+type scraperMonitorRoot struct {
+	Library string
+	Root    string
+	Kind    string
+}
+
+type scraperDiscovery struct {
+	scope          scraperScope
+	libraryType    string
+	signature      string
+	stableSince    time.Time
+	discovered     time.Time
+	nextAttempt    time.Time
+	failedAttempts int
+	busy           bool
+}
+
+type scraperMonitorResult struct {
+	key            string
+	signature      string
+	configKey      string
+	failedAttempts int
+	retry          bool
+}
+
 // scraperDirectorySnapshot returns safe media entries and a stable digest of
 // their names and file metadata for monitor change detection.
 func scraperDirectorySnapshot(rootPath, relative string) ([]fs.DirEntry, string, error) {

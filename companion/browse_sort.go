@@ -5,6 +5,12 @@ import (
 	"strings"
 )
 
+type browseSortSpec struct {
+	expr    string
+	kind    string
+	userArg bool
+}
+
 type browseSortPlan struct {
 	joins   string
 	columns []string

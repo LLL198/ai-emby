@@ -11,6 +11,20 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+type probeFileSignature struct {
+	size     int64
+	modified int64
+}
+
+type probeMonitorEntry struct {
+	root      probeRoot
+	path      string
+	signature probeFileSignature
+	changed   time.Time
+	first     time.Time
+	retry     time.Time
+}
+
 func mediaPathWithin(root, path string) bool {
 	relative, err := filepath.Rel(root, path)
 	return err == nil && (relative == "." || filepath.IsLocal(relative))

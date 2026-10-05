@@ -9,6 +9,21 @@ import (
 	"strings"
 )
 
+type scraperFileScope struct {
+	Library   string
+	Root      string
+	Relative  string
+	Path      string
+	Directory bool
+}
+
+type scraperScope struct {
+	Library  string
+	Root     string
+	Relative string
+	Enabled  bool
+}
+
 // scraperScopeEnabled applies the most specific matching scope. A relative
 // path of "." covers the whole library; descendants are matched only across
 // a path-component boundary.
