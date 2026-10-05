@@ -28,10 +28,7 @@ body.panel-view.cinema-login .login-cinema-title {margin:0;line-height:0}
   content:"";position:absolute;inset:0;
   background:linear-gradient(90deg,#020710bd 0%,#0207107a 35%,#0207100a 70%),linear-gradient(0deg,#020710b3,transparent 24%,transparent 80%,#0207104d);
 }
-.login-topline,.login-bottomline {position:absolute;left:clamp(28px,8vw,240px);right:clamp(28px,5vw,150px);display:flex;align-items:center;justify-content:space-between;gap:24px}
-.login-topline {top:max(38px,env(safe-area-inset-top));justify-content:flex-end}
-body.panel-view.cinema-login .login-motion {display:flex;align-items:center;gap:8px;min-height:40px;padding:9px 13px;border:1px solid #accde332;border-radius:99px;background:#07142266;color:#d1e4f5;font-size:11px;backdrop-filter:blur(12px)}
-.login-motion svg {width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.login-bottomline {position:absolute;left:clamp(28px,8vw,240px);right:clamp(28px,5vw,150px);display:flex;align-items:center;justify-content:space-between;gap:24px}
 body.panel-view.entry-view.cinema-login .login-card {
   position:relative;width:var(--login-card-width);max-width:100%;padding:24px;
   margin-inline-start:max(0px,calc(var(--title-center,44%) - min(var(--login-card-width),100%) / 2));
@@ -67,7 +64,7 @@ body.cinema-login .login-error {margin:0;padding:10px 12px;border:1px solid #fba
 @media(min-width:2200px) {body.panel-view.entry-view.cinema-login .login-card {padding:32px}.login-column {gap:48px}}
 @media(max-width:900px) {
   body.panel-view.cinema-login #app > .login-page {padding:110px 32px 104px}
-  .login-topline,.login-bottomline {left:32px;right:32px}
+  .login-bottomline {left:32px;right:32px}
   .login-column {--login-card-width:390px}
   body.panel-view.entry-view.cinema-login .login-card {padding:24px}
   .login-card::before {left:32px;right:32px}
@@ -75,8 +72,7 @@ body.cinema-login .login-error {margin:0;padding:10px 12px;border:1px solid #fba
 @media(max-width:600px) {
   body.panel-view.cinema-login #app > .login-page {justify-content:center;padding:112px 24px 98px}
   .login-column {--login-card-width:100%;width:100%;gap:26px}
-  .login-topline,.login-bottomline {left:24px;right:24px}
-  .login-topline {top:max(28px,env(safe-area-inset-top))}
+  .login-bottomline {left:24px;right:24px}
   .login-backdrop {background-position:76% center}
   .login-film {object-position:76% center}
   .login-backdrop::after {background:linear-gradient(0deg,#030810ed,#03081085 48%,#03081024)}
@@ -87,4 +83,4 @@ body.cinema-login .login-error {margin:0;padding:10px 12px;border:1px solid #fba
   .login-bottomline > span:last-child {display:none}
 }
 @media(max-height:650px) and (min-width:601px) {body.panel-view.cinema-login #app > .login-page {padding-top:82px}.login-column {gap:22px}}
-@media(prefers-reduced-motion:reduce) {.login-film {transition:none}.login-motion {display:none!important}}
+@media(prefers-reduced-motion:reduce) {.login-film {transition:none}}

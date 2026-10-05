@@ -198,7 +198,6 @@ function login(){
  closeLogs();view="login";nav();
  $("#app").innerHTML=`<section class="login-page" aria-label="登录私人影院">
   <div class="login-backdrop" aria-hidden="true"><video class="login-film" muted playsinline preload="none" tabindex="-1"></video></div>
-  <div class="login-topline"><button type="button" class="login-motion" aria-label="暂停背景动画" title="暂停背景动画">${drawerIcon('chapter')}<span>暂停背景</span></button></div>
   <div class="login-column"><div class="login-title-block"><h1 class="login-cinema-title" aria-label="AI EMBY"><canvas class="login-title-canvas" width="1440" height="340" aria-hidden="true">AI EMBY</canvas></h1><p class="login-mark" aria-label="${esc(serverName)}"></p></div>
   <div class="login-card">
    <form id="login" class="login-form"><label class="login-field" for="login-username"><span>用户名</span><span class="login-input-wrap">${drawerIcon('users')}<input id="login-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="输入你的用户名" required></span></label>

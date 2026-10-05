@@ -5,11 +5,11 @@ const LoginScene = (() => {
   function mount(scene) {
     destroy();
     const events = new AbortController(), options = {signal:events.signal};
-    const film = scene.querySelector('.login-film'), motion = scene.querySelector('.login-motion');
+    const film = scene.querySelector('.login-film');
     const title = scene.querySelector('.login-title-canvas'), titleContext = title.getContext('2d');
     const card = scene.querySelector('.login-card');
     const preference = matchMedia('(prefers-reduced-motion: reduce)');
-    let userPaused = false, failed = false, autoplayBlocked = false, formRevealed = false, completed = false;
+    let failed = false, autoplayBlocked = false, formRevealed = false, completed = false;
     let titleFrame = 0;
     const motionAllowed = () => !preference.matches && !navigator.connection?.saveData;
     // Same glyph-by-glyph outline and metallic fill as the original opening film.
@@ -58,36 +58,23 @@ const LoginScene = (() => {
     const titleSize = new ResizeObserver(drawTitle);titleSize.observe(title);
     film.addEventListener('timeupdate',drawTitle,options);
     film.addEventListener('seeked',drawTitle,options);
-    function paintControl() {
-      const paused = film.paused;
-      motion.setAttribute('aria-label', paused ? '播放背景动画' : '暂停背景动画');
-      motion.title = paused ? '播放背景动画' : '暂停背景动画';
-      motion.querySelector('span').textContent = paused ? '播放背景' : '暂停背景';
-      motion.querySelector('svg').innerHTML = paused ? '<path d="m9 5 11 7-11 7Z"/>' : '<path d="M8 5v14M16 5v14"/>';
-      motion.hidden = !motionAllowed() || failed || completed;
-    }
     function play() {
-      if (!motionAllowed() || userPaused || document.hidden || failed || completed) return;
+      if (!motionAllowed() || document.hidden || failed || completed) return;
       if (!film.hasAttribute('src')) film.src = '/web/assets/ai-emby-login-background-v5-4k.mp4';
-      film.play().catch(() => {if(events.signal.aborted)return;autoplayBlocked=true;paintControl();drawTitle();});
+      film.play().catch(() => {if(events.signal.aborted)return;autoplayBlocked=true;drawTitle();});
     }
     function sync() {
       if (!motionAllowed()) {
         film.pause(); film.removeAttribute('src'); film.load(); scene.classList.remove('film-ready');
       } else if (document.hidden) film.pause();
       else play();
-      paintControl();
       drawTitle();
     }
     film.muted = true;
-    film.addEventListener('playing', () => {autoplayBlocked=false;scene.classList.add('film-ready'); paintControl();drawTitle();}, options);
-    film.addEventListener('pause', () => {paintControl();drawTitle();}, options);
-    film.addEventListener('ended', () => {completed=true;formRevealed=true;paintControl();drawTitle();}, options);
-    film.addEventListener('error', () => {failed = true; film.pause(); scene.classList.remove('film-ready'); paintControl();drawTitle();}, options);
-    motion.addEventListener('click', () => {
-      if (film.paused) {userPaused = false; play();}
-      else {userPaused = true; film.pause();}
-    }, options);
+    film.addEventListener('playing', () => {autoplayBlocked=false;scene.classList.add('film-ready');drawTitle();}, options);
+    film.addEventListener('pause', drawTitle, options);
+    film.addEventListener('ended', () => {completed=true;formRevealed=true;drawTitle();}, options);
+    film.addEventListener('error', () => {failed = true; film.pause(); scene.classList.remove('film-ready');drawTitle();}, options);
     document.addEventListener('visibilitychange', sync, options);
     preference.addEventListener('change', sync, options);
     navigator.connection?.addEventListener('change', sync, options);
