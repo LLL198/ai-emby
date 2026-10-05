@@ -1,0 +1,25 @@
+html.boot-pending body { overflow: hidden; }
+html.boot-pending body::before {
+  content: ""; position: fixed; inset: 0; z-index: 99998; background: #020508;
+}
+.boot-overlay {
+  position: fixed; inset: 0; z-index: 99999; background: #020508;
+  display: grid; place-items: center; isolation: isolate;
+}
+.boot-video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.boot-skip {
+  position: absolute; right: max(30px, env(safe-area-inset-right));
+  bottom: max(28px, env(safe-area-inset-bottom)); z-index: 1;
+  padding: 12px 19px; min-height: 44px; border-radius: 999px;
+  border: 1px solid #99cbea55; background: #061423c9; color: #dfedff;
+  font: 13px/1.3 system-ui, sans-serif; cursor: pointer; backdrop-filter: blur(12px);
+}
+.boot-skip:hover { background: #16334bd9; border-color: #bbddff; }
+.boot-skip:focus-visible { outline: 2px solid #e7f4ff; outline-offset: 4px; }
+@media (max-aspect-ratio: 4/3) {
+  .boot-video { object-fit: contain; }
+  .boot-skip { right: 20px; bottom: max(24px, env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html.boot-pending body::before, .boot-overlay { display: none; }
+}

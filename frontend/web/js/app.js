@@ -174,7 +174,8 @@ function nav(){
  if(view!=="admin")stopConsolePolling();
  if(renderedView!==view){$("#app")?.replaceChildren();renderedView=view; if(view!=="browse" && typeof resumeMenuAbort!=="undefined") { resumeMenuAbort.abort(); resumeMenuAbort=new AbortController(); }}
  syncMediaHeader();
- if(view!=="login")stopLoginMark();
+ document.body.classList.toggle("cinema-login",view==="login");
+ if(view!=="login"){stopLoginMark();LoginScene.destroy()}
  document.body.classList.toggle("media-view",view==="browse");document.body.classList.toggle("admin-view",view==="admin");toggleDrawer(false);const n=$("#nav");if(!n)return;
  n.innerHTML=`${token&&user?.Policy?.IsAdministrator?`<div class="workspace-switch" aria-label="切换工作空间"><button type="button" aria-pressed="${view!=="admin"&&view!=="files"}" onclick="browseRoot()">影库</button><button type="button" aria-pressed="${view==="admin"||view==="files"}" onclick="navigateAdminSection(12)">管理面板</button></div>`:""}${token&&view==="admin"?'<button class="secondary icon-button" title="实时日志" aria-label="实时日志" onclick="showLogs()"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/></svg></button>':""}${token?`${view!=="admin"&&view!=="files"?`<button class="secondary icon-button" aria-label="搜索" title="搜索" onclick="openSearch()">${UI.icons.search}</button>`:""}<details class="user-menu"><summary class="icon-button user-menu-trigger" onclick="openUserMenu(event)" title="${esc(user?.Name||"用户")}" aria-label="用户菜单"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></summary></details>`:""}<button class="secondary icon-button" title="切换明暗模式" aria-label="切换明暗模式" onclick="toggleTheme()">${themeIcon()}</button>`;
  paintTopAvatar(avatarForUser().objectURL);
@@ -189,24 +190,31 @@ let serverName="AI Emby",loginMarkTimer=null;
 function stopLoginMark(){clearTimeout(loginMarkTimer);loginMarkTimer=null}
 function renderLoginMark(){
  stopLoginMark();const mark=$(".login-mark");if(view!=="login"||!mark)return;
- const name=serverName||"AI Emby",letters=Array.from(name),reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
- mark.setAttribute("aria-label",name);mark.textContent="";
- const text=document.createElement("span");text.setAttribute("aria-hidden","true");mark.append(text);
- mark.classList.toggle("login-mark-typing",!reduced);
- if(reduced){text.textContent=name;return}
- let index=0;
- function type(){loginMarkTimer=null;if(view!=="login"||!mark.isConnected)return;text.textContent=letters.slice(0,++index).join("");if(index<letters.length)loginMarkTimer=setTimeout(type,70)}
- type();
+ const name=serverName||"AI Emby";
+ mark.setAttribute("aria-label",name);
+ mark.textContent=/^ai emby$/i.test(name)?"欢迎进入你的私人影院":`欢迎进入 ${name}`;
 }
 function login(){
  closeLogs();view="login";nav();
- $("#app").innerHTML=`<section class="login-page"><div class="login-card"><div class="login-mark" role="img" aria-label="${esc(serverName)}"></div><form id="login" class="login-form"><input name="username" autocomplete="username" placeholder="用户名" aria-label="用户名" required><input name="pw" type="password" autocomplete="current-password" placeholder="密码" aria-label="密码"><button class="login-submit" aria-label="登录">登录</button><p class="login-device-note">登录后自动记住当前设备</p></form></div></section>`;
+ $("#app").innerHTML=`<section class="login-page" aria-label="登录私人影院">
+  <div class="login-backdrop" aria-hidden="true"><video class="login-film" muted playsinline preload="none" tabindex="-1"></video></div>
+  <div class="login-topline"><button type="button" class="login-motion" aria-label="暂停背景动画" title="暂停背景动画">${drawerIcon('chapter')}<span>暂停背景</span></button></div>
+  <div class="login-column"><div class="login-title-block"><h1 class="login-cinema-title" aria-label="AI EMBY"><canvas class="login-title-canvas" width="1440" height="340" aria-hidden="true">AI EMBY</canvas></h1><p class="login-mark" aria-label="${esc(serverName)}"></p></div>
+  <div class="login-card">
+   <form id="login" class="login-form"><label class="login-field" for="login-username"><span>用户名</span><span class="login-input-wrap">${drawerIcon('users')}<input id="login-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="输入你的用户名" required></span></label>
+    <label class="login-field" for="login-password"><span>密码</span><span class="login-input-wrap">${drawerIcon('lock')}<input id="login-password" name="pw" type="password" autocomplete="current-password" placeholder="输入你的密码"><button class="login-password-toggle" type="button" aria-label="显示密码" aria-pressed="false" title="显示密码"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></span></label>
+    <p id="login-error" class="login-error" role="alert" hidden></p><button type="submit" class="login-submit" aria-label="登录"><span>进入影院</span>${drawerIcon('back')}</button><p class="login-device-note">${drawerIcon('lock')}此设备将自动保持登录</p>
+   </form>
+  </div></div><div class="login-bottomline"><span>让每一个故事，都有自己的银幕。</span><span>YOUR STORIES. YOUR UNIVERSE.</span></div>
+ </section>`;
+ LoginScene.mount($(".login-page"));
  renderLoginMark();loadServerName();
  $("#login").onsubmit=run(async(e)=>{
   e.preventDefault();
-  const form=e.target,button=form.querySelector("button"),epoch=sessionEpoch;
+  const form=e.target,button=form.querySelector(".login-submit"),error=form.querySelector(".login-error"),epoch=sessionEpoch;
   if(button.disabled)return;
   button.disabled=true;
+  button.querySelector("span").textContent="正在登录…";form.setAttribute("aria-busy","true");error.hidden=true;
   try{
    const f=new FormData(form),b=await api.login(f.get("username"),f.get("pw"));
    if(epoch!==sessionEpoch)return;
@@ -214,7 +222,8 @@ function login(){
    saveCurrentSession();
    try{await rememberCurrentDevice()}catch(error){if(token===b.AccessToken)toast(error.message,{type:"error"})}
    if(token===b.AccessToken&&epoch===sessionEpoch){nav();routeFromLocation()}
-  }finally{button.disabled=false}
+  }catch(failure){if(epoch===sessionEpoch&&form.isConnected){error.textContent=failure.message||"登录失败，请稍后重试";error.hidden=false}}
+  finally{button.disabled=false;button.querySelector("span").textContent="进入影院";form.removeAttribute("aria-busy")}
  });
 }
 async function logout(){

@@ -1,0 +1,90 @@
+/* A self-contained cinema palette, independent of the management theme. */
+body.panel-view.cinema-login {
+  --text:#edf5ff; --text-secondary:#a4b8cc; --muted:#a4b8cc;
+  --accent:#92d6ff; --bg:#030810; --border:#a5cced26;
+  background:#030810; color:var(--text);
+}
+body.panel-view.cinema-login > header {display:none}
+body.panel-view.cinema-login main#app {margin:0;padding:0;min-height:100dvh;outline:none}
+body.panel-view.cinema-login #app > .login-page {
+  position:relative; isolation:isolate; max-width:none; min-height:100dvh;
+  display:flex; align-items:flex-start; justify-content:flex-start;
+  padding:clamp(120px,17dvh,370px) clamp(28px,7.8vw,300px) 116px;
+}
+.login-column {--login-card-width:clamp(430px,25vw,680px);width:max(37.5vw,66.6667dvh);max-width:100%;min-width:0;display:grid;grid-template-columns:minmax(0,1fr);gap:34px}
+.login-title-block {min-width:0}
+body.panel-view.cinema-login .login-cinema-title {margin:0;line-height:0}
+/* 140px lettering on a 1920 × 1080 stage, matching the opening film's scale. */
+.login-title-canvas {display:block;width:100%;height:auto;aspect-ratio:720/170}
+.login-backdrop {position:fixed;inset:0;z-index:-2;background:#020508 center/cover no-repeat;pointer-events:none}
+.scene-still .login-backdrop {background-image:url('/web/assets/ai-emby-login-poster-v3-4k.jpg')}
+.login-film {display:block;width:100%;height:100%;max-height:none;margin:0;background:#020508;object-fit:cover;object-position:center;opacity:0}
+.film-ready .login-film {opacity:1}
+.login-title-block .login-mark {opacity:var(--title-caption,0)}
+.cinema-login .login-card {opacity:var(--form-reveal,0)}
+.scene-still .login-card,.scene-still .login-title-block .login-mark {opacity:1}
+.login-bottomline {opacity:var(--form-reveal,0)}
+.login-backdrop::after {
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,#020710bd 0%,#0207107a 35%,#0207100a 70%),linear-gradient(0deg,#020710b3,transparent 24%,transparent 80%,#0207104d);
+}
+.login-topline,.login-bottomline {position:absolute;left:clamp(28px,8vw,240px);right:clamp(28px,5vw,150px);display:flex;align-items:center;justify-content:space-between;gap:24px}
+.login-topline {top:max(38px,env(safe-area-inset-top));justify-content:flex-end}
+body.panel-view.cinema-login .login-motion {display:flex;align-items:center;gap:8px;min-height:40px;padding:9px 13px;border:1px solid #accde332;border-radius:99px;background:#07142266;color:#d1e4f5;font-size:11px;backdrop-filter:blur(12px)}
+.login-motion svg {width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+body.panel-view.entry-view.cinema-login .login-card {
+  position:relative;width:var(--login-card-width);max-width:100%;padding:24px;
+  margin-inline-start:max(0px,calc(var(--title-center,44%) - min(var(--login-card-width),100%) / 2));
+  border:1px solid #b8dbf333;border-radius:24px;
+  background:linear-gradient(145deg,#101e30c4,#070f1bcb);
+  box-shadow:0 24px 80px #00000045,inset 0 1px 0 #d7edff0d;
+  backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+}
+.login-card::before {content:"";position:absolute;left:32px;right:32px;top:-1px;height:1px;background:linear-gradient(90deg,transparent,#b3dfff8c,transparent)}
+body.panel-view.entry-view.cinema-login .login-mark {font-family:inherit;font-size:clamp(13px,1.2vw,24px);font-weight:400;letter-spacing:3px;text-align:left;line-height:1.6;min-height:1.6em;margin:12px 0 0 8px;color:#bad2e7}
+body.panel-view.entry-view.cinema-login .login-form {gap:20px}
+.login-field {display:grid;gap:9px;font-size:12px;color:#c7d7e6}
+.login-input-wrap {display:flex;position:relative;align-items:center}
+.login-input-wrap > svg {position:absolute;left:15px;width:17px;height:17px;fill:none;stroke:#96adc2;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+body.panel-view.entry-view.cinema-login .login-form input {width:100%;min-height:50px;border:1px solid #a8c9e329;border-radius:11px;padding:13px 43px;background:#07111e8c;color:#f0f6fc;font-size:13px;box-shadow:inset 0 2px 6px #0000000d}
+body.cinema-login .login-form input::placeholder {color:#90a4b9;opacity:1}
+body.panel-view.entry-view.cinema-login .login-form input:focus {border-color:#9ad6ff9c;box-shadow:0 0 0 3px #64baff16;background:#0a1829c7}
+body.cinema-login input:-webkit-autofill {-webkit-text-fill-color:#edf5ff;box-shadow:0 0 0 1000px #111f30 inset!important;caret-color:#edf5ff}
+body.panel-view.cinema-login .login-password-toggle {position:absolute;right:5px;display:grid;place-items:center;width:40px;min-height:40px;padding:11px;background:transparent;color:#a9bfd3;border:0;border-radius:8px;box-shadow:none}
+.login-password-toggle svg {width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5}
+html[data-theme] body.panel-view.cinema-login .login-password-toggle {color:#a9bfd3}
+body.panel-view.cinema-login .login-password-toggle:hover {background:#b9ddff0d;color:#e8f5ff}
+body.panel-view.entry-view.cinema-login .login-submit {display:flex;align-items:center;justify-content:center;gap:14px;margin-top:5px;min-height:50px;border-radius:11px;background:linear-gradient(110deg,#c4e7ff,#8fcaff);border:1px solid #c7e8ff;color:#102b45;font-size:14px;font-weight:650;letter-spacing:1px;box-shadow:0 6px 24px #69baff19}
+.login-submit > svg {width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;transform:rotate(180deg)}
+body.panel-view.cinema-login .login-submit:hover {background:linear-gradient(110deg,#dcf1ff,#a9d8ff);box-shadow:0 6px 28px #69baff35}
+html[data-theme] body.panel-view.cinema-login .login-submit {color:#102b45}
+body.panel-view.cinema-login .login-submit:disabled {opacity:.65}
+body.cinema-login .login-device-note {display:flex;align-items:center;justify-content:center;gap:6px;margin:0;font-size:11px;color:#9fb3c7;letter-spacing:.4px}
+.login-device-note svg {width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.5}
+body.cinema-login .login-error {margin:0;padding:10px 12px;border:1px solid #fba1ab33;border-radius:8px;background:#ee809a0b;color:#ffc1c9;font-size:12px;overflow-wrap:anywhere}
+.login-bottomline {bottom:max(32px,env(safe-area-inset-bottom));font-size:10px;color:#a9bfd1;letter-spacing:1.4px}
+.login-bottomline > span:last-child {font-size:9px;letter-spacing:2px}
+@media(min-width:2200px) {body.panel-view.entry-view.cinema-login .login-card {padding:32px}.login-column {gap:48px}}
+@media(max-width:900px) {
+  body.panel-view.cinema-login #app > .login-page {padding:110px 32px 104px}
+  .login-topline,.login-bottomline {left:32px;right:32px}
+  .login-column {--login-card-width:390px}
+  body.panel-view.entry-view.cinema-login .login-card {padding:24px}
+  .login-card::before {left:32px;right:32px}
+}
+@media(max-width:600px) {
+  body.panel-view.cinema-login #app > .login-page {justify-content:center;padding:112px 24px 98px}
+  .login-column {--login-card-width:100%;width:100%;gap:26px}
+  .login-topline,.login-bottomline {left:24px;right:24px}
+  .login-topline {top:max(28px,env(safe-area-inset-top))}
+  .login-backdrop {background-position:76% center}
+  .login-film {object-position:76% center}
+  .login-backdrop::after {background:linear-gradient(0deg,#030810ed,#03081085 48%,#03081024)}
+  body.panel-view.entry-view.cinema-login .login-card {padding:26px 22px;background:linear-gradient(145deg,#101e30d9,#070f1bdd);border-radius:22px}
+  body.panel-view.entry-view.cinema-login .login-mark {font-size:12px;letter-spacing:1.6px;margin-top:10px}
+  body.panel-view.entry-view.cinema-login .login-form input {font-size:16px}
+  .login-bottomline {justify-content:center;bottom:max(26px,env(safe-area-inset-bottom));font-size:10px}
+  .login-bottomline > span:last-child {display:none}
+}
+@media(max-height:650px) and (min-width:601px) {body.panel-view.cinema-login #app > .login-page {padding-top:82px}.login-column {gap:22px}}
+@media(prefers-reduced-motion:reduce) {.login-film {transition:none}.login-motion {display:none!important}}
