@@ -33,6 +33,86 @@ func (a *App) seriesParents(user User) string {
 	return "SELECT id FROM items WHERE kind='Series' AND " + group + "=(SELECT " + group + " FROM items WHERE id=? AND kind='Series')"
 }
 
+// A season is part of a show, regardless of whether its files use a season folder.
+func (a *App) seriesEpisodesWhere(user User, seriesID string) (string, []any) {
+	parents := a.seriesParents(user)
+	return "kind='Episode' AND (parent IN (" + parents + ") OR parent IN (SELECT id FROM items WHERE kind='Season' AND parent IN (" + parents + ")))", []any{seriesID, seriesID}
+}
+
+func (a *App) seasonEpisodesWhere(user User, seriesID string, number int) (string, []any) {
+	if user.API {
+		return "kind='Episode' AND parent IN (" + a.seriesParents(user) + ") AND season=?", []any{seriesID, number}
+	}
+	where, args := a.seriesEpisodesWhere(user, seriesID)
+	return where + " AND season=?", append(args, number)
+}
+
+func (a *App) seasonEpisodeCounts(r *http.Request, user User, seriesID string, number int) (episodeCounts, error) {
+	where, args := a.seasonEpisodesWhere(user, seriesID, number)
+	if !user.API {
+		where, args = a.mergeWhere(where, args)
+	}
+	var count episodeCounts
+	err := a.mediaReader(r).QueryRow("SELECT count(*),count(*) FILTER (WHERE COALESCE(d.played,0)=0) FROM items LEFT JOIN userdata d ON d.item=items.id AND d.user_id=? WHERE "+where, append([]any{user.ID}, args...)...).Scan(&count.total, &count.unplayed)
+	return count, err
+}
+
+func (a *App) viewerSeason(r *http.Request, user User, series Item, number int) Item {
+	fallback := flatSeasonItem(series, number)
+	if user.API {
+		return fallback
+	}
+	key := flatSeasonID(series.ID, number)
+	batch := catalogBatchFrom(r)
+	if batch != nil {
+		if season, ok := batch.seasons[key]; ok {
+			return season
+		}
+	}
+	season, err := readItem(a.mediaReader(r).QueryRow("SELECT "+cols+" FROM items WHERE kind='Season' AND parent IN ("+a.seriesParents(user)+") AND season=? ORDER BY id LIMIT 1", series.ID, number))
+	if err != nil {
+		season = fallback
+	}
+	if batch != nil {
+		if batch.seasons == nil {
+			batch.seasons = map[string]Item{}
+		}
+		batch.seasons[key] = season
+	}
+	return season
+}
+
+func (a *App) decorateEpisodeSeason(item Item, r *http.Request, user User, dto M) {
+	if item.Kind != "Episode" || user.API {
+		return
+	}
+	lookup := func(id string) Item {
+		if batch := catalogBatchFrom(r); batch != nil {
+			if parent, ok := batch.items[id]; ok {
+				return parent
+			}
+		}
+		parent, err := a.itemForUser(r, id)
+		if batch := catalogBatchFrom(r); batch != nil && err == nil {
+			batch.items[id] = parent
+		}
+		return parent
+	}
+	series := lookup(item.Parent)
+	if series.Kind == "Season" {
+		series = lookup(series.Parent)
+	}
+	if series.Kind != "Series" {
+		return
+	}
+	season := a.viewerSeason(r, user, series, item.Season)
+	if season.Parent != series.ID {
+		series = lookup(season.Parent)
+	}
+	dto["ParentId"], dto["SeasonId"], dto["SeasonName"] = season.ID, season.ID, season.Name
+	dto["SeriesId"], dto["SeriesName"] = series.ID, series.Name
+}
+
 func flatSeasonItem(series Item, number int) Item {
 	name := fmt.Sprintf("第 %d 季", number)
 	if number == 0 {
@@ -70,13 +150,17 @@ func (a *App) showSeasons(w http.ResponseWriter, r *http.Request, user User, ser
 		return
 	}
 	seasons := []Item{}
+	seen := map[int]bool{}
 	for rows.Next() {
 		item, e := readItem(rows)
 		if e != nil {
 			err = e
 			break
 		}
-		seasons = append(seasons, item)
+		if user.API || !seen[item.Season] {
+			seasons = append(seasons, item)
+			seen[item.Season] = true
+		}
 	}
 	if err == nil {
 		err = rows.Err()
@@ -87,7 +171,13 @@ func (a *App) showSeasons(w http.ResponseWriter, r *http.Request, user User, ser
 		return
 	}
 	out := a.listDTOs(seasons, r, user)
-	rows, err = reader.Query("SELECT i.season,count(*),count(*) FILTER (WHERE COALESCE(d.played,0)=0) FROM items i LEFT JOIN userdata d ON d.item=i.id AND d.user_id=? WHERE i.kind='Episode' AND i.parent IN ("+parents+") GROUP BY i.season ORDER BY i.season", user.ID, series.ID)
+	where, args = a.seriesEpisodesWhere(user, series.ID)
+	if user.API {
+		where, args = "kind='Episode' AND parent IN ("+parents+")", []any{series.ID}
+	} else {
+		where, args = a.mergeWhere(where, args)
+	}
+	rows, err = reader.Query("SELECT season,count(*),count(*) FILTER (WHERE COALESCE(d.played,0)=0) FROM items LEFT JOIN userdata d ON d.item=items.id AND d.user_id=? WHERE "+where+" GROUP BY season ORDER BY season", append([]any{user.ID}, args...)...)
 	if err != nil {
 		fail(w, 500, "读取单集季号失败")
 		return
@@ -98,7 +188,17 @@ func (a *App) showSeasons(w http.ResponseWriter, r *http.Request, user User, ser
 			break
 		}
 		if number >= 0 {
-			// A virtual season keeps flat episodes reachable even alongside season folders.
+			if !user.API && seen[number] {
+				for _, dto := range out {
+					if dto["IndexNumber"] == number {
+						dto["ChildCount"], dto["RecursiveItemCount"] = total, total
+						data := dto["UserData"].(M)
+						data["UnplayedItemCount"], data["Played"] = unplayed, total > 0 && unplayed == 0
+						break
+					}
+				}
+				continue
+			}
 			item := flatSeasonItem(series, number)
 			dto := a.flatSeasonDTO(item, r, user, total, unplayed)
 			for _, real := range seasons {

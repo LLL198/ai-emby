@@ -217,6 +217,7 @@ func (a *App) listDTO(x Item, r *http.Request, u User) M {
 		m["IndexNumber"] = x.Season
 		m["SeriesId"] = x.Parent
 	}
+	a.decorateEpisodeSeason(x, r, u, m)
 	if requestedField(r, "Etag") {
 		data, _ := json.Marshal(m)
 		m["Etag"] = digest(string(data))

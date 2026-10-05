@@ -293,6 +293,7 @@ func (a *App) viewerDTO(x Item, r *http.Request, u User) M {
 		m["MediaSourceCount"] = len(m["MediaSources"].([]M))
 	}
 	a.applyViewerImageTags(m, u)
+	a.decorateEpisodeSeason(x, r, u, m)
 	return m
 }
 func (a *App) similar(w http.ResponseWriter, r *http.Request, u User, i string) {

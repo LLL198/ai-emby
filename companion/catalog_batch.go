@@ -21,6 +21,7 @@ type catalogBatch struct {
 	versions     map[string][]Item
 	remote       map[string]tmdbData
 	items        map[string]Item
+	seasons      map[string]Item
 	tmdb         tmdbConfig
 	nanShareFast bool
 }
@@ -41,7 +42,7 @@ func catalogBatchFrom(r *http.Request) *catalogBatch {
 }
 
 func (a *App) prepareCatalogBatch(r *http.Request, user User, items []Item) (*http.Request, error) {
-	batch := &catalogBatch{metadata: map[string]sidecar{}, media: map[string]M{}, child: map[string]int{}, versions: map[string][]Item{}, remote: map[string]tmdbData{}, items: map[string]Item{}, tmdb: a.tmdbSettings(), nanShareFast: a.nanShareFastEnabled()}
+	batch := &catalogBatch{metadata: map[string]sidecar{}, media: map[string]M{}, child: map[string]int{}, versions: map[string][]Item{}, remote: map[string]tmdbData{}, items: map[string]Item{}, seasons: map[string]Item{}, tmdb: a.tmdbSettings(), nanShareFast: a.nanShareFastEnabled()}
 	for _, item := range items {
 		batch.items[item.ID] = item
 	}
