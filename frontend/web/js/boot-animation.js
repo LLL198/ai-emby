@@ -61,7 +61,7 @@
     clearTimeout(watchdog);
     watchdog = setTimeout(close, 12000);
     startWatchdog = setTimeout(close, 4000);
-    video.src = '/web/assets/ai-emby-boot-v4-4k.mp4';
+    video.src = '/web/assets/ai-emby-boot-v5-4k.mp4';
     skip.focus({ preventScroll: true });
     video.play().catch(close);
   }, { once: true });

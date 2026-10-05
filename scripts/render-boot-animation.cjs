@@ -14,8 +14,8 @@ const variant=isNailong ? {
   film:'ai-emby-boot-v4.mp4',poster:'ai-emby-boot-poster-v4.jpg',
   label:'GOLD / AZURE',subtitle:'欢迎进入你的私人影院'
 };
-if(isLogin){variant.film='ai-emby-login-background-v3-4k.mp4';variant.poster='ai-emby-login-poster-v3-4k.jpg';}
-else if(is4K&&!isNailong){variant.film='ai-emby-boot-v4-4k.mp4';variant.poster='ai-emby-boot-poster-v4-4k.jpg';}
+if(isLogin){variant.film='ai-emby-login-background-v4-4k.mp4';variant.poster='ai-emby-login-poster-v4-4k.jpg';}
+else if(is4K&&!isNailong){variant.film='ai-emby-boot-v5-4k.mp4';variant.poster='ai-emby-boot-poster-v5-4k.jpg';}
 const { createCanvas, loadImage, GlobalFonts } = require(renderArgs[0] || '@napi-rs/canvas');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
@@ -98,6 +98,9 @@ function makeEyeMotion(openImage,closedImage,geometry={
     if(p>=1)return pose;
     for(let x=0;x<region.w;x++) {
       const eye=contours(x+region.x),upper=eye.c+(eye.upper-eye.c)*p,lower=eye.c+(eye.lower-eye.c)*p;
+      // The iris bounds are narrower than the lash tips. Taper lid motion into
+      // stationary corners instead of leaving a closed-skin rectangle there.
+      const motionWeight=geometry.round?1:smooth(0,.16,eye.u)*smooth(0,.16,1-eye.u);
       for(let y=0;y<region.h;y++) {
         const gy=y+region.y,i=(y*region.w+x)*4;
         const feather=Math.min(smooth(0,22,x),smooth(0,22,region.w-1-x),smooth(0,20,y),smooth(0,20,region.h-1-y));
@@ -124,7 +127,9 @@ function makeEyeMotion(openImage,closedImage,geometry={
         for(let channel=0;channel<3;channel++) {
           const lid=sample(b.data,x,sourceY-region.y,channel);
           const opened=sample(a.data,x,openY-region.y,channel);
-          const morphed=lid*(1-fromOpen)+opened*fromOpen;
+          const stationary=b.data[i+channel]*(1-p)+a.data[i+channel]*p;
+          const moving=lid*(1-fromOpen)+opened*fromOpen;
+          const morphed=stationary*(1-motionWeight)+moving*motionWeight;
           result.data[i+channel]=a.data[i+channel]*(1-feather)+morphed*feather;
         }
         result.data[i+3]=255;

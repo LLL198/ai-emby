@@ -68,7 +68,7 @@ const LoginScene = (() => {
     }
     function play() {
       if (!motionAllowed() || userPaused || document.hidden || failed || completed) return;
-      if (!film.hasAttribute('src')) film.src = '/web/assets/ai-emby-login-background-v3-4k.mp4';
+      if (!film.hasAttribute('src')) film.src = '/web/assets/ai-emby-login-background-v4-4k.mp4';
       film.play().catch(() => {if(events.signal.aborted)return;autoplayBlocked=true;paintControl();drawTitle();});
     }
     function sync() {
