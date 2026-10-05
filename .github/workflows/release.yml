@@ -1,0 +1,73 @@
+name: Publish release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version: YYYY.MM.DD-HHMMSS'
+        required: true
+        type: string
+      notes:
+        description: 'Release notes'
+        required: false
+        default: '修复剧集直接放在剧名目录时显示暂无可选季的问题，按单集季号提供季与选集列表。核心和伴随服务均由当前源码编译。Linux amd64 / x86_64 Docker 设备可在面板检查更新。'
+        type: string
+permissions:
+  contents: write
+  packages: write
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      RELEASE_NOTES: ${{ inputs.notes }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate version
+        id: version
+        run: |
+          [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]{6}$ ]]
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-go@v5
+        if: steps.version.outputs.exists != 'true'
+        with:
+          go-version-file: companion/go.mod
+          cache-dependency-path: |
+            companion/go.sum
+            gateway/go.sum
+            security/go.sum
+      - name: Build release bundle
+        if: steps.version.outputs.exists != 'true'
+        run: python3 scripts/package.py "$VERSION"
+      - name: Download existing release bundle
+        if: steps.version.outputs.exists == 'true'
+        run: |
+          mkdir -p "dist/$VERSION/bundle"
+          gh release download "$VERSION" --pattern 'ai-emby-linux-amd64.tar.gz' --pattern 'SHA256SUMS' --dir "dist/$VERSION"
+          (cd "dist/$VERSION" && sha256sum -c SHA256SUMS)
+          python3 -c 'from scripts.updater import extract_bundle; from pathlib import Path; import os; p=Path("dist")/os.environ["VERSION"]; extract_bundle(p/"ai-emby-linux-amd64.tar.gz",p/"bundle")'
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish image
+        run: |
+          docker build -t "ghcr.io/lll198/ai-emby:$VERSION" -t ghcr.io/lll198/ai-emby:latest "dist/$VERSION/bundle"
+          docker push "ghcr.io/lll198/ai-emby:$VERSION"
+          docker push ghcr.io/lll198/ai-emby:latest
+      - name: Publish release
+        if: steps.version.outputs.exists != 'true'
+        run: |
+          printf '%s\n' "$RELEASE_NOTES" > "dist/$VERSION/release-notes.md"
+          gh release create "$VERSION" --target "$GITHUB_SHA" --title "AI Emby $VERSION" --latest \
+            --notes-file "dist/$VERSION/release-notes.md" \
+            "dist/$VERSION/ai-emby-linux-amd64.tar.gz" "dist/$VERSION/update-linux-amd64.json" "dist/$VERSION/SHA256SUMS"

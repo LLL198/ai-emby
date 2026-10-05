@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+dist
+**/node_modules
+**/__pycache__
+app-data
+app-backups
+postgres-data
+update-control
+secrets

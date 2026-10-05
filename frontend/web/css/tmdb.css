@@ -1,0 +1,96 @@
+.tmdb-settings-form {
+  display: grid;
+  gap: 22px;
+  margin-top: 8px;
+}
+.tmdb-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 58px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+  font-size: 17px;
+}
+.tmdb-field {
+  display: grid;
+  gap: 8px;
+  font-size: 16px;
+}
+.tmdb-field input:not([type="checkbox"]) {
+  width: 100%;
+}
+
+.tmdb-inline-field {
+  grid-template-columns: max-content minmax(0, 420px);
+  align-items: center;
+  gap: 14px;
+}
+.tmdb-rate-field {
+  grid-template-columns: max-content minmax(120px, 180px);
+}
+.tmdb-help {
+  margin: -6px 0 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.65;
+}
+.tmdb-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.tmdb-validation {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--success) 55%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--text);
+}
+.tmdb-validation[hidden] {
+  display: none;
+}
+.tmdb-validation-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 50%;
+  background: var(--success);
+  color: #fff;
+  font-weight: 700;
+}
+.tmdb-validation strong,
+.tmdb-validation small {
+  display: block;
+}
+.tmdb-validation small {
+  margin-top: 4px;
+  color: var(--text-secondary);
+}
+@media (max-width: 600px) {
+  .tmdb-settings-form {
+    gap: 20px;
+  }
+  .tmdb-switch-row {
+    gap: 12px;
+  }
+  .tmdb-inline-field {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+  .tmdb-rate-field {
+    grid-template-columns: max-content minmax(100px, 1fr);
+  }
+  .tmdb-actions {
+    flex-wrap: nowrap;
+  }
+  .tmdb-actions button {
+    min-width: 0;
+    padding-inline: 14px;
+  }
+}

@@ -1,0 +1,5 @@
+* text=auto eol=lf
+runtime/ai-emby-core-linux-amd64 -text
+*.png -text
+*.jpg -text
+*.woff2 -text

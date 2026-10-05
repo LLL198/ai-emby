@@ -1,0 +1,81 @@
+name: ${COMPOSE_PROJECT_NAME:-ai-emby}
+services:
+  pansou:
+    image: ghcr.io/fish2018/pansou@sha256:8d09a3f09aa9d0654a75a4b616d7b1f95f605e4ec2148366505b26e6e24fc7cc
+    profiles: [pansou]
+    restart: unless-stopped
+    environment:
+      PORT: '8888'
+      CHANNELS: tgsearchers7,Aliyun_4K_Movies,yunpanx,Quark_Movies,Lsp115,yunpan139,regengguangya,guangyapan_episode
+      ENABLED_PLUGINS: pansearch,quarksoo,quarktv,hunhepan,duoduo,ouge,wanou,xiaoyu,yunso,yunsou,qqpd,panlian
+      CACHE_ENABLED: 'true'
+      CACHE_PATH: /app/cache
+      CACHE_TTL: '60'
+      ASYNC_PLUGIN_ENABLED: 'true'
+      ASYNC_RESPONSE_TIMEOUT: '8'
+      ASYNC_MAX_BACKGROUND_WORKERS: '12'
+      ASYNC_MAX_BACKGROUND_TASKS: '60'
+    volumes:
+      - ./pansou-cache:/app/cache
+    healthcheck:
+      test: [CMD, wget, -q, --spider, 'http://localhost:8888/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: emby
+      POSTGRES_USER: emby
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置数据库密码}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U emby -d emby]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  ai-emby:
+    image: ghcr.io/lll198/ai-emby:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      args:
+        VERSION: ${IMAGE_TAG:-development}
+    restart: unless-stopped
+    user: ${PUID:-0}:${PGID:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - ${HTTP_PORT:-8097}:8097
+    environment:
+      DATABASE_URL: postgres://emby:${POSTGRES_PASSWORD:?请设置数据库密码}@postgres:5432/emby?sslmode=disable
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请设置管理员初始密码}
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      BOOTSTRAP_API_KEY: ${BOOTSTRAP_API_KEY:-}
+      MEDIA_INFO_ROOT: /app/data
+      FILE_MANAGER_ROOT: /media
+      FILE_MANAGER_PATH_MAPPINGS: ${FILE_MANAGER_PATH_MAPPINGS:-[]}
+      MEDIA_ROOTS: ${MEDIA_ROOTS:-/media}
+    volumes:
+      - app-data:/app/data
+      - ./app-backups:/app/backups
+      - ./update-control:/app/update-control
+      - ${MEDIA_PATH:-./media}:/media:rw
+      - ./secrets:/run/secrets:ro
+    stop_grace_period: 45s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+volumes:
+  postgres-data:
+  app-data:

@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+**/node_modules/
+**/.cache/
+**/__pycache__/
+**/*.pyc
+dist/
+app-data/
+app-backups/
+postgres-data/
+pansou-cache/
+update-control/
+secrets/
+*.dump
+*.log
+*.db

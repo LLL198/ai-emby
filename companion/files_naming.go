@@ -1,0 +1,1154 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/lib/pq"
+	"golang.org/x/sys/unix"
+)
+
+type namingState struct {
+	mu         sync.Mutex
+	plans      map[string]*namingPlan
+	progressMu sync.Mutex
+	progress   map[string]namingProgress
+}
+type namingRequest struct {
+	Path             string               `json:"path"`
+	Paths            []string             `json:"paths"`
+	Mode             string               `json:"mode"`
+	Kind             string               `json:"kind"`
+	Title            string               `json:"title"`
+	Year             int                  `json:"year"`
+	TMDB             string               `json:"tmdb"`
+	AutoTMDB         *bool                `json:"autoTMDB"`
+	Recursive        bool                 `json:"recursive"`
+	Folders          bool                 `json:"folders"`
+	Progress         string               `json:"progress"`
+	UseScraperScopes bool                 `json:"useScraperScopes"`
+	ScopeRoots       []namingLibraryScope `json:"-"`
+	OriginalTitle    string               `json:"-"`
+	Season           *int                 `json:"season"`
+	Bare             bool                 `json:"bare"`
+	Template         string               `json:"template"`
+	Pattern          string               `json:"pattern"`
+	Replacement      string               `json:"replacement"`
+	Start            int                  `json:"start"`
+	Width            int                  `json:"width"`
+}
+type namingMove struct {
+	Old  string      `json:"old"`
+	New  string      `json:"new"`
+	Info fs.FileInfo `json:"-"`
+}
+type namingRow struct {
+	ID        string       `json:"id"`
+	Old       string       `json:"old"`
+	New       string       `json:"new"`
+	Status    string       `json:"status"`
+	Reason    string       `json:"reason"`
+	Directory bool         `json:"directory"`
+	Moves     []namingMove `json:"moves"`
+}
+type namingPlan struct {
+	ID            string      `json:"id"`
+	Rows          []namingRow `json:"rows"`
+	Created       time.Time   `json:"created"`
+	Owner         string      `json:"-"`
+	Root          string      `json:"root"`
+	Recursive     bool        `json:"recursive"`
+	Directories   int         `json:"directories"`
+	Scanned       int         `json:"scanned"`
+	Progress      string      `json:"progress"`
+	ScopeVersion  string      `json:"scopeVersion,omitempty"`
+	IssuesWarning bool        `json:"issuesWarning,omitempty"`
+}
+
+func (a *App) namingAPI(w http.ResponseWriter, r *http.Request, user User) {
+	if r.URL.Path == "/admin/features/naming/progress" {
+		a.namingProgressAPI(w, r, user)
+		return
+	}
+	if r.URL.Path == "/admin/features/naming/refresh" {
+		a.namingRefresh(w, r)
+		return
+	}
+	if !featureMethod(w, r, http.MethodPost) {
+		return
+	}
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		fail(w, 500, "无法准备长时间命名任务")
+		return
+	}
+	switch r.URL.Path {
+	case "/admin/features/naming/preview":
+		a.namingPreview(w, r, user)
+	case "/admin/features/naming/apply":
+		a.namingApply(w, r, user)
+	default:
+		fail(w, 404, "命名接口不存在")
+	}
+}
+
+func namingEntries(root *os.Root, dir string) ([]fs.DirEntry, error) {
+	f, err := root.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	entries, err := f.ReadDir(500001)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if len(entries) > 500000 {
+		return nil, errNamingDirectoryTooLarge
+	}
+	return entries, nil
+}
+
+func namingNatural(a, b string) bool {
+	a, b = strings.ToLower(a), strings.ToLower(b)
+	for len(a) > 0 && len(b) > 0 {
+		if a[0] >= '0' && a[0] <= '9' && b[0] >= '0' && b[0] <= '9' {
+			i, j := 0, 0
+			for i < len(a) && a[i] >= '0' && a[i] <= '9' {
+				i++
+			}
+			for j < len(b) && b[j] >= '0' && b[j] <= '9' {
+				j++
+			}
+			x, y := strings.TrimLeft(a[:i], "0"), strings.TrimLeft(b[:j], "0")
+			if len(x) != len(y) {
+				return len(x) < len(y)
+			}
+			if x != y {
+				return x < y
+			}
+			a, b = a[i:], b[j:]
+			continue
+		}
+		if a[0] != b[0] {
+			return a[0] < b[0]
+		}
+		a, b = a[1:], b[1:]
+	}
+	return len(a) < len(b)
+}
+
+func (a *App) namingPreview(w http.ResponseWriter, r *http.Request, user User) {
+	var b namingRequest
+	if !body(w, r, &b) {
+		return
+	}
+	if b.Mode != "auto" && b.Mode != "regex" && b.Mode != "sequence" {
+		fail(w, 400, "请选择识别命名、正则替换或顺序编号")
+		return
+	}
+	if b.Kind != "auto" && b.Kind != "tv" && b.Kind != "movie" && b.Kind != "directory" {
+		fail(w, 400, "无效作品类型")
+		return
+	}
+	if len(b.Paths) > 500 || len(b.Title) > 512 || len(b.Template) > 512 || len(b.Pattern) > 512 || len(b.Replacement) > 512 || len(b.Progress) > 80 {
+		fail(w, 400, "一次最多选择 500 个入口文件或文件夹，输入不得过长")
+		return
+	}
+	if b.Year != 0 && (b.Year < 1800 || b.Year > 2199) || b.Season != nil && (*b.Season < 0 || *b.Season > 999) {
+		fail(w, 400, "年份或季号无效")
+		return
+	}
+	if b.Mode == "sequence" && (b.Start < 1 || b.Start > 9999 || b.Width < 1 || b.Width > 4 || b.Kind != "tv" || b.Season == nil || strings.TrimSpace(b.Title) == "") {
+		fail(w, 400, "顺序编号需要作品名、明确的季号、1–9999 起始编号和 1–4 补位长度")
+		return
+	}
+	if b.Mode == "sequence" && b.Recursive {
+		fail(w, 400, "顺序编号请进入具体季目录操作，不能跨子目录重排集号")
+		return
+	}
+	if b.Progress == "" {
+		b.Progress = id()
+	}
+	scopeVersion := ""
+	if b.UseScraperScopes {
+		if b.Mode == "sequence" {
+			fail(w, 400, "顺序编号请在具体季目录操作")
+			return
+		}
+		b.Path, b.Paths, b.Recursive = "", nil, true
+		roots, version, scopeErr := a.namingScraperRoots()
+		if scopeErr != nil {
+			featureError(w, scopeErr)
+			return
+		}
+		b.ScopeRoots, scopeVersion = roots, version
+	}
+	var re *regexp.Regexp
+	if b.Mode == "regex" {
+		var err error
+		re, err = regexp.Compile(b.Pattern)
+		if b.Pattern == "" || err != nil {
+			fail(w, 400, "正则表达式无效")
+			return
+		}
+	}
+	dir, err := fileName(b.Path)
+	if err != nil {
+		fileFail(w, err)
+		return
+	}
+	if b.TMDB != "" && b.Mode != "regex" {
+		n, err := strconv.Atoi(b.TMDB)
+		if err != nil || n < 1 || b.Kind != "movie" && b.Kind != "tv" {
+			fail(w, 400, "TMDB 补全需要电影或剧集类型以及有效 ID")
+			return
+		}
+	}
+	filesMu.RLock()
+	filesLocked := true
+	defer func() {
+		if filesLocked {
+			filesMu.RUnlock()
+		}
+	}()
+	root, err := os.OpenRoot(fileRoot())
+	if err != nil {
+		fileFail(w, err)
+		return
+	}
+	defer root.Close()
+	info, err := fileCheck(root, dir)
+	if err != nil {
+		fileFail(w, err)
+		return
+	}
+	if !info.IsDir() {
+		fail(w, 400, "请选择目录")
+		return
+	}
+	selected := map[string]bool{}
+	for _, path := range b.Paths {
+		p, e := fileName(path)
+		if e != nil {
+			fileFail(w, e)
+			return
+		}
+		if p == "." || filepath.Dir(p) != dir {
+			fail(w, 400, "只能选择当前目录内的项目")
+			return
+		}
+		selected[p] = true
+	}
+	scanJob := a.newActivity("rename", b.Progress, "扫描规范命名")
+	a.changeActivity(scanJob, func(entry *activityEntry) { entry.State = "counting"; entry.Current = "读取目录" })
+	previewComplete := false
+	defer func() {
+		if previewComplete {
+			a.finishActivity(scanJob, nil)
+		} else {
+			err := r.Context().Err()
+			if err == nil {
+				err = errors.New("扫描或匹配未完成")
+			}
+			a.finishActivity(scanJob, err)
+			a.namingProgressUpdate(b.Progress, user.ID, "已停止", 0, 0, err.Error())
+		}
+	}()
+	scope, err := namingCollect(r.Context(), root, dir, selected, b, func(found int, current string) {
+		a.namingProgressUpdate(b.Progress, user.ID, "扫描目录", found, 0, current)
+		a.changeActivity(scanJob, func(entry *activityEntry) { entry.Done = found; entry.Current = "读取目录：" + current })
+	})
+	if err != nil {
+		featureError(w, err)
+		return
+	}
+	files := scope.Files
+	plan := &namingPlan{ID: id(), Owner: user.ID, Created: time.Now(), Rows: []namingRow{}, Root: dir, Recursive: b.Recursive, Directories: scope.Directories, Scanned: scope.Visited, Progress: b.Progress, ScopeVersion: scopeVersion}
+	protected := []string{}
+	if a.db != nil {
+		for _, library := range a.libraries() {
+			protected = append(protected, library["Locations"].([]string)...)
+		}
+	}
+	a.changeActivity(scanJob, func(entry *activityEntry) {
+		entry.State = "running"
+		entry.Total = len(files)
+		entry.Done = 0
+		entry.Current = "匹配作品"
+	})
+	resolver := namingTMDBResolver{app: a, settings: a.tmdbSettings(), cache: map[string]namingTMDBResult{}}
+	sidecars := map[string]map[string][]fs.DirEntry{}
+	for i, path := range files {
+		if err := r.Context().Err(); err != nil {
+			return
+		}
+		row := namingRow{ID: strconv.Itoa(i), Old: path, Status: "review", Moves: []namingMove{}}
+		a.namingProgressUpdate(b.Progress, user.ID, "匹配作品", i, len(files), path)
+		a.changeActivity(scanJob, func(entry *activityEntry) { entry.Done = i; entry.Current = "匹配作品：" + path })
+		if reason := scope.Errors[path]; reason != "" {
+			row.Reason = reason
+			plan.Rows = append(plan.Rows, row)
+			continue
+		}
+		fi, e := fileCheck(root, path)
+		if e != nil {
+			row.Reason = "源文件不可用"
+			plan.Rows = append(plan.Rows, row)
+			continue
+		}
+		row.Directory = fi.IsDir()
+		if fi.IsDir() {
+			full := filepath.Join(fileRoot(), path)
+			for _, location := range protected {
+				if full == location || strings.HasPrefix(location, full+string(filepath.Separator)) {
+					row.Status, row.New, row.Reason = "unchanged", path, "媒体库根目录保持原名，继续处理其中的文件"
+					break
+				}
+			}
+			if row.Status == "unchanged" {
+				plan.Rows = append(plan.Rows, row)
+				continue
+			}
+		}
+		if b.Mode == "sequence" && fi.IsDir() {
+			row.Reason = "顺序编号只处理媒体文件"
+			plan.Rows = append(plan.Rows, row)
+			continue
+		}
+		directoryKind := ""
+		if b.Mode == "auto" && fi.IsDir() {
+			if _, season := namingSeason(fi.Name()); !season {
+				inferredKind, err := namingDirectoryKind(root, path, b.Bare, scope.Entries[path])
+				if err != nil {
+					row.Reason = err.Error()
+					if errors.Is(err, errNamingContainerDirectory) || row.Reason == "未找到媒体文件或季目录，请进入具体作品目录" {
+						row.Status, row.New = "unchanged", path
+					}
+					plan.Rows = append(plan.Rows, row)
+					continue
+				}
+				if (b.Kind == "movie" || b.Kind == "tv") && b.Kind != inferredKind {
+					row.Reason = "作品目录内容与指定类型冲突，请核对电影或剧集类型"
+					plan.Rows = append(plan.Rows, row)
+					continue
+				}
+				directoryKind = inferredKind
+			}
+		}
+		request := b
+		matchReason := ""
+		if b.Mode != "regex" && (b.TMDB != "" || b.AutoTMDB == nil || *b.AutoTMDB) {
+			source, sourceErr := namingSource(path, fi.IsDir(), b, i)
+			if sourceErr != nil {
+				row.Reason = sourceErr.Error()
+				plan.Rows = append(plan.Rows, row)
+				continue
+			}
+			if !source.SeasonDirectory {
+				if source.Kind == "auto" && directoryKind != "" {
+					source.Kind = directoryKind
+				}
+				filesMu.RUnlock()
+				filesLocked = false
+				request, matchReason, e = resolver.resolve(r.Context(), source, b)
+				filesMu.RLock()
+				filesLocked = true
+				if r.Context().Err() != nil {
+					return
+				}
+				if e != nil {
+					row.Reason = a.scraperSafeError(e).Error()
+					plan.Rows = append(plan.Rows, row)
+					continue
+				}
+				current, err := fileCheck(root, path)
+				if err != nil || !namingSameFile(fi, current) {
+					row.Reason = "搜索期间源文件发生变化，请重新生成预览"
+					plan.Rows = append(plan.Rows, row)
+					continue
+				}
+			}
+		}
+		next, reason, e := namingDestination(path, fi.IsDir(), request, re, i)
+		if matchReason != "" {
+			reason = matchReason + " · " + reason
+		}
+		row.Reason = reason
+		if e != nil {
+			row.Reason = e.Error()
+			plan.Rows = append(plan.Rows, row)
+			continue
+		}
+		if len(next) > 240 || strings.Trim(next, " .") == "" {
+			row.Reason = "新名称为空或超过 240 字节，请缩短模板或标题"
+			plan.Rows = append(plan.Rows, row)
+			continue
+		}
+		parent := filepath.Dir(path)
+		entries := []fs.DirEntry{}
+		if !fi.IsDir() {
+			if _, ok := sidecars[parent]; !ok {
+				sidecars[parent] = namingSidecarIndex(scope.Entries[parent])
+			}
+			entries = namingRelatedEntries(sidecars[parent], path)
+		}
+		row.New = filepath.Join(parent, next)
+		if row.New == path {
+			row.Status = "unchanged"
+			row.Reason = "名称已符合当前规则"
+			if matchReason != "" {
+				row.Reason = matchReason + " · " + row.Reason
+			}
+			if !fi.IsDir() {
+				associated := append([]namingMove{{Old: path, New: path, Info: fi}}, namingSidecars(root, entries, path, path)...)
+				if reason := namingNFOConflict(root, associated); reason != "" {
+					row.Status = "review"
+					row.Reason = reason
+				}
+			}
+			plan.Rows = append(plan.Rows, row)
+			continue
+		}
+		if p, e := fileName(row.New); e != nil || filepath.Dir(p) != parent {
+			row.Reason = "新名称包含非法路径"
+			plan.Rows = append(plan.Rows, row)
+			continue
+		}
+		row.Moves = []namingMove{{Old: path, New: row.New, Info: fi}}
+		if !fi.IsDir() {
+			row.Moves = append(row.Moves, namingSidecars(root, entries, path, row.New)...)
+		}
+		row.Status = "ready"
+		if reason := namingNFOConflict(root, row.Moves); reason != "" {
+			row.Status = "review"
+			row.Reason = reason
+		}
+		plan.Rows = append(plan.Rows, row)
+	}
+	namingConflicts(root, plan.Rows)
+	if err := a.namingStoreIssues(r.Context(), plan, b); err != nil {
+		plan.IssuesWarning = true
+	}
+	filesMu.RUnlock()
+	filesLocked = false
+	a.naming.mu.Lock()
+	if a.naming.plans == nil {
+		a.naming.plans = map[string]*namingPlan{}
+	}
+	for key, p := range a.naming.plans {
+		if time.Since(p.Created) > time.Hour || p.Owner == user.ID {
+			delete(a.naming.plans, key)
+		}
+	}
+	if len(a.naming.plans) >= 32 {
+		a.naming.mu.Unlock()
+		fail(w, 429, "命名预览过多，请稍后重试")
+		return
+	}
+	plan.Created = time.Now()
+	a.naming.plans[plan.ID] = plan
+	a.naming.mu.Unlock()
+	previewComplete = true
+	a.namingProgressUpdate(b.Progress, user.ID, "预览完成", len(files), len(files), "")
+	a.changeActivity(scanJob, func(entry *activityEntry) {
+		entry.Done = len(files)
+		entry.Current = fmt.Sprintf("已扫描 %d 个目录，识别 %d 个媒体项目", scope.Directories, len(files))
+	})
+	respond(w, plan)
+}
+
+func namingDestination(path string, directory bool, b namingRequest, re *regexp.Regexp, index int) (string, string, error) {
+	name := filepath.Base(path)
+	stem, ext := namingSplit(name)
+	if directory {
+		stem, ext = name, ""
+	}
+	if b.Mode == "regex" {
+		if !re.MatchString(stem) {
+			return name, "未匹配正则", nil
+		}
+		next := strings.TrimSpace(re.ReplaceAllString(stem, b.Replacement))
+		if next == "" {
+			return "", "", errors.New("替换后名称为空")
+		}
+		return namingClean(next) + ext, "正则替换（保留扩展名）", nil
+	}
+	if directory {
+		if b.Template != "" {
+			return "", "", errors.New("自定义文件模板不应用于文件夹，请取消勾选文件夹")
+		}
+		if season, ok := namingSeason(name); ok {
+			return fmt.Sprintf("Season %02d", season), "规范季目录", nil
+		}
+		identity := scraperSearchIdentity(name)
+		if b.Title != "" {
+			identity.Title = b.Title
+		}
+		if b.Year > 0 {
+			identity.Year = b.Year
+		}
+		if b.TMDB != "" {
+			identity.TMDBID = b.TMDB
+		}
+		if identity.Title == "" || identity.Year == 0 {
+			return "", "", errors.New("作品目录缺少标题或年份，请指定作品信息")
+		}
+		next := fmt.Sprintf("%s (%d)", namingClean(identity.Title), identity.Year)
+		if identity.TMDBID != "" {
+			next += " {tmdb-" + identity.TMDBID + "}"
+		}
+		return next, "规范作品目录（标题、年份和 TMDB 编号）", nil
+	}
+	if b.Kind == "directory" {
+		return "", "", errors.New("当前类型只处理文件夹")
+	}
+	source, err := namingSource(path, false, b, index)
+	if err != nil {
+		return "", "", err
+	}
+	identity, ep, hasEpisode, hasParentSeason := source.Identity, source.Episode, source.HasEpisode, source.HasParentSeason
+	if identity.Title == "" {
+		return "", "", errors.New("未能确定作品标题，请指定作品或使用 TMDB 搜索")
+	}
+	if !hasEpisode && identity.Year == 0 {
+		return "", "", errors.New("电影缺少年份，请指定年份或选择 TMDB 结果")
+	}
+	if b.Mode == "auto" && hasEpisode && b.Title == "" && b.Year == 0 && b.TMDB == "" && b.Template == "" && b.AutoTMDB != nil && !*b.AutoTMDB && namingCanonicalSE.MatchString(stem) {
+		return name, "名称已经包含规范季集编号", nil
+	}
+	quality := ""
+	if m := namingQuality.FindStringSubmatch(stem); len(m) == 2 {
+		quality = m[1]
+	}
+	episodeName := ""
+	if hasEpisode && b.Mode != "sequence" {
+		episodeName = strings.Trim(scraperTMDBTagRE.ReplaceAllString(stem[ep.End:], ""), " ._-")
+		if cutoff := scraperReleaseTokenRE.FindStringIndex(episodeName); len(cutoff) == 2 {
+			episodeName = episodeName[:cutoff[0]]
+		}
+		episodeName = namingClean(strings.Trim(episodeName, " ._-[]()"))
+	}
+	values := map[string]string{"title": namingClean(identity.Title), "title_original": namingClean(b.OriginalTitle), "year": "", "season": "", "episode": "", "episode_name": episodeName, "quality": quality, "tmdbid": identity.TMDBID, "ext": strings.TrimPrefix(ext, ".")}
+	if identity.Year > 0 {
+		values["year"] = strconv.Itoa(identity.Year)
+	}
+	if hasEpisode {
+		values["season"] = strconv.Itoa(ep.Season)
+		values["episode"] = strconv.Itoa(ep.Episode)
+	}
+	template := b.Template
+	if template == "" {
+		template = "{title}"
+		if identity.Year > 0 {
+			template += " ({year})"
+		}
+		if hasEpisode {
+			width := 2
+			if b.Mode == "sequence" {
+				width = b.Width
+			}
+			template += fmt.Sprintf(" - S{season:2}E{episode:%d}", width)
+			if episodeName != "" {
+				template += " - {episode_name}"
+			}
+		}
+		if identity.TMDBID != "" {
+			template += " {tmdb-" + identity.TMDBID + "}"
+		}
+		if quality != "" {
+			template += " [" + quality + "]"
+		}
+	} else if strings.Contains(template, "{ext}") {
+		return "", "", errors.New("扩展名会自动保留，模板中无需填写 {ext}")
+	}
+	next, err := namingRender(template, values)
+	if err != nil {
+		return "", "", err
+	}
+	next += ext
+	if len(next) > 240 {
+		return "", "", errors.New("新文件名超过 240 字节，请缩短标题或模板")
+	}
+	if hasEpisode {
+		parsed, ok := namingEpisode(next, false)
+		if !ok || !parsed.HasSeason || parsed.Season != ep.Season || parsed.Episode != ep.Episode {
+			return "", "", errors.New("剧集模板必须保留正确的 SxxExx 季集编号")
+		}
+		return next, ep.Reason, nil
+	}
+	if hasParentSeason {
+		return "", "", errors.New("无法确定季集编号")
+	}
+	return next, "识别电影标题和年份", nil
+}
+
+func namingSidecars(root *os.Root, entries []fs.DirEntry, old, next string) []namingMove {
+	oldStem := strings.TrimSuffix(filepath.Base(old), filepath.Ext(old))
+	newStem := strings.TrimSuffix(filepath.Base(next), filepath.Ext(next))
+	oldShort, _ := namingSplit(filepath.Base(old))
+	newShort, _ := namingSplit(filepath.Base(next))
+	moves := []namingMove{}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		n := entry.Name()
+		ext := strings.ToLower(filepath.Ext(n))
+		switch ext {
+		case ".nfo", ".jpg", ".jpeg", ".png", ".webp", ".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup":
+		default:
+			continue
+		}
+		for _, pair := range [][2]string{{oldStem, newStem}, {oldShort, newShort}} {
+			if !strings.HasPrefix(n, pair[0]) {
+				continue
+			}
+			suffix := strings.TrimPrefix(n, pair[0])
+			if suffix == "" || suffix[0] != '.' && suffix[0] != '-' {
+				continue
+			}
+			p := filepath.Join(filepath.Dir(old), n)
+			fi, err := fileCheck(root, p)
+			if err != nil || !fi.Mode().IsRegular() {
+				continue
+			}
+			destination := filepath.Join(filepath.Dir(next), pair[1]+suffix)
+			if p != destination || old == next {
+				moves = append(moves, namingMove{Old: p, New: destination, Info: fi})
+			}
+			break
+		}
+	}
+	return moves
+}
+
+func namingNFOConflict(root *os.Root, moves []namingMove) string {
+	if len(moves) == 0 || moves[0].Info.IsDir() {
+		return ""
+	}
+	stem, _ := namingSplit(filepath.Base(moves[0].New))
+	episode, ok := namingEpisode(stem, false)
+	if !ok || !episode.HasSeason {
+		return ""
+	}
+	for _, move := range moves[1:] {
+		if !strings.EqualFold(filepath.Ext(move.Old), ".nfo") {
+			continue
+		}
+		f, err := root.Open(move.Old)
+		if err != nil {
+			return "无法读取关联 NFO，请先检查资料"
+		}
+		var record struct {
+			XMLName xml.Name
+			Season  *int `xml:"season"`
+			Episode *int `xml:"episode"`
+		}
+		err = xml.NewDecoder(io.LimitReader(f, 2<<20)).Decode(&record)
+		f.Close()
+		if err != nil {
+			return "关联 NFO 无法解析，请先修正资料，避免覆盖季集识别"
+		}
+		if record.XMLName.Local != "episodedetails" {
+			continue
+		}
+		if record.Season != nil && *record.Season != episode.Season || record.Episode != nil && *record.Episode != episode.Episode {
+			return "已有 NFO 的季集编号与新名称不同，请先修正 NFO 后再改名"
+		}
+	}
+	return ""
+}
+
+func namingConflicts(root *os.Root, rows []namingRow) {
+	claimed := map[string][]int{}
+	skip := func(index int, reason string) {
+		if rows[index].Status != "conflict" {
+			rows[index].Status, rows[index].Reason = "skipped", reason
+		}
+	}
+	for i, row := range rows {
+		if row.Status != "ready" {
+			continue
+		}
+		rowPaths := map[string]int{}
+		for moveIndex, m := range row.Moves {
+			for _, p := range []string{m.Old, m.New} {
+				key := strings.ToLower(p)
+				if previous, exists := rowPaths[key]; exists {
+					if previous != moveIndex {
+						skip(i, "关联文件名称重叠，已跳过改名")
+					}
+					continue
+				}
+				rowPaths[key] = moveIndex
+				claimed[key] = append(claimed[key], i)
+			}
+			if m.Old == m.New {
+				skip(i, "源文件与目标相同，已跳过改名")
+				continue
+			}
+			if _, err := root.Lstat(m.New); err == nil {
+				skip(i, "目标名称已存在，已跳过改名")
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				rows[i].Status = "conflict"
+				rows[i].Reason = "目标路径不可访问，请检查目录权限"
+			}
+		}
+	}
+	for _, indices := range claimed {
+		if len(indices) > 1 {
+			for _, i := range indices {
+				skip(i, "源文件或目标名称重叠，已跳过改名")
+			}
+		}
+	}
+}
+
+func namingRename(root *os.Root, m namingMove, reverse bool) error {
+	old, next := m.Old, m.New
+	if reverse {
+		old, next = next, old
+	}
+	dir, err := root.Open(filepath.Dir(old))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	err = unix.Renameat2(int(dir.Fd()), filepath.Base(old), int(dir.Fd()), filepath.Base(next), unix.RENAME_NOREPLACE)
+	if err == nil || !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOSYS) && !errors.Is(err, unix.EOPNOTSUPP) {
+		return err
+	}
+	if !m.Info.Mode().IsRegular() {
+		return errors.New("此挂载不支持禁止覆盖的目录改名")
+	}
+	// Linking creates the target without replacing an existing name.
+	if err = root.Link(old, next); err != nil {
+		return fmt.Errorf("此挂载不支持安全文件改名：%w", err)
+	}
+	if err = root.Remove(old); err != nil {
+		if cleanupErr := root.Remove(next); cleanupErr != nil {
+			return fmt.Errorf("源文件未删除，目标链接清理失败：%w", cleanupErr)
+		}
+		return err
+	}
+	return nil
+}
+
+func (a *App) namingApply(w http.ResponseWriter, r *http.Request, user User) {
+	var b struct {
+		ID   string   `json:"id"`
+		Rows []string `json:"rows"`
+	}
+	if !body(w, r, &b) {
+		return
+	}
+	a.naming.mu.Lock()
+	defer a.naming.mu.Unlock()
+	plan, ok := a.naming.plans[b.ID]
+	if !ok || plan.Owner != user.ID || time.Since(plan.Created) > time.Hour {
+		fail(w, 409, "预览已失效，请重新预览")
+		return
+	}
+	if plan.ScopeVersion != "" {
+		_, current, err := a.namingScraperRoots()
+		if err != nil || current != plan.ScopeVersion {
+			fail(w, 409, "目录选择已变化，请重新生成命名预览")
+			return
+		}
+	}
+	selected := map[string]bool{}
+	for _, key := range b.Rows {
+		if selected[key] {
+			fail(w, 400, "重复的项目")
+			return
+		}
+		selected[key] = true
+	}
+	if len(selected) == 0 || len(selected) > namingMaxItems {
+		fail(w, 400, fmt.Sprintf("请选择 1–%d 个可改名项目", namingMaxItems))
+		return
+	}
+	rows := []namingRow{}
+	moves := []namingMove{}
+	for _, row := range plan.Rows {
+		if !selected[row.ID] {
+			continue
+		}
+		if row.Status != "ready" {
+			fail(w, 409, "包含不可执行项目，请重新预览")
+			return
+		}
+		rows = append(rows, row)
+		moves = append(moves, row.Moves...)
+	}
+	if len(rows) != len(selected) {
+		fail(w, 400, "选择包含未知项目")
+		return
+	}
+	namingSortMoves(moves)
+	filesMu.Lock()
+	defer filesMu.Unlock()
+	a.features.mu.Lock()
+	defer a.features.mu.Unlock()
+	if len(a.features.jobs) > 0 {
+		fail(w, 409, "有资料补全、导入或 STRM 生成任务正在进行，请完成后再改名")
+		return
+	}
+	a.scraper.mu.Lock()
+	defer a.scraper.mu.Unlock()
+	if a.scraper.running || a.scraper.planning {
+		fail(w, 409, "刮削正在进行，请结束后再改名")
+		return
+	}
+	root, err := os.OpenRoot(fileRoot())
+	if err != nil {
+		fileFail(w, err)
+		return
+	}
+	defer root.Close()
+	paths := []string{}
+	for _, m := range moves {
+		fi, e := fileCheck(root, m.Old)
+		if e != nil || !os.SameFile(m.Info, fi) || fi.Size() != m.Info.Size() || !fi.ModTime().Equal(m.Info.ModTime()) {
+			fail(w, 409, "预览后源文件已变化，请重新预览")
+			return
+		}
+		if _, e = root.Lstat(m.New); e == nil || !errors.Is(e, fs.ErrNotExist) {
+			fail(w, 409, "目标已存在或不可访问，请重新预览")
+			return
+		}
+		paths = append(paths, m.Old, m.New)
+	}
+	if err = a.filesAvailable(r.Context(), paths); err != nil {
+		fail(w, 409, err.Error())
+		return
+	}
+	// Keep accepted work running if the browser disconnects; stop on service shutdown.
+	parentContext := a.features.ctx
+	if parentContext == nil {
+		parentContext = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parentContext)
+	defer cancel()
+	a.namingProgressUpdate(plan.Progress, user.ID, "准备改名", 0, len(moves), "迁移作品、收藏和观看记录")
+	tx, err := a.namingCatalog(ctx, moves)
+	if err != nil {
+		fail(w, 409, err.Error())
+		return
+	}
+	if tx != nil {
+		defer tx.Rollback()
+	}
+	if plan.ScopeVersion != "" {
+		_, current, scopeErr := a.namingScraperRoots()
+		if scopeErr != nil || current != plan.ScopeVersion {
+			fail(w, 409, "目录选择已变化，请重新生成命名预览")
+			return
+		}
+	}
+	journal, err := a.namingJournal(plan.ID, moves, "prepared", "")
+	if err != nil {
+		fail(w, 500, "无法保存改名记录，未改动文件")
+		return
+	}
+	job := a.newActivity("rename", plan.ID, "规范命名")
+	a.changeActivity(job, func(e *activityEntry) { e.State = "running"; e.Total = len(moves) })
+	completed := []namingMove{}
+	for _, m := range moves {
+		if err = ctx.Err(); err != nil {
+			break
+		}
+		fi, e := fileCheck(root, m.Old)
+		if e != nil || !os.SameFile(m.Info, fi) || !fi.IsDir() && (fi.Size() != m.Info.Size() || !fi.ModTime().Equal(m.Info.ModTime())) {
+			err = errors.New("执行期间源文件已变化")
+			break
+		}
+		if err = namingRename(root, m, false); err != nil {
+			break
+		}
+		completed = append(completed, m)
+		a.namingProgressUpdate(plan.Progress, user.ID, "改名", len(completed), len(moves), m.Old+" → "+m.New)
+		a.changeActivity(job, func(e *activityEntry) {
+			e.Done = len(completed)
+			e.Current = filepath.Base(m.Old) + " → " + filepath.Base(m.New)
+		})
+	}
+	if err == nil && tx != nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+		rollbackErrors := []string{}
+		reverted := map[int]bool{}
+		for i := len(completed) - 1; i >= 0; i-- {
+			fi, e := fileCheck(root, completed[i].New)
+			if e != nil || !os.SameFile(completed[i].Info, fi) {
+				rollbackErrors = append(rollbackErrors, completed[i].New)
+				continue
+			}
+			if e = namingRename(root, completed[i], true); e != nil {
+				rollbackErrors = append(rollbackErrors, completed[i].New)
+			} else {
+				reverted[i] = true
+			}
+		}
+		remaining := []namingMove{}
+		for i, move := range completed {
+			if !reverted[i] {
+				remaining = append(remaining, move)
+			}
+		}
+		if len(remaining) > 0 {
+			rollbackErrors = nil
+			mapping := namingPathMapping(remaining)
+			for _, move := range remaining {
+				full := mapping.rebase(filepath.Join(fileRoot(), move.Old))
+				if relative, err := filepath.Rel(fileRoot(), full); err == nil {
+					rollbackErrors = append(rollbackErrors, relative)
+				}
+			}
+		}
+		for _, move := range moves {
+			if fi, checkErr := fileCheck(root, move.New); checkErr == nil && os.SameFile(move.Info, fi) {
+				found := false
+				for _, path := range rollbackErrors {
+					if path == move.New {
+						found = true
+						break
+					}
+				}
+				if !found {
+					rollbackErrors = append(rollbackErrors, move.New)
+				}
+			}
+		}
+		message := "改名失败，已撤回本批文件改动：" + scraperFilesystemError("改名", err).Error()
+		if len(rollbackErrors) > 0 {
+			message = "改名失败，部分文件未能撤回，请按改名记录恢复：" + strings.Join(rollbackErrors, "、")
+			a.filesChanged(paths)
+		}
+		_, _ = a.namingJournal(plan.ID, moves, "failed", message)
+		a.namingProgressUpdate(plan.Progress, user.ID, "已停止", len(completed), len(moves), message)
+		a.finishActivity(job, errors.New(message))
+		delete(a.naming.plans, plan.ID)
+		fail(w, 500, message)
+		return
+	}
+	_, journalErr := a.namingJournal(plan.ID, moves, "complete", "")
+	delete(a.naming.plans, plan.ID)
+	a.finishActivity(job, nil)
+	a.filesChanged(paths)
+	mapping := namingPathMapping(moves)
+	destinations := map[string]string{}
+	sources := map[string]string{}
+	for _, row := range plan.Rows {
+		full := mapping.rebase(filepath.Join(fileRoot(), row.Old))
+		if relative, err := filepath.Rel(fileRoot(), full); err == nil {
+			sources[row.ID] = relative
+			if selected[row.ID] || row.Status == "unchanged" {
+				destinations[row.ID] = relative
+			} else if row.New != "" {
+				if target, err := filepath.Rel(fileRoot(), mapping.rebase(filepath.Join(fileRoot(), row.New))); err == nil {
+					destinations[row.ID] = target
+				}
+			}
+		}
+	}
+	a.namingProgressUpdate(plan.Progress, user.ID, "完成", len(moves), len(moves), "")
+	_, nextScopeVersion, _ := a.namingScraperRoots()
+	respond(w, M{"ok": true, "renamed": len(rows), "files": len(moves), "journal": journal, "journalWarning": journalErr != nil, "scanQueued": true, "destinations": destinations, "sources": sources, "scopeVersion": nextScopeVersion})
+}
+
+func (a *App) namingJournal(key string, moves []namingMove, status, message string) (string, error) {
+	base := os.Getenv("MEDIA_INFO_ROOT")
+	if base == "" {
+		base = "/app/data"
+	}
+	dir := filepath.Join(base, "rename-history")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	data, err := json.MarshalIndent(M{"id": key, "updated": time.Now(), "status": status, "moves": moves, "error": message}, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp(dir, ".rename-*")
+	if err != nil {
+		return "", err
+	}
+	temp := f.Name()
+	defer os.Remove(temp)
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, key+".json")
+	if err = os.Rename(temp, path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func (a *App) namingCatalog(ctx context.Context, moves []namingMove) (*sql.Tx, error) {
+	if a.db == nil {
+		return nil, nil
+	}
+	tx, err := a.db.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, errors.New("无法锁定媒体库")
+	}
+	success := false
+	defer func() {
+		if !success {
+			tx.Rollback()
+		}
+	}()
+	libraries, err := tx.QueryContext(ctx, "SELECT id,path,status FROM libraries ORDER BY id FOR NO KEY UPDATE NOWAIT")
+	if err != nil {
+		return nil, errors.New("媒体库正在扫描或修改，请稍后重试")
+	}
+	for libraries.Next() {
+		var id, path, status string
+		if err = libraries.Scan(&id, &path, &status); err != nil {
+			libraries.Close()
+			return nil, err
+		}
+		if status == "scanning" {
+			libraries.Close()
+			return nil, errors.New("媒体库正在扫描，请结束后再改名")
+		}
+	}
+	err = libraries.Err()
+	libraries.Close()
+	if err != nil {
+		return nil, err
+	}
+	type record struct {
+		Data     map[string]any
+		Old, New string
+	}
+	records := []record{}
+	mapping := namingPathMapping(moves)
+	if err := namingRebaseScraperScopes(ctx, tx, mapping); err != nil {
+		return nil, err
+	}
+	if err := namingRebaseIssues(ctx, tx, moves, mapping); err != nil {
+		return nil, err
+	}
+	ids := map[string]string{}
+	seen := map[string]bool{}
+	for _, m := range namingCatalogMoves(moves) {
+		old := filepath.Join(fileRoot(), m.Old)
+		rows, err := tx.QueryContext(ctx, "SELECT to_jsonb(i) FROM items i WHERE path=$1 OR ($2 AND left(path,length($1)+1)=$1||'/') ORDER BY path LIMIT 200001", old, m.Info.IsDir())
+		if err != nil {
+			return nil, errors.New("无法读取作品记录")
+		}
+		for rows.Next() {
+			var raw []byte
+			if err = rows.Scan(&raw); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			data := map[string]any{}
+			decoder := json.NewDecoder(strings.NewReader(string(raw)))
+			decoder.UseNumber()
+			if err = decoder.Decode(&data); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			oldID, _ := data["id"].(string)
+			if seen[oldID] {
+				continue
+			}
+			seen[oldID] = true
+			path, _ := data["path"].(string)
+			path = mapping.rebase(path)
+			newID := digest(path)[:32]
+			ids[oldID] = newID
+			data["id"], data["path"] = newID, path
+			for _, field := range []string{"poster", "url"} {
+				if p, ok := data[field].(string); ok {
+					data[field] = mapping.rebase(p)
+				}
+			}
+			records = append(records, record{data, oldID, newID})
+			if len(records) > 200000 {
+				rows.Close()
+				return nil, errors.New("改名涉及超过 200000 条作品记录，请选择更小的文件夹")
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, record := range records {
+		if parent, ok := record.Data["parent"].(string); ok {
+			if next, ok := ids[parent]; ok {
+				record.Data["parent"] = next
+			}
+		}
+		var count int
+		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM items WHERE id=$1 OR path=$2", record.New, record.Data["path"]).Scan(&count); err != nil || count != 0 {
+			return nil, errors.New("改名目标已有入库记录，请先处理冲突")
+		}
+		raw, _ := json.Marshal(record.Data)
+		if _, err = tx.ExecContext(ctx, "INSERT INTO items SELECT (jsonb_populate_record(NULL::items,$1::jsonb)).*", string(raw)); err != nil {
+			return nil, errors.New("无法迁移作品记录，未改动文件")
+		}
+	}
+	// Discover every declared item reference so collections and playback state follow the new ID.
+	refs, err := tx.QueryContext(ctx, `SELECT ns.nspname,t.relname,a.attname FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace ns ON ns.oid=t.relnamespace JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=c.conkey[1] WHERE c.contype='f' AND c.confrelid='items'::regclass AND array_length(c.conkey,1)=1`)
+	if err != nil {
+		return nil, err
+	}
+	queries := []string{}
+	for refs.Next() {
+		var schema, table, column string
+		if err = refs.Scan(&schema, &table, &column); err != nil {
+			refs.Close()
+			return nil, err
+		}
+		queries = append(queries, "UPDATE "+pq.QuoteIdentifier(schema)+"."+pq.QuoteIdentifier(table)+" SET "+pq.QuoteIdentifier(column)+"=$1 WHERE "+pq.QuoteIdentifier(column)+"=$2")
+	}
+	err = refs.Err()
+	refs.Close()
+	if err != nil {
+		return nil, err
+	}
+	queries = append(queries, "UPDATE items SET parent=$1 WHERE parent=$2", "UPDATE plays SET item=$1 WHERE item=$2", "UPDATE intro_markers SET series_id=$1 WHERE series_id=$2", "UPDATE intro_markers SET parent_id=$1 WHERE parent_id=$2")
+	for _, record := range records {
+		for _, query := range queries {
+			if _, err = tx.ExecContext(ctx, query, record.New, record.Old); err != nil {
+				return nil, errors.New("无法迁移收藏或观看记录，未改动文件")
+			}
+		}
+		if _, err = tx.ExecContext(ctx, "DELETE FROM items WHERE id=$1", record.Old); err != nil {
+			return nil, err
+		}
+	}
+	success = true
+	return tx, nil
+}
