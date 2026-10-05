@@ -398,5 +398,5 @@ func (a *App) featurePlaybackStatus(w http.ResponseWriter, r *http.Request, user
 	}
 	output, err := os.Stat(filepath.Join(record.Directory, "video.mp4"))
 	ready := err == nil && output.Mode().IsRegular() && output.Size() >= 32
-	respond(w, M{"State": record.State, "Downloaded": record.Downloaded, "Total": record.Total, "Ready": ready, "Done": record.Done, "Error": record.Error})
+	respond(w, M{"State": record.State, "SourceMode": record.SourceMode, "Downloaded": record.Downloaded, "Total": record.Total, "Ready": ready, "Done": record.Done, "Error": record.Error})
 }

@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -160,8 +162,17 @@ func TestISORealPlaybackFixtures(t *testing.T) {
 	if root == "" {
 		t.Skip("ISO_FIXTURE_ROOT required for real FFmpeg/disc integration checks")
 	}
-	for _, name := range []string{"renamed-mkv.iso", "dvd.iso", "video-disc.iso"} {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		noRange bool
+		large   bool
+		start   int
+	}{
+		{"renamed-mkv.iso", false, false, 0}, {"dvd.iso", false, false, 0}, {"video-disc.iso", false, false, 0}, {"dvd.iso", true, false, 0},
+		{"bluray.iso", false, false, 0}, {"video-disc.iso", false, true, 0}, {"bluray.iso", false, false, 5},
+	} {
+		name := tc.name
+		t.Run(name+"/range="+strconv.FormatBool(!tc.noRange)+"/large="+strconv.FormatBool(tc.large)+"/start="+strconv.Itoa(tc.start), func(t *testing.T) {
 			a, _, _, _ := cloudProtectionFixture(t)
 			a.features.ctx = context.Background()
 			a.features.transcodes = map[string]*featureTranscode{}
@@ -169,7 +180,34 @@ func TestISORealPlaybackFixtures(t *testing.T) {
 			if err := a.saveFeatureSetting("playback", featurePlaybackConfig{Transcode: true, Threads: 2, Concurrency: 2, CacheGB: 1, Bitrate: 1000, RetentionDays: 1}); err != nil {
 				t.Fatal(err)
 			}
-			server := httptest.NewServer(http.FileServer(http.Dir(root)))
+			var fullRequests atomic.Int32
+			fileServer := http.FileServer(http.Dir(root))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.large {
+					if r.Header.Get("Range") == "" {
+						fullRequests.Add(1)
+						http.Error(w, "whole-image download forbidden", 500)
+						return
+					}
+					file, err := os.Open(filepath.Join(root, name))
+					if err != nil {
+						http.Error(w, "missing fixture", 500)
+						return
+					}
+					defer file.Close()
+					info, _ := file.Stat()
+					virtual := &isoJoinedReader{size: 2 << 30, files: []isoStreamFile{{size: info.Size(), reader: file}, {size: (2 << 30) - info.Size(), reader: isoZeroReader{}}}}
+					http.ServeContent(w, r, name, time.Time{}, io.NewSectionReader(virtual, 0, virtual.size))
+					return
+				}
+				if r.Header.Get("Range") == "" {
+					fullRequests.Add(1)
+				}
+				if tc.noRange && r.Header.Get("Range") != "bytes=0-65535" {
+					r.Header.Del("Range")
+				}
+				fileServer.ServeHTTP(w, r)
+			}))
 			defer server.Close()
 			if _, err := a.db.Exec("UPDATE items SET url=? WHERE id='movie'", server.URL+"/"+name); err != nil {
 				t.Fatal(err)
@@ -180,7 +218,7 @@ func TestISORealPlaybackFixtures(t *testing.T) {
 				t.Fatalf("inspection: %d %s", inspection.Code, inspection.Body)
 			}
 			w := httptest.NewRecorder()
-			isoFeatureRequest(a, w, httptest.NewRequest("POST", "/features/playback?api_key=viewer-token", strings.NewReader(`{"ID":"movie","Audio":-1,"Start":0}`)))
+			isoFeatureRequest(a, w, httptest.NewRequest("POST", "/features/playback?api_key=viewer-token", strings.NewReader(`{"ID":"movie","Audio":-1,"Start":`+strconv.Itoa(tc.start)+`}`)))
 			if w.Code != 200 {
 				t.Fatalf("playback: %d %s", w.Code, w.Body)
 			}
@@ -202,10 +240,21 @@ func TestISORealPlaybackFixtures(t *testing.T) {
 						t.Fatalf("not a browser-compatible movie: %+v %v", probe, err)
 					}
 					duration, _ := strconv.ParseFloat(probe.Format.Duration, 64)
-					if duration < 11 || duration > 14 {
+					if duration < float64(11-tc.start) || duration > float64(14-tc.start) {
 						t.Fatalf("positive video segments were dropped: duration %g", duration)
 					}
-					if name != "renamed-mkv.iso" {
+					if name != "renamed-mkv.iso" && !tc.noRange {
+						if job.SourceMode != "range" || fullRequests.Load() != 0 {
+							t.Fatalf("image was downloaded instead of read on demand: mode=%s full=%d", job.SourceMode, fullRequests.Load())
+						}
+						if _, err := os.Stat(filepath.Join(job.Directory, "source.iso")); !os.IsNotExist(err) {
+							t.Fatal("full image stored for online playback")
+						}
+					}
+					if tc.noRange {
+						if job.SourceMode != "cache" {
+							t.Fatal("unsupported ranges did not fall back to full cache")
+						}
 						// A retry must reuse the already complete image and extracted title even with no free cache.
 						filler := filepath.Join(job.Directory, "cache-budget-test")
 						file, err := os.Create(filler)

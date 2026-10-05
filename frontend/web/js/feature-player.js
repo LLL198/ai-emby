@@ -82,7 +82,8 @@ async function featurePlayer(id, video, source) {
         if (status.State === "caching") {
           const percent = status.Total > 0 ? ` ${Math.min(100, Math.floor(status.Downloaded / status.Total * 100))}%` : "";
           showProgress("正在缓存光盘镜像…" + percent);
-        } else showProgress(status.State === "reading-disc" ? "正在读取光盘正片…" : "正在生成网页播放视频…");
+        } else if (status.State === "reading-disc") showProgress("正在按需读取光盘正片…");
+        else showProgress(status.State === "remuxing" ? "正在封装网页播放视频…" : "正在生成网页播放视频…");
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
       if (!video.isConnected || video.dataset.stopping === "true") return;

@@ -50,6 +50,7 @@ type featureTranscode struct {
 	Done                             bool
 	Error                            string
 	State                            string
+	SourceMode                       string
 	Downloaded, Total                int64
 	cancel                           context.CancelFunc
 }
@@ -492,20 +493,75 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 				defer a.features.wg.Done()
 				defer cancel()
 				var err error
+				var online *isoOnlineInput
 				if isoInfo.Container == "iso" {
-					input, err = a.prepareISOPlayback(ctx, input, dir, isoInfo, job)
+					online, err = a.prepareISOOnline(ctx, input, isoInfo, job)
+					if err == nil {
+						input = online.URL
+						defer online.close()
+						a.features.cacheMu.Lock()
+						job.SourceMode = "range"
+						a.features.cacheMu.Unlock()
+					} else if ctx.Err() == nil {
+						a.features.cacheMu.Lock()
+						job.SourceMode = "cache"
+						a.features.cacheMu.Unlock()
+						input, err = a.prepareISOPlayback(ctx, input, dir, isoInfo, job)
+					}
 				}
 				if err == nil {
+					copyVideo := false
+					if online != nil {
+						probeCtx, probeCancel := context.WithTimeout(ctx, 20*time.Second)
+						probeArgs := append([]string{"-v", "error"}, featureInputArgs(input)...)
+						probeArgs = append(probeArgs, online.Args...)
+						probeArgs = append(probeArgs, "-i", input, "-show_streams", "-of", "json")
+						var probe struct {
+							Streams []struct {
+								CodecType   string `json:"codec_type"`
+								CodecName   string `json:"codec_name"`
+								PixelFormat string `json:"pix_fmt"`
+							}
+						}
+						var output transferLogBuffer
+						probeCommand := exec.CommandContext(probeCtx, "ffprobe", probeArgs...)
+						probeCommand.Stdout = &output
+						probeErr := probeCommand.Run()
+						if probeErr == nil {
+							probeErr = json.Unmarshal(output.Bytes(), &probe)
+						}
+						probeCancel()
+						if probeErr == nil {
+							for _, stream := range probe.Streams {
+								if stream.CodecType == "video" {
+									copyVideo = request.Start == 0 && stream.CodecName == "h264" && (stream.PixelFormat == "yuv420p" || stream.PixelFormat == "yuvj420p")
+									break
+								}
+							}
+						}
+					}
 					a.features.cacheMu.Lock()
 					job.State = "transcoding"
+					if copyVideo {
+						job.State = "remuxing"
+					}
 					a.features.cacheMu.Unlock()
 					args := append([]string{"-v", "error", "-nostdin", "-y"}, featureInputArgs(input)...)
+					if online != nil {
+						args = append(args, online.Args...)
+					}
 					args = append(args, "-ss", strconv.FormatFloat(request.Start, 'f', 3, 64), "-i", input, "-map", "0:v:0?")
 					audio := "0:a:0?"
 					if request.Audio >= 0 {
 						audio = "0:" + strconv.Itoa(request.Audio)
 					}
-					args = append(args, "-map", audio, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-threads", strconv.Itoa(c.Threads), "-b:v", strconv.Itoa(c.Bitrate)+"k", "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", filepath.Join(dir, "video.mp4"))
+					args = append(args, "-map", audio)
+					if copyVideo {
+						args = append(args, "-c:v", "copy")
+					} else {
+						args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-threads", strconv.Itoa(c.Threads), "-b:v", strconv.Itoa(c.Bitrate)+"k")
+					}
+					args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", filepath.Join(dir, "video.mp4"))
 					if exec.CommandContext(ctx, "ffmpeg", args...).Run() != nil {
 						err = errors.New("转码失败，请检查媒体源、音轨或 FFmpeg 支持")
 					}
