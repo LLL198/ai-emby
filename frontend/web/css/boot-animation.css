@@ -4,9 +4,12 @@ html.boot-pending body::before {
 }
 .boot-overlay {
   position: fixed; inset: 0; z-index: 99999; background: #020508;
-  display: grid; place-items: center; isolation: isolate;
+  overflow: hidden; isolation: isolate;
 }
-.boot-video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.boot-video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  max-height: none; margin: 0; object-fit: cover; display: block; background: #020508;
+}
 .boot-skip {
   position: absolute; right: max(30px, env(safe-area-inset-right));
   bottom: max(28px, env(safe-area-inset-bottom)); z-index: 1;
@@ -17,7 +20,6 @@ html.boot-pending body::before {
 .boot-skip:hover { background: #16334bd9; border-color: #bbddff; }
 .boot-skip:focus-visible { outline: 2px solid #e7f4ff; outline-offset: 4px; }
 @media (max-aspect-ratio: 4/3) {
-  .boot-video { object-fit: contain; }
   .boot-skip { right: 20px; bottom: max(24px, env(safe-area-inset-bottom)); }
 }
 @media (prefers-reduced-motion: reduce) {
