@@ -54,6 +54,9 @@ type featureTranscode struct {
 	FallbackReason                   string
 	Paused                           bool
 	Downloaded, Total                int64
+	Stream                           bool
+	Start                            float64
+	stream                           *playbackStream
 	cancel                           context.CancelFunc
 	control                          *playbackTaskControl
 	finished                         chan struct{}
@@ -413,6 +416,7 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 		Audio   int
 		Start   float64
 		Session string
+		Stream  bool
 	}
 	request.Audio = -1
 	if !body(w, r, &request) {
@@ -436,9 +440,16 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 		fail(w, 409, "管理员尚未启用转码")
 		return
 	}
-	if request.Start < 0 || request.Start > 86400 || request.Audio < -1 || request.Audio > 200 || (request.Session != "" && (len(request.Session) != 32 || strings.Trim(request.Session, "0123456789abcdef") != "")) {
+	if math.IsNaN(request.Start) || math.IsInf(request.Start, 0) || request.Start < 0 || request.Start > 86400 || request.Audio < -1 || request.Audio > 200 || (request.Session != "" && (len(request.Session) != 32 || strings.Trim(request.Session, "0123456789abcdef") != "")) {
 		fail(w, 400, "播放参数无效")
 		return
+	}
+	if duration := catalogDTOFloat(a.cachedMedia(x)["RunTimeTicks"]) / 1e7; duration > 0 && request.Start >= duration {
+		request.Start = 0
+	}
+	// Live output is consumed once; callers without a session also need a fresh stream.
+	if request.Stream && request.Session == "" {
+		request.Session = id()
 	}
 	input, err := a.featureRawMediaInput(x)
 	if err != nil {
@@ -514,12 +525,14 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 			return
 		}
 		ctx, cancel := context.WithCancel(a.features.ctx)
-		job = &featureTranscode{ID: key, Item: x.ID, Owner: user.ID, Name: x.Name, Directory: dir, Started: time.Now(), Used: time.Now(), State: "queued", cancel: cancel, control: newPlaybackTaskControl(), finished: make(chan struct{})}
+		job = &featureTranscode{ID: key, Item: x.ID, Owner: user.ID, Name: x.Name, Directory: dir, Started: time.Now(), Used: time.Now(), State: "queued", Stream: request.Stream, Start: request.Start, cancel: cancel, control: newPlaybackTaskControl(), finished: make(chan struct{})}
+		if request.Stream {
+			job.stream = newPlaybackStream(ctx)
+		}
 		a.features.transcodes[key] = job
 		if data, e := os.ReadFile(filepath.Join(dir, "record.json")); e == nil {
 			var record featureTranscode
-			output, outputErr := os.Stat(filepath.Join(dir, "video.mp4"))
-			if json.Unmarshal(data, &record) == nil && record.Done && record.Error == "" && outputErr == nil && output.Mode().IsRegular() && output.Size() >= 32 {
+			if !request.Stream && json.Unmarshal(data, &record) == nil && record.Done && record.Error == "" && playbackFileReady(filepath.Join(dir, "video.mp4")) {
 				job.Done, job.State = true, "complete"
 				job.SourceMode, job.FallbackReason = record.SourceMode, record.FallbackReason
 			}
@@ -532,7 +545,11 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 				defer a.features.wg.Done()
 				defer close(job.finished)
 				defer cancel()
+				if job.stream != nil {
+					defer close(job.stream.chunks)
+				}
 				var err error
+				start := request.Start
 				var online *isoOnlineInput
 				if isoInfo.Container == "iso" {
 					online, err = a.prepareISOOnline(ctx, input, isoInfo, job)
@@ -561,12 +578,17 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 				}
 				if err == nil {
 					copyVideo := false
-					if online != nil {
+					// A timed restart is accurately decoded, so probing for video copy
+					// cannot help it and would read the movie start and tail again.
+					if online != nil && (!request.Stream || start == 0) {
 						probeCtx, probeCancel := playbackTaskTimeout(ctx, job.control, 20*time.Second)
 						probeArgs := append([]string{"-v", "error"}, featureInputArgs(input)...)
 						probeArgs = append(probeArgs, online.Args...)
-						probeArgs = append(probeArgs, "-i", input, "-show_streams", "-of", "json")
+						probeArgs = append(probeArgs, "-i", input, "-show_streams", "-show_format", "-of", "json")
 						var probe struct {
+							Format struct {
+								Duration string `json:"duration"`
+							}
 							Streams []struct {
 								CodecType   string `json:"codec_type"`
 								CodecName   string `json:"codec_name"`
@@ -580,11 +602,19 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 						if probeErr == nil {
 							probeErr = json.Unmarshal(output.Bytes(), &probe)
 						}
+						if probeErr == nil {
+							if duration, e := strconv.ParseFloat(probe.Format.Duration, 64); e == nil && duration > 0 && start >= duration {
+								start = 0
+								a.features.cacheMu.Lock()
+								job.Start = 0
+								a.features.cacheMu.Unlock()
+							}
+						}
 						probeCancel()
 						if probeErr == nil {
 							for _, stream := range probe.Streams {
 								if stream.CodecType == "video" {
-									copyVideo = request.Start == 0 && stream.CodecName == "h264" && (stream.PixelFormat == "yuv420p" || stream.PixelFormat == "yuvj420p")
+									copyVideo = start == 0 && stream.CodecName == "h264" && (stream.PixelFormat == "yuv420p" || stream.PixelFormat == "yuvj420p")
 									break
 								}
 							}
@@ -600,7 +630,7 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 					if online != nil {
 						args = append(args, online.Args...)
 					}
-					args = append(args, "-ss", strconv.FormatFloat(request.Start, 'f', 3, 64), "-i", input, "-map", "0:v:0?")
+					args = append(args, "-ss", strconv.FormatFloat(start, 'f', 3, 64), "-i", input, "-map", "0:v:0")
 					audio := "0:a:0?"
 					if request.Audio >= 0 {
 						audio = "0:" + strconv.Itoa(request.Audio)
@@ -610,10 +640,26 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 						args = append(args, "-c:v", "copy")
 					} else {
 						args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-threads", strconv.Itoa(c.Threads), "-b:v", strconv.Itoa(c.Bitrate)+"k")
+						if request.Stream {
+							args = append(args, "-vf", "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", "-tune", "zerolatency", "-force_key_frames", "expr:gte(t,n_forced*2)")
+						}
 					}
-					args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", filepath.Join(dir, "video.mp4"))
-					if job.control.run(ctx, exec.CommandContext(ctx, "ffmpeg", args...)) != nil {
+					args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-movflags", "+frag_keyframe+empty_moov+default_base_moof")
+					output := filepath.Join(dir, "video.mp4")
+					if request.Stream {
+						output = "pipe:1"
+						args = append(args, "-frag_duration", "1000000", "-flush_packets", "1")
+					}
+					args = append(args, "-f", "mp4", output)
+					command := exec.CommandContext(ctx, "ffmpeg", args...)
+					if job.stream != nil {
+						command.Stdout = job.stream
+					}
+					if job.control.run(ctx, command) != nil {
 						err = errors.New("转码失败，请检查媒体源、音轨或 FFmpeg 支持")
+					}
+					if err == nil && ((job.stream != nil && !job.stream.ready.Load()) || (job.stream == nil && !playbackFileReady(output))) {
+						err = errPlaybackEmpty
 					}
 				}
 				a.features.cacheMu.Lock()
@@ -641,7 +687,7 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 	job.heartbeat = job.Used
 	snapshot := *job
 	a.features.cacheMu.Unlock()
-	respond(w, M{"ID": key, "URL": "/features/stream/" + key + "/video.mp4", "Done": snapshot.Done, "Error": snapshot.Error, "Start": request.Start})
+	respond(w, M{"ID": key, "URL": "/features/stream/" + key + "/video.mp4", "Done": snapshot.Done, "Error": snapshot.Error, "Start": snapshot.Start, "Stream": snapshot.Stream})
 }
 
 func (a *App) featureStream(w http.ResponseWriter, r *http.Request, user User) {
@@ -693,6 +739,14 @@ func (a *App) featureStream(w http.ResponseWriter, r *http.Request, user User) {
 	}
 	if record.Error != "" {
 		fail(w, 502, record.Error)
+		return
+	}
+	if record.Stream {
+		if job == nil {
+			fail(w, 410, "实时播放已结束，请重新播放")
+			return
+		}
+		a.servePlaybackPipe(w, r, job)
 		return
 	}
 	if record.Done {

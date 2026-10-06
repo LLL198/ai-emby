@@ -256,13 +256,13 @@ async function detail(id, options = {}) {
         { once: true },
       );
       // The source is the authenticated redirect URL. The browser follows its 302 to the CDN.
-      const resume = fromBeginning ? 0 : (item.UserData?.PlaybackPositionTicks || 0);
+      const resume = fromBeginning ? 0 : featurePlaybackResume((item.UserData?.PlaybackPositionTicks || 0)/1e7, Number(source.RunTimeTicks || item.RunTimeTicks || 0)/1e7)*1e7;
       video.dataset.resume=String(resume/1e7);
       if (resume > 0)
         video.addEventListener(
           "loadedmetadata",
           () => {
-            video.currentTime = Math.max(0,resume/1e7-Number(video.dataset.offset||0));
+            video.currentTime = Math.max(0,Number(video.dataset.resume||0)-Number(video.dataset.offset||0));
           },
           { once: true },
         );
