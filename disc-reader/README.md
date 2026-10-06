@@ -16,7 +16,7 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2 -fstack-protector-stro
 sudo install -m 755 ai-emby-disc-reader /usr/local/bin/
 ```
 
-运行环境需要匹配的 libbluray/libcurl 共享库；项目默认 Debian bookworm 镜像安装 `libbluray2` 与 `libcurl4`。组件需能在播放服务的 `PATH` 中找到。网页输出仍使用磁盘缓存，原有完整源镜像缓存回退也继续保留。
+运行环境需要匹配的 libbluray/libcurl 共享库；项目默认 Debian bookworm 镜像安装 `libbluray2` 与 `libcurl4`。组件需能在播放服务的 `PATH` 中找到。实时输出和 HLS 分段模式不保存完整播放输出，旧客户端的文件缓存路径继续保留。
 
 ## 私有协议
 
@@ -26,9 +26,14 @@ sudo install -m 755 ai-emby-disc-reader /usr/local/bin/
 
 | 方向 | 格式 |
 | --- | --- |
-| 启动后的 stdout | `BDR1`（4 字节）+ 主片字节数（uint64）+ 时长（uint64，90 kHz）+ 播放列表编号（uint32） |
+| 启动后的 stdout | `BDR2`（4 字节）+ 主片字节数（uint64）+ 时长（uint64，90 kHz）+ 播放列表编号（uint32） |
 | stdin 读取请求 | `READ`（4 字节）+ 长度（uint32）+ 主片偏移（uint64） |
 | stdout 回复 | 状态（uint32，0 表示成功）+ 返回长度（uint32）+ 数据 |
+| stdin 时间定位 | `SEEK`（4 字节）+ 0（uint32）+ 目标时间（uint64，90 kHz） |
+| 时间定位成功回复 | 0（uint32）+ 16（uint32）+ 实际字节位置（uint64）+ 实际时间（uint64，90 kHz） |
+| 时间定位失败回复 | 非零状态（uint32）+ 0（uint32） |
+
+Go 端兼容旧版 `BDR1` 的字节读取，但只对 `BDR2` 使用时间定位。`bd_seek_time` 返回邻近访问点；实际时间必须参与分段时间轴，不能当成精确请求时间。时间索引缺失、时长不一致或访问点稀疏时，HLS 保留准确解码定位并关闭原编码复制。时间定位失败不终止组件，后续字节读取仍可继续。
 
 单次读取不超过 1 MiB。Go 端串行访问同一组件，较大的 `ReadAt` 自动拆分请求。libbluray 定位可能回到较早的可读位置，因此组件会补读到精确偏移后再返回数据。EOF、损坏请求或读取失败会结束进程。
 

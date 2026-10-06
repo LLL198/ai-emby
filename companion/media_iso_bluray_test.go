@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -71,6 +73,26 @@ func TestISONativeBluRayRangeSeekAndCancel(t *testing.T) {
 			defer input.close()
 			source.startStreaming(ctx)
 			metadataCancel()
+			if !input.native.timeSeek {
+				t.Fatal("time navigation protocol missing")
+			}
+			_, indexed := hlsPoints(ctx, input.native, 12)
+			t.Logf("authored title duration %.3fs, safe time index=%v", float64(input.native.duration)/90000, indexed)
+			for _, tick := range []uint64{0, input.native.duration / 2} {
+				offset, actual, err := input.native.seekTime(tick)
+				if err != nil && !indexed {
+					// tsMuxeR's short split titles can contain an unusable time index.
+					// It must be rejected while the READ protocol remains usable below.
+					t.Logf("unsafe time point rejected at %d ticks", tick)
+					continue
+				}
+				if err != nil || offset < 0 || offset >= input.native.size || actual > input.native.duration {
+					t.Fatalf("native time seek: offset=%d time=%d err=%v", offset, actual, err)
+				}
+			}
+			if _, _, err := input.native.seekTime(input.native.duration); err == nil {
+				t.Fatal("EOF time accepted")
+			}
 			referenceRequest, _ := http.NewRequest("GET", input.URL, nil)
 			referenceRequest.Header.Set("Range", "bytes=0-8388607")
 			referenceResponse, err := http.DefaultClient.Do(referenceRequest)
@@ -177,5 +199,73 @@ func TestISONativeBluRayRangeSeekAndCancel(t *testing.T) {
 				t.Fatal("canceled native reader left its listener running")
 			}
 		})
+	}
+}
+
+func TestISONativeTimeSeekProtocolAndFailureRecovery(t *testing.T) {
+	inputReader, inputWriter := io.Pipe()
+	outputReader, outputWriter := io.Pipe()
+	defer inputReader.Close()
+	defer inputWriter.Close()
+	defer outputReader.Close()
+	defer outputWriter.Close()
+	reader := &isoNativeReader{ctx: context.Background(), control: newPlaybackTaskControl(), input: inputWriter, output: outputReader, timeSeek: true, duration: 1080000, size: 512}
+	helperDone := make(chan error, 1)
+	go func() {
+		for step := 0; step < 3; step++ {
+			var request [16]byte
+			if _, err := io.ReadFull(inputReader, request[:]); err != nil {
+				helperDone <- err
+				return
+			}
+			var reply [24]byte
+			length := 8
+			if step < 2 {
+				expected := uint64(90000)
+				if step == 1 {
+					expected = 810000
+				}
+				if string(request[:4]) != "SEEK" || binary.BigEndian.Uint32(request[4:8]) != 0 || binary.BigEndian.Uint64(request[8:]) != expected {
+					helperDone <- fmt.Errorf("invalid SEEK request at step %d", step)
+					outputWriter.Close()
+					return
+				}
+				if step == 0 {
+					binary.BigEndian.PutUint32(reply[4:8], 16)
+					binary.BigEndian.PutUint64(reply[8:16], 64)
+					binary.BigEndian.PutUint64(reply[16:], 90000)
+					length = 24
+				} else {
+					binary.BigEndian.PutUint32(reply[:4], 1)
+				}
+			} else {
+				if string(request[:4]) != "READ" || binary.BigEndian.Uint32(request[4:8]) != 4 || binary.BigEndian.Uint64(request[8:]) != 0 {
+					helperDone <- fmt.Errorf("READ did not follow failed SEEK")
+					outputWriter.Close()
+					return
+				}
+				binary.BigEndian.PutUint32(reply[4:8], 4)
+				copy(reply[8:12], "data")
+				length = 12
+			}
+			if _, err := outputWriter.Write(reply[:length]); err != nil {
+				helperDone <- err
+				return
+			}
+		}
+		helperDone <- nil
+	}()
+	if offset, actual, err := reader.seekTime(90000); err != nil || offset != 64 || actual != 90000 {
+		t.Fatalf("successful SEEK decoded incorrectly: %d %d %v", offset, actual, err)
+	}
+	if _, _, err := reader.seekTime(810000); err == nil {
+		t.Fatal("failed SEEK accepted")
+	}
+	var data [4]byte
+	if n, err := reader.ReadAt(data[:], 0); err != nil || n != 4 || string(data[:]) != "data" {
+		t.Fatalf("READ failed after rejected SEEK: %d %v", n, err)
+	}
+	if err := <-helperDone; err != nil {
+		t.Fatal(err)
 	}
 }

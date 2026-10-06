@@ -416,10 +416,16 @@ func (a *App) featurePlaybackStatus(w http.ResponseWriter, r *http.Request, user
 	}
 	a.features.cacheMu.Unlock()
 	ready := false
-	if record.stream != nil {
+	duration := 0.0
+	if record.hls != nil {
+		ready = record.hls.ready.Load()
+		if ready {
+			duration = record.hls.points[len(record.hls.points)-1].time
+		}
+	} else if record.stream != nil {
 		ready = record.stream.ready.Load()
 	} else {
 		ready = playbackFileReady(filepath.Join(record.Directory, "video.mp4"))
 	}
-	respond(w, M{"State": record.State, "SourceMode": record.SourceMode, "FallbackReason": record.FallbackReason, "Paused": record.Paused, "Downloaded": record.Downloaded, "Total": record.Total, "Ready": ready, "Done": record.Done, "Error": record.Error, "Start": record.Start, "Stream": record.Stream})
+	respond(w, M{"State": record.State, "SourceMode": record.SourceMode, "FallbackReason": record.FallbackReason, "Paused": record.Paused, "Downloaded": record.Downloaded, "Total": record.Total, "Ready": ready, "Done": record.Done, "Error": record.Error, "Start": record.Start, "Stream": record.Stream, "HLS": record.HLS, "Duration": duration})
 }

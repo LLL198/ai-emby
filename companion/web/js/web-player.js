@@ -130,7 +130,7 @@ const WebPlayer = (() => {
     video.defaultPlaybackRate = video.playbackRate = state.rate;
     video.style.objectFit = state.fit; speed.value = String(state.rate);
     const save = () => { try { localStorage.setItem(preferenceKey, JSON.stringify(state)); } catch {} };
-    const total = () => Math.max(Number(options.source?.RunTimeTicks || item.RunTimeTicks || 0) / 1e7, Number.isFinite(video.duration) ? video.duration + Number(video.dataset.offset || 0) : 0);
+    const total = () => Number(video.dataset.fullDuration || 0) || Math.max(Number(options.source?.RunTimeTicks || item.RunTimeTicks || 0) / 1e7, Number.isFinite(video.duration) ? video.duration + Number(video.dataset.offset || 0) : 0);
     function reveal() {
       root.classList.remove("watch-idle"); clearTimeout(idleTimer);
       if (!video.paused && !activePanel) idleTimer = setTimeout(() => {
@@ -156,15 +156,28 @@ const WebPlayer = (() => {
     function seek(position) {
       if (disposed || finished) return;
       const offset = Number(video.dataset.offset || 0), duration = total();
+      position = Math.max(0, Math.min(Math.max(0, duration-0.1), position));
+      if (video.webTranscodeSeek && video.dataset.offset != null) {
+        const local = position-offset;
+        let buffered = false;
+        for (let i=0; i<video.buffered.length; i++) {
+          if (local >= video.buffered.start(i) && local < video.buffered.end(i)-0.1) buffered = true;
+        }
+        if (video.dataset.hls === "true" || video.dataset.stream === "true" || !buffered || video.dataset.pendingSeek != null) {
+          run(() => video.webTranscodeSeek(position))();
+          reveal();
+          return;
+        }
+      }
       if (position < offset) { toast("当前转码从中途开始，请返回详情后从头播放", {type:"info"}); return; }
       if (video.readyState < 1 || !duration) return;
       video.currentTime = Math.max(0, Math.min(duration, position) - offset);
       reveal();
     }
     function update() {
-      const position = featurePlaybackPosition(video), duration = total();
-      progress.max = String(duration); progress.min = String(Number(video.dataset.offset || 0));
-      progress.disabled = finished || !duration || video.readyState < 1;
+      const duration = total(), position = finished ? duration : featurePlaybackPosition(video);
+      progress.max = String(duration); progress.min = video.webTranscodeSeek ? "0" : String(Number(video.dataset.offset || 0));
+      progress.disabled = finished || !duration || (video.readyState < 1 && !video.webTranscodeSeek);
       if (!dragging) { progress.value = String(position); clock.textContent = `${time(position)} / ${time(duration)}`; }
       progress.setAttribute("aria-valuetext", `${time(Number(progress.value))} / ${time(duration)}`);
       const paused = video.paused;
@@ -273,6 +286,7 @@ const WebPlayer = (() => {
       document.documentElement.classList.remove("watch-open");
       video.webPlayerDispose = null;
       video.webPlayerError = null;
+      video.webPlayerSeek = null;
     }
     function finish() {
       if (disposed) return;
@@ -282,6 +296,7 @@ const WebPlayer = (() => {
       update(); reveal();
     }
     video.webPlayerDispose = destroy;
+    video.webPlayerSeek = seek;
     root.focus({preventScroll:true}); update(); updateFullscreen(); reveal();
     return {nextEpisode:async () => { await episodeReady; return state.autoNext ? adjacent(1) : null; }, finish, destroy};
   }

@@ -1,6 +1,6 @@
 /* Private libbluray bridge. The ISO is fetched from the worker's loopback Range server.
- * stdin: READ + uint32 length + uint64 offset (big endian).
- * stdout: BDR1 + uint64 title bytes + uint64 duration ticks + uint32 playlist,
+ * stdin: READ + uint32 length + uint64 offset, or SEEK + uint32 zero + uint64 90kHz ticks (big endian).
+ * stdout: BDR2 + uint64 title bytes + uint64 duration ticks + uint32 playlist,
  * then uint32 status + uint32 length + movie bytes for each request.
  * No source image or movie data is written to disk. */
 #include <libbluray/bluray.h>
@@ -103,16 +103,33 @@ int main(int argc, char **argv) {
     bd_select_angle(bd, 0);
     uint64_t title_size = bd_get_title_size(bd);
     if (!title_size || title_size > INT64_MAX) goto done;
-    unsigned char header[24] = {'B','D','R','1'};
+    unsigned char header[24] = {'B','D','R','2'};
     put64(header + 4, title_size); put64(header + 12, duration); put32(header + 20, playlist);
     if (fwrite(header, 1, sizeof(header), stdout) != sizeof(header) || fflush(stdout)) goto done;
     for (;;) {
         unsigned char request[16];
         size_t received = fread(request, 1, sizeof(request), stdin);
         if (!received && feof(stdin)) { exit_code = 0; break; }
-        if (received != sizeof(request) || memcmp(request, "READ", 4)) break;
+        if (received != sizeof(request)) break;
         uint32_t length = u32(request + 4);
         uint64_t offset = u64(request + 8);
+        if (!memcmp(request, "SEEK", 4)) {
+            unsigned char reply[24] = {0};
+            int64_t position = -1;
+            if (!length && offset < duration) position = bd_seek_time(bd, offset);
+            uint64_t actual = bd_tell_time(bd);
+            if (position < 0 || (uint64_t)position >= title_size || actual > duration) {
+                put32(reply, 1);
+            } else {
+                put32(reply + 4, 16);
+                put64(reply + 8, (uint64_t)position);
+                put64(reply + 16, actual);
+            }
+            size_t size = u32(reply) ? 8 : sizeof(reply);
+            if (fwrite(reply, 1, size, stdout) != size || fflush(stdout)) break;
+            continue;
+        }
+        if (memcmp(request, "READ", 4)) break;
         if (!length || length > MAX_READ || offset > title_size || length > title_size - offset) break;
         uint32_t used = 0, status = 0;
         if (!seek_exact(bd, offset, buffer)) status = 1;

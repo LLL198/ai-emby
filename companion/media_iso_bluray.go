@@ -29,6 +29,7 @@ type isoNativeReader struct {
 	size     int64
 	duration uint64
 	playlist uint32
+	timeSeek bool
 }
 
 func (reader *isoNativeReader) close() {
@@ -86,7 +87,7 @@ func startISONativeReader(ctx, metadataCtx context.Context, sourceURL string, co
 		}
 		return nil, context.DeadlineExceeded
 	}
-	if err != nil || string(header[:4]) != "BDR1" {
+	if err != nil || (string(header[:4]) != "BDR1" && string(header[:4]) != "BDR2") {
 		reader.close()
 		return nil, errISODiscRead
 	}
@@ -97,7 +98,43 @@ func startISONativeReader(ctx, metadataCtx context.Context, sourceURL string, co
 		return nil, errISODiscRead
 	}
 	reader.size = int64(size)
+	reader.timeSeek = string(header[:4]) == "BDR2"
 	return reader, nil
+}
+
+// libbluray resolves CLPI access points. The actual time can precede the
+// requested time; callers must retain it instead of pretending the seek is exact.
+func (reader *isoNativeReader) seekTime(ticks uint64) (int64, uint64, error) {
+	if !reader.timeSeek || ticks >= reader.duration {
+		return 0, 0, errISODiscRead
+	}
+	if err := reader.control.wait(reader.ctx); err != nil {
+		return 0, 0, err
+	}
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	var request [16]byte
+	copy(request[:], "SEEK")
+	binary.BigEndian.PutUint64(request[8:], ticks)
+	if _, err := reader.input.Write(request[:]); err != nil {
+		return 0, 0, errISODiscRead
+	}
+	var header [8]byte
+	if _, err := io.ReadFull(reader.output, header[:]); err != nil {
+		return 0, 0, errISODiscRead
+	}
+	if binary.BigEndian.Uint32(header[:4]) != 0 || binary.BigEndian.Uint32(header[4:]) != 16 {
+		return 0, 0, errISODiscRead
+	}
+	var point [16]byte
+	if _, err := io.ReadFull(reader.output, point[:]); err != nil {
+		return 0, 0, errISODiscRead
+	}
+	offset, actual := binary.BigEndian.Uint64(point[:8]), binary.BigEndian.Uint64(point[8:])
+	if offset >= uint64(reader.size) || actual > reader.duration {
+		return 0, 0, errISODiscRead
+	}
+	return int64(offset), actual, nil
 }
 
 func (reader *isoNativeReader) ReadAt(data []byte, offset int64) (int, error) {
@@ -163,6 +200,7 @@ func prepareISOBluRay(ctx, metadataCtx context.Context, source io.ReaderAt, size
 		return nil, err
 	}
 	closeMovie := movie.close
+	movie.native = native
 	var once sync.Once
 	movie.close = func() {
 		once.Do(func() {

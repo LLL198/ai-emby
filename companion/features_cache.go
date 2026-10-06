@@ -20,6 +20,7 @@ type featureCacheEntry struct {
 	State, SourceMode, FallbackReason string
 	Done, Paused                      bool
 	Stream                            bool
+	HLS                               bool
 	Downloaded, Total                 int64
 }
 
@@ -54,6 +55,7 @@ func (a *App) featureCacheEntries() []featureCacheEntry {
 		entry.State, entry.SourceMode, entry.FallbackReason = rec.State, rec.SourceMode, rec.FallbackReason
 		entry.Done, entry.Paused, entry.Downloaded, entry.Total = rec.Done, rec.Paused, rec.Downloaded, rec.Total
 		entry.Stream = rec.Stream
+		entry.HLS = rec.HLS
 		if !rec.Used.IsZero() {
 			entry.Updated = rec.Used
 		}
@@ -67,6 +69,7 @@ func (a *App) featureCacheEntries() []featureCacheEntry {
 			entry.State, entry.SourceMode, entry.FallbackReason = job.State, job.SourceMode, job.FallbackReason
 			entry.Done, entry.Paused, entry.Downloaded, entry.Total = job.Done, job.Paused, job.Downloaded, job.Total
 			entry.Stream = job.Stream
+			entry.HLS = job.HLS
 		} else if rec.ID != "" && !rec.Done {
 			entry.State, entry.Paused = "interrupted", false
 		}

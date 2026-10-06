@@ -2,13 +2,15 @@ function featurePlaybackPosition(video) {
   if (video?.dataset.pendingSeek != null) return Number(video.dataset.pendingSeek);
   if (video && video.readyState === 0 && !Number(video.dataset.offset || 0))
     return Math.max(0, Number(video.dataset.resume || 0));
-  return video
+  const position = video
     ? Math.max(
         0,
         (Number.isFinite(video.currentTime) ? video.currentTime : 0) +
           Number(video.dataset.offset || 0),
       )
     : 0;
+  const duration = Number(video?.dataset.fullDuration || 0);
+  return duration > 0 ? Math.min(position, duration) : position;
 }
 function featurePlaybackResume(position, duration) {
   position = Math.max(0, Number(position) || 0);
@@ -62,6 +64,9 @@ async function featurePlayer(id, video, source) {
   let taskID = "", taskDone = false, taskPaused = false, preparing = false,
     taskHeartbeat, checkingTask = false, taskCommands = Promise.resolve();
   let seekGeneration = 0, pendingSeek, seekPlaying = false;
+  let hlsPlayer;
+  let hlsCompatible = false;
+  let hlsUnavailable = false;
   const taskPause = UI.el("button", {class:"secondary", type:"button", hidden:""}, "暂停后台任务"),
     taskStop = UI.el("button", {class:"secondary", type:"button", hidden:""}, "停止后台任务"),
     taskDelete = UI.el("button", {class:"secondary", type:"button", hidden:""}, "删除任务和缓存");
@@ -75,6 +80,8 @@ async function featurePlayer(id, video, source) {
     taskPause.textContent = taskPaused ? "继续后台任务" : "暂停后台任务";
   };
   const clearTask = () => {
+    hlsPlayer?.destroy();
+    hlsPlayer = undefined;
     taskID = "";
     clearInterval(taskHeartbeat);
     updateTaskControls();
@@ -105,6 +112,7 @@ async function featurePlayer(id, video, source) {
   };
   window.addEventListener("pagehide", () => video.webTranscodeDelete().catch(() => {}), {signal:video.webPlayerSignal});
   const updateTaskStatus = status => {
+    if (status.HLS && status.Duration > 0) video.dataset.fullDuration = String(status.Duration);
     taskDone = status.Done;
     taskPaused = status.Paused;
     updateTaskControls();
@@ -169,6 +177,7 @@ async function featurePlayer(id, video, source) {
   taskStop.onclick = run(() => endTask("stop"));
   taskDelete.onclick = run(() => endTask("delete"));
   video.addEventListener("pause", () => {
+    if (video.dataset.hls === "true") return;
     if (taskID && !taskDone && !preparing && !video.ended && video.dataset.stopping !== "true")
       commandTask("pause").catch(e => toast(e.message, {type:"error"}));
   });
@@ -182,6 +191,7 @@ async function featurePlayer(id, video, source) {
     const start = featurePlaybackResume(position ?? featurePlaybackPosition(video), Number(source.RunTimeTicks || 0) / 1e7);
     if (preparing) { pendingSeek = {autoplay, position:start}; video.dataset.pendingSeek = String(start); return; }
     const initialDisc = source.IsDisc && !transcodeStarted;
+    const segmented = source.IsDisc && !hlsUnavailable && featureHLSAvailable(video);
     transcodeStarted = true;
     const playing = !video.paused;
     preparing = true;
@@ -189,6 +199,7 @@ async function featurePlayer(id, video, source) {
     video.dataset.pendingSeek = String(start);
     video.dataset.offset = String(start);
     video.dataset.stream = "true";
+    video.dataset.hls = String(segmented);
     try {
       const previous = taskID;
       video.pause();
@@ -212,7 +223,10 @@ async function featurePlayer(id, video, source) {
         ID: id,
         Audio: initialDisc ? -1 : Number(audioSelect.value || -1),
         Start: start,
-        Stream: true,
+        Stream: !segmented,
+        HLS: segmented,
+        VideoCodecs: segmented && !hlsCompatible ? featureHLSCodecs() : [],
+        ForceTranscode: hlsCompatible,
         Session: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""),
       });
       if (info.Error) throw Error(info.Error);
@@ -230,7 +244,13 @@ async function featurePlayer(id, video, source) {
         while (video.isConnected && video.dataset.stopping !== "true") {
           const status = await api("/features/playback-status?" + new URLSearchParams({ID:info.ID}), "GET", undefined, {signal:video.webPlayerSignal});
           if (taskID !== info.ID || generation !== seekGeneration) return;
-          if (status.Error) throw Error(status.Error);
+          if (status.Error) {
+            if (info.HLS) {
+              hlsUnavailable = true;
+              throw Error(status.Error + "。可在播放设置中点击“转码播放”尝试兼容模式");
+            }
+            throw Error(status.Error);
+          }
           updateTaskStatus(status);
           actualStart = status.Start ?? actualStart;
           if (status.Ready && !status.Paused) break;
@@ -240,6 +260,24 @@ async function featurePlayer(id, video, source) {
         if (!video.isConnected || video.dataset.stopping === "true") return;
       }
       if (generation !== seekGeneration) return;
+      if (info.HLS) {
+        if (!Number(video.dataset.fullDuration)) video.dataset.fullDuration = String(Number(source.RunTimeTicks || 0) / 1e7);
+        actualStart = pendingSeek?.position ?? actualStart;
+        pendingSeek = undefined;
+        video.dataset.offset = "0";
+        video.dataset.resume = String(actualStart);
+        video.dataset.stream = "false";
+        delete video.dataset.pendingSeek;
+        hlsPlayer = featureHLSPlayer(video, info.URL, actualStart, token, (message, decodeError) => {
+          if (decodeError && !hlsCompatible && video.isConnected && video.dataset.stopping !== "true") {
+            hlsCompatible = true;
+            run(() => transcode(!video.paused, featurePlaybackPosition(video)))();
+          } else video.webPlayerError?.(message);
+        }, Number(video.dataset.fullDuration));
+        preparing = false;
+        if (playing || autoplay === true) await video.play().catch(() => {});
+        return;
+      }
       video.dataset.offset = video.dataset.resume = String(actualStart);
       delete video.dataset.pendingSeek;
       video.src = info.URL + "?" + new URLSearchParams({ api_key: token });
@@ -258,7 +296,13 @@ async function featurePlayer(id, video, source) {
       } else delete video.dataset.pendingSeek;
     }
   };
-  if (settings.Transcode) video.webTranscodeSeek = position => transcode(!video.paused || (preparing && seekPlaying), position);
+  if (settings.Transcode) video.webTranscodeSeek = position => {
+    if (hlsPlayer) { hlsPlayer.seek(position); return; }
+    if (preparing && taskID && video.dataset.hls === "true") {
+      pendingSeek = {position}; video.dataset.pendingSeek = String(position); return;
+    }
+    return transcode(!video.paused || (preparing && seekPlaying), position);
+  };
   if (audio.length) {
     controls.append(UI.el("label", {}, ["音轨 ", audioSelect]));
     audioSelect.onchange = run(async () => {
@@ -309,7 +353,7 @@ async function featurePlayer(id, video, source) {
     controls.append(
       UI.el(
         "button",
-        { class: "secondary", type: "button", onclick: run(transcode) },
+        { class: "secondary", type: "button", onclick: run((...args) => { hlsCompatible = true; return transcode(...args); }) },
         "转码播放",
       ),
     );

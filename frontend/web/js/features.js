@@ -59,6 +59,7 @@ const Features = (() => {
     extracting: "提取正片中",
     probing: "检查媒体格式",
     remuxing: "封装播放视频",
+    segmented: "按需分段播放",
     transcoding: "转码中",
     stopping: "停止中",
     stopped: "已停止",
@@ -229,7 +230,7 @@ const Features = (() => {
           ["作品", "缓存大小", "处理方式", "最近使用", "状态", "操作"],
           b.Items.map(
             (x) =>
-              `<tr><td>${esc(x.Name || x.ID)}${x.Error ? `<small>${esc(x.Error)}</small>` : ""}</td><td>${bytes(x.Size)}${x.State === "caching" && x.Total > 0 ? `<small>镜像下载 ${Math.min(100, Math.floor(x.Downloaded / x.Total * 100))}%</small>` : ""}</td><td>${["range", "range-bluray"].includes(x.SourceMode) ? "按需读取，无需完整下载" : ["local", "local-bluray"].includes(x.SourceMode) ? "本地镜像按需读取" : x.SourceMode === "cache" ? "完整镜像缓存" : "网页播放缓存"}${x.Stream ? "<small>实时输出，不缓存视频</small>" : ""}${x.FallbackReason ? `<small>${esc(x.FallbackReason)}</small>` : ""}</td><td>${date(x.Updated)}</td><td>${x.Paused ? "已暂停" : states[x.State] || (x.Active ? "使用中" : "空闲")}</td><td><div class="feature-actions">${!x.Done && x.State && !["interrupted", "stopping", "deleting"].includes(x.State) ? `<button class="secondary" data-playback-control="${x.ID}" data-action="${x.Paused ? "resume" : "pause"}">${x.Paused ? "继续" : "暂停"}</button><button class="secondary" data-playback-control="${x.ID}" data-action="stop">停止</button>` : ""}${x.State ? `<button class="secondary" data-playback-control="${x.ID}" data-action="delete" ${x.State === "deleting" ? "disabled" : ""}>删除任务和缓存</button>` : `<button class="secondary" data-cache="${x.ID}" ${x.Active ? "disabled" : ""}>删除缓存</button>`}</div></td></tr>`,
+              `<tr><td>${esc(x.Name || x.ID)}${x.Error ? `<small>${esc(x.Error)}</small>` : ""}</td><td>${bytes(x.Size)}${x.State === "caching" && x.Total > 0 ? `<small>镜像下载 ${Math.min(100, Math.floor(x.Downloaded / x.Total * 100))}%</small>` : ""}</td><td>${["range", "range-bluray"].includes(x.SourceMode) ? "按需读取，无需完整下载" : ["local", "local-bluray"].includes(x.SourceMode) ? "本地镜像按需读取" : x.SourceMode === "cache" ? "完整镜像缓存" : "网页播放缓存"}${x.HLS ? "<small>按需生成片段，不缓存整部视频</small>" : x.Stream ? "<small>实时输出，不缓存视频</small>" : ""}${x.FallbackReason ? `<small>${esc(x.FallbackReason)}</small>` : ""}</td><td>${date(x.Updated)}</td><td>${x.Paused ? "已暂停" : states[x.State] || (x.Active ? "使用中" : "空闲")}</td><td><div class="feature-actions">${!x.Done && x.State && !["interrupted", "stopping", "deleting"].includes(x.State) ? `<button class="secondary" data-playback-control="${x.ID}" data-action="${x.Paused ? "resume" : "pause"}">${x.Paused ? "继续" : "暂停"}</button><button class="secondary" data-playback-control="${x.ID}" data-action="stop">停止</button>` : ""}${x.State ? `<button class="secondary" data-playback-control="${x.ID}" data-action="delete" ${x.State === "deleting" ? "disabled" : ""}>删除任务和缓存</button>` : `<button class="secondary" data-cache="${x.ID}" ${x.Active ? "disabled" : ""}>删除缓存</button>`}</div></td></tr>`,
           ),
         )}`;
         const clean = async (data) => {

@@ -251,6 +251,8 @@ func (a *App) featureRoute(w http.ResponseWriter, r *http.Request, user User) bo
 		a.featurePlaybackEvent(w, r, user)
 	case path == "/features/playback":
 		a.featurePlaybackAPI(w, r, user)
+	case strings.HasPrefix(path, "/features/hls/"):
+		a.featureHLS(w, r, user)
 	case path == "/features/playback-inspect":
 		a.featureInspectPlayback(w, r, user)
 	case path == "/features/playback-status":

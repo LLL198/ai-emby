@@ -130,7 +130,7 @@ const WebPlayer = (() => {
     video.defaultPlaybackRate = video.playbackRate = state.rate;
     video.style.objectFit = state.fit; speed.value = String(state.rate);
     const save = () => { try { localStorage.setItem(preferenceKey, JSON.stringify(state)); } catch {} };
-    const total = () => Math.max(Number(options.source?.RunTimeTicks || item.RunTimeTicks || 0) / 1e7, Number.isFinite(video.duration) ? video.duration + Number(video.dataset.offset || 0) : 0);
+    const total = () => Number(video.dataset.fullDuration || 0) || Math.max(Number(options.source?.RunTimeTicks || item.RunTimeTicks || 0) / 1e7, Number.isFinite(video.duration) ? video.duration + Number(video.dataset.offset || 0) : 0);
     function reveal() {
       root.classList.remove("watch-idle"); clearTimeout(idleTimer);
       if (!video.paused && !activePanel) idleTimer = setTimeout(() => {
@@ -163,7 +163,7 @@ const WebPlayer = (() => {
         for (let i=0; i<video.buffered.length; i++) {
           if (local >= video.buffered.start(i) && local < video.buffered.end(i)-0.1) buffered = true;
         }
-        if (video.dataset.stream === "true" || !buffered || video.dataset.pendingSeek != null) {
+        if (video.dataset.hls === "true" || video.dataset.stream === "true" || !buffered || video.dataset.pendingSeek != null) {
           run(() => video.webTranscodeSeek(position))();
           reveal();
           return;
@@ -175,7 +175,7 @@ const WebPlayer = (() => {
       reveal();
     }
     function update() {
-      const position = featurePlaybackPosition(video), duration = total();
+      const duration = total(), position = finished ? duration : featurePlaybackPosition(video);
       progress.max = String(duration); progress.min = video.webTranscodeSeek ? "0" : String(Number(video.dataset.offset || 0));
       progress.disabled = finished || !duration || (video.readyState < 1 && !video.webTranscodeSeek);
       if (!dragging) { progress.value = String(position); clock.textContent = `${time(position)} / ${time(duration)}`; }

@@ -262,10 +262,11 @@ func (reader *isoJoinedReader) ReadAt(data []byte, offset int64) (int, error) {
 }
 
 type isoOnlineInput struct {
-	URL   string
-	Args  []string
-	Mode  string
-	close func()
+	URL    string
+	Args   []string
+	Mode   string
+	close  func()
+	native *isoNativeReader
 }
 
 type isoLocalReader struct {

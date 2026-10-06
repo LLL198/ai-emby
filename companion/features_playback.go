@@ -55,8 +55,10 @@ type featureTranscode struct {
 	Paused                           bool
 	Downloaded, Total                int64
 	Stream                           bool
+	HLS                              bool
 	Start                            float64
 	stream                           *playbackStream
+	hls                              *hlsPlayback
 	cancel                           context.CancelFunc
 	control                          *playbackTaskControl
 	finished                         chan struct{}
@@ -412,11 +414,14 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 		return
 	}
 	var request struct {
-		ID      string
-		Audio   int
-		Start   float64
-		Session string
-		Stream  bool
+		ID             string
+		Audio          int
+		Start          float64
+		Session        string
+		Stream         bool
+		HLS            bool
+		VideoCodecs    []string
+		ForceTranscode bool
 	}
 	request.Audio = -1
 	if !body(w, r, &request) {
@@ -444,11 +449,21 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 		fail(w, 400, "播放参数无效")
 		return
 	}
+	if len(request.VideoCodecs) > 2 || (request.HLS && request.Stream) {
+		fail(w, 400, "播放参数无效")
+		return
+	}
+	for _, codec := range request.VideoCodecs {
+		if codec != "hevc" && codec != "hevc10" {
+			fail(w, 400, "播放编码参数无效")
+			return
+		}
+	}
 	if duration := catalogDTOFloat(a.cachedMedia(x)["RunTimeTicks"]) / 1e7; duration > 0 && request.Start >= duration {
 		request.Start = 0
 	}
 	// Live output is consumed once; callers without a session also need a fresh stream.
-	if request.Stream && request.Session == "" {
+	if (request.Stream || request.HLS) && request.Session == "" {
 		request.Session = id()
 	}
 	input, err := a.featureRawMediaInput(x)
@@ -526,13 +541,16 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 		}
 		ctx, cancel := context.WithCancel(a.features.ctx)
 		job = &featureTranscode{ID: key, Item: x.ID, Owner: user.ID, Name: x.Name, Directory: dir, Started: time.Now(), Used: time.Now(), State: "queued", Stream: request.Stream, Start: request.Start, cancel: cancel, control: newPlaybackTaskControl(), finished: make(chan struct{})}
-		if request.Stream {
+		job.HLS = request.HLS
+		if request.HLS {
+			job.hls = newHLSPlayback(ctx)
+		} else if request.Stream {
 			job.stream = newPlaybackStream(ctx)
 		}
 		a.features.transcodes[key] = job
 		if data, e := os.ReadFile(filepath.Join(dir, "record.json")); e == nil {
 			var record featureTranscode
-			if !request.Stream && json.Unmarshal(data, &record) == nil && record.Done && record.Error == "" && playbackFileReady(filepath.Join(dir, "video.mp4")) {
+			if !request.HLS && !request.Stream && json.Unmarshal(data, &record) == nil && record.Done && record.Error == "" && playbackFileReady(filepath.Join(dir, "video.mp4")) {
 				job.Done, job.State = true, "complete"
 				job.SourceMode, job.FallbackReason = record.SourceMode, record.FallbackReason
 			}
@@ -559,7 +577,7 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 						a.features.cacheMu.Lock()
 						job.SourceMode = online.Mode
 						a.features.cacheMu.Unlock()
-					} else if ctx.Err() == nil {
+					} else if ctx.Err() == nil && !request.HLS {
 						a.features.cacheMu.Lock()
 						job.SourceMode = "cache"
 						job.FallbackReason = "镜像结构暂不支持在线解析"
@@ -577,89 +595,93 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 					}
 				}
 				if err == nil {
-					copyVideo := false
-					// A timed restart is accurately decoded, so probing for video copy
-					// cannot help it and would read the movie start and tail again.
-					if online != nil && (!request.Stream || start == 0) {
-						probeCtx, probeCancel := playbackTaskTimeout(ctx, job.control, 20*time.Second)
-						probeArgs := append([]string{"-v", "error"}, featureInputArgs(input)...)
-						probeArgs = append(probeArgs, online.Args...)
-						probeArgs = append(probeArgs, "-i", input, "-show_streams", "-show_format", "-of", "json")
-						var probe struct {
-							Format struct {
-								Duration string `json:"duration"`
+					if request.HLS {
+						err = a.runHLSPlayback(ctx, input, online, job, request.Audio, request.VideoCodecs, request.ForceTranscode, catalogDTOFloat(a.cachedMedia(x)["RunTimeTicks"])/1e7, c)
+					} else {
+						copyVideo := false
+						// A timed restart is accurately decoded, so probing for video copy
+						// cannot help it and would read the movie start and tail again.
+						if online != nil && (!request.Stream || start == 0) {
+							probeCtx, probeCancel := playbackTaskTimeout(ctx, job.control, 20*time.Second)
+							probeArgs := append([]string{"-v", "error"}, featureInputArgs(input)...)
+							probeArgs = append(probeArgs, online.Args...)
+							probeArgs = append(probeArgs, "-i", input, "-show_streams", "-show_format", "-of", "json")
+							var probe struct {
+								Format struct {
+									Duration string `json:"duration"`
+								}
+								Streams []struct {
+									CodecType   string `json:"codec_type"`
+									CodecName   string `json:"codec_name"`
+									PixelFormat string `json:"pix_fmt"`
+								}
 							}
-							Streams []struct {
-								CodecType   string `json:"codec_type"`
-								CodecName   string `json:"codec_name"`
-								PixelFormat string `json:"pix_fmt"`
+							var output transferLogBuffer
+							probeCommand := exec.CommandContext(probeCtx, "ffprobe", probeArgs...)
+							probeCommand.Stdout = &output
+							probeErr := job.control.run(probeCtx, probeCommand)
+							if probeErr == nil {
+								probeErr = json.Unmarshal(output.Bytes(), &probe)
 							}
-						}
-						var output transferLogBuffer
-						probeCommand := exec.CommandContext(probeCtx, "ffprobe", probeArgs...)
-						probeCommand.Stdout = &output
-						probeErr := job.control.run(probeCtx, probeCommand)
-						if probeErr == nil {
-							probeErr = json.Unmarshal(output.Bytes(), &probe)
-						}
-						if probeErr == nil {
-							if duration, e := strconv.ParseFloat(probe.Format.Duration, 64); e == nil && duration > 0 && start >= duration {
-								start = 0
-								a.features.cacheMu.Lock()
-								job.Start = 0
-								a.features.cacheMu.Unlock()
+							if probeErr == nil {
+								if duration, e := strconv.ParseFloat(probe.Format.Duration, 64); e == nil && duration > 0 && start >= duration {
+									start = 0
+									a.features.cacheMu.Lock()
+									job.Start = 0
+									a.features.cacheMu.Unlock()
+								}
 							}
-						}
-						probeCancel()
-						if probeErr == nil {
-							for _, stream := range probe.Streams {
-								if stream.CodecType == "video" {
-									copyVideo = start == 0 && stream.CodecName == "h264" && (stream.PixelFormat == "yuv420p" || stream.PixelFormat == "yuvj420p")
-									break
+							probeCancel()
+							if probeErr == nil {
+								for _, stream := range probe.Streams {
+									if stream.CodecType == "video" {
+										copyVideo = start == 0 && stream.CodecName == "h264" && (stream.PixelFormat == "yuv420p" || stream.PixelFormat == "yuvj420p")
+										break
+									}
 								}
 							}
 						}
-					}
-					a.features.cacheMu.Lock()
-					job.State = "transcoding"
-					if copyVideo {
-						job.State = "remuxing"
-					}
-					a.features.cacheMu.Unlock()
-					args := append([]string{"-v", "error", "-nostdin", "-y"}, featureInputArgs(input)...)
-					if online != nil {
-						args = append(args, online.Args...)
-					}
-					args = append(args, "-ss", strconv.FormatFloat(start, 'f', 3, 64), "-i", input, "-map", "0:v:0")
-					audio := "0:a:0?"
-					if request.Audio >= 0 {
-						audio = "0:" + strconv.Itoa(request.Audio)
-					}
-					args = append(args, "-map", audio)
-					if copyVideo {
-						args = append(args, "-c:v", "copy")
-					} else {
-						args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-threads", strconv.Itoa(c.Threads), "-b:v", strconv.Itoa(c.Bitrate)+"k")
-						if request.Stream {
-							args = append(args, "-vf", "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", "-tune", "zerolatency", "-force_key_frames", "expr:gte(t,n_forced*2)")
+						a.features.cacheMu.Lock()
+						job.State = "transcoding"
+						if copyVideo {
+							job.State = "remuxing"
 						}
-					}
-					args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-movflags", "+frag_keyframe+empty_moov+default_base_moof")
-					output := filepath.Join(dir, "video.mp4")
-					if request.Stream {
-						output = "pipe:1"
-						args = append(args, "-frag_duration", "1000000", "-flush_packets", "1")
-					}
-					args = append(args, "-f", "mp4", output)
-					command := exec.CommandContext(ctx, "ffmpeg", args...)
-					if job.stream != nil {
-						command.Stdout = job.stream
-					}
-					if job.control.run(ctx, command) != nil {
-						err = errors.New("转码失败，请检查媒体源、音轨或 FFmpeg 支持")
-					}
-					if err == nil && ((job.stream != nil && !job.stream.ready.Load()) || (job.stream == nil && !playbackFileReady(output))) {
-						err = errPlaybackEmpty
+						a.features.cacheMu.Unlock()
+						args := append([]string{"-v", "error", "-nostdin", "-y"}, featureInputArgs(input)...)
+						if online != nil {
+							args = append(args, online.Args...)
+						}
+						args = append(args, "-ss", strconv.FormatFloat(start, 'f', 3, 64), "-i", input, "-map", "0:v:0")
+						audio := "0:a:0?"
+						if request.Audio >= 0 {
+							audio = "0:" + strconv.Itoa(request.Audio)
+						}
+						args = append(args, "-map", audio)
+						if copyVideo {
+							args = append(args, "-c:v", "copy")
+						} else {
+							args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-threads", strconv.Itoa(c.Threads), "-b:v", strconv.Itoa(c.Bitrate)+"k")
+							if request.Stream {
+								args = append(args, "-vf", "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2", "-tune", "zerolatency", "-force_key_frames", "expr:gte(t,n_forced*2)")
+							}
+						}
+						args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k", "-movflags", "+frag_keyframe+empty_moov+default_base_moof")
+						output := filepath.Join(dir, "video.mp4")
+						if request.Stream {
+							output = "pipe:1"
+							args = append(args, "-frag_duration", "1000000", "-flush_packets", "1")
+						}
+						args = append(args, "-f", "mp4", output)
+						command := exec.CommandContext(ctx, "ffmpeg", args...)
+						if job.stream != nil {
+							command.Stdout = job.stream
+						}
+						if job.control.run(ctx, command) != nil {
+							err = errors.New("转码失败，请检查媒体源、音轨或 FFmpeg 支持")
+						}
+						if err == nil && ((job.stream != nil && !job.stream.ready.Load()) || (job.stream == nil && !playbackFileReady(output))) {
+							err = errPlaybackEmpty
+						}
 					}
 				}
 				a.features.cacheMu.Lock()
@@ -687,7 +709,11 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 	job.heartbeat = job.Used
 	snapshot := *job
 	a.features.cacheMu.Unlock()
-	respond(w, M{"ID": key, "URL": "/features/stream/" + key + "/video.mp4", "Done": snapshot.Done, "Error": snapshot.Error, "Start": snapshot.Start, "Stream": snapshot.Stream})
+	address := "/features/stream/" + key + "/video.mp4"
+	if snapshot.HLS {
+		address = "/features/hls/" + key + "/master.m3u8"
+	}
+	respond(w, M{"ID": key, "URL": address, "Done": snapshot.Done, "Error": snapshot.Error, "Start": snapshot.Start, "Stream": snapshot.Stream, "HLS": snapshot.HLS})
 }
 
 func (a *App) featureStream(w http.ResponseWriter, r *http.Request, user User) {
