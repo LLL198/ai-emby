@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -19,7 +20,11 @@ import (
 	"golift.io/udf"
 )
 
-const isoRangeBlock = 256 << 10
+const (
+	isoRangeBlock      = 256 << 10
+	isoStreamBlock     = 4 << 20
+	isoRangeCacheBytes = 8 << 20
+)
 
 var errISORangeUnavailable = errors.New("镜像源不支持可靠的分段读取")
 
@@ -27,6 +32,7 @@ var errISORangeUnavailable = errors.New("镜像源不支持可靠的分段读取
 type isoRangeReader struct {
 	ctx        context.Context
 	input      string
+	local      io.ReaderAt
 	size       int64
 	mu         sync.Mutex
 	blocks     map[int64]*list.Element
@@ -47,42 +53,64 @@ func newISORangeReader(ctx context.Context, input string, size int64) *isoRangeR
 
 func (reader *isoRangeReader) Size() int64 { return reader.size }
 
+func (reader *isoRangeReader) blockSize() int64 {
+	if reader.metadata {
+		return isoRangeBlock
+	}
+	return isoStreamBlock
+}
+
+func (reader *isoRangeReader) startStreaming(ctx context.Context) {
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	reader.metadata, reader.ctx = false, ctx
+	// The same offset now identifies a larger block. Never reuse a short metadata block.
+	reader.blocks = map[int64]*list.Element{}
+	reader.order.Init()
+}
+
 func (reader *isoRangeReader) block(offset int64) ([]byte, error) {
 	if cached := reader.blocks[offset]; cached != nil {
 		reader.order.MoveToFront(cached)
 		return cached.Value.(isoRangeCacheBlock).data, nil
 	}
-	length := min(int64(isoRangeBlock), reader.size-offset)
+	length := min(reader.blockSize(), reader.size-offset)
 	if length <= 0 {
 		return nil, io.EOF
 	}
 	if reader.metadata && reader.downloaded+length > 8<<20 {
 		return nil, errors.New("镜像目录过大，无法在线读取")
 	}
-	ctx, cancel := context.WithTimeout(reader.ctx, 30*time.Second)
-	defer cancel()
-	response, err := isoSourceRequest(ctx, reader.input, fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	var start, end, total int64
-	if response.StatusCode != http.StatusPartialContent {
-		return nil, errISORangeUnavailable
-	}
-	if _, err := fmt.Sscanf(response.Header.Get("Content-Range"), "bytes %d-%d/%d", &start, &end, &total); err != nil ||
-		start != offset || end != offset+length-1 || total != reader.size ||
-		(response.ContentLength >= 0 && response.ContentLength != length) {
-		return nil, errISORangeUnavailable
-	}
 	data := make([]byte, length)
-	if _, err := io.ReadFull(response.Body, data); err != nil {
-		return nil, errors.New("镜像分段读取未完成")
+	if reader.local != nil {
+		if _, err := io.ReadFull(io.NewSectionReader(reader.local, offset, length), data); err != nil {
+			return nil, errors.New("本地镜像分段读取未完成")
+		}
+	} else {
+		ctx, cancel := context.WithTimeout(reader.ctx, 30*time.Second)
+		defer cancel()
+		response, err := isoSourceRequest(ctx, reader.input, fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
+		if err != nil {
+			return nil, err
+		}
+		defer response.Body.Close()
+		var start, end, total int64
+		if response.StatusCode != http.StatusPartialContent {
+			return nil, errISORangeUnavailable
+		}
+		if _, err := fmt.Sscanf(response.Header.Get("Content-Range"), "bytes %d-%d/%d", &start, &end, &total); err != nil ||
+			start != offset || end != offset+length-1 || total != reader.size ||
+			(response.ContentLength >= 0 && response.ContentLength != length) {
+			return nil, errISORangeUnavailable
+		}
+		if _, err := io.ReadFull(response.Body, data); err != nil {
+			return nil, errors.New("镜像分段读取未完成")
+		}
 	}
 	reader.downloaded += length
 	entry := reader.order.PushFront(isoRangeCacheBlock{offset: offset, data: data})
 	reader.blocks[offset] = entry
-	if reader.order.Len() > 16 {
+	if reader.order.Len() > isoRangeCacheBytes/int(reader.blockSize()) {
 		old := reader.order.Back()
 		delete(reader.blocks, old.Value.(isoRangeCacheBlock).offset)
 		reader.order.Remove(old)
@@ -113,7 +141,8 @@ func (reader *isoRangeReader) ReadAt(data []byte, offset int64) (int, error) {
 		if err := reader.control.wait(reader.ctx); err != nil {
 			return read, err
 		}
-		base := offset / isoRangeBlock * isoRangeBlock
+		blockSize := reader.blockSize()
+		base := offset / blockSize * blockSize
 		block, err := reader.block(base)
 		if err != nil {
 			return read, err
@@ -235,7 +264,19 @@ func (reader *isoJoinedReader) ReadAt(data []byte, offset int64) (int, error) {
 type isoOnlineInput struct {
 	URL   string
 	Args  []string
+	Mode  string
 	close func()
+}
+
+type isoLocalReader struct {
+	file   *os.File
+	cached *isoRangeReader
+}
+
+func (reader *isoLocalReader) Size() int64 { return reader.cached.Size() }
+
+func (reader *isoLocalReader) ReadAt(data []byte, offset int64) (int, error) {
+	return reader.cached.ReadAt(data, offset)
 }
 
 type isoPlaylistClip struct {
@@ -262,9 +303,10 @@ func isoBluRayPlaylist(data []byte, directory string, files map[string]isoStream
 	}
 	end := start + 4 + length
 	count := int(binary.BigEndian.Uint16(data[start+6 : start+8]))
-	if count < 1 || count > 1024 || binary.BigEndian.Uint16(data[start+8:start+10]) != 0 {
+	if count < 1 || count > 1024 {
 		return nil, 0, invalid
 	}
+	unsupported := binary.BigEndian.Uint16(data[start+8:start+10]) != 0
 	position := start + 10
 	var clips []isoPlaylistClip
 	var duration float64
@@ -277,22 +319,23 @@ func isoBluRayPlaylist(data []byte, directory string, files map[string]isoStream
 			return nil, 0, invalid
 		}
 		item := data[position+2 : position+2+length]
-		if string(item[5:9]) != "M2TS" || strings.Trim(string(item[:5]), "0123456789") != "" || item[10]&0x10 != 0 {
+		if string(item[5:9]) != "M2TS" || strings.Trim(string(item[:5]), "0123456789") != "" {
 			return nil, 0, invalid
 		}
 		file, ok := files[strings.ToUpper(path.Join(directory, "STREAM", string(item[:5])+".m2ts"))]
-		if !ok {
-			return nil, 0, invalid
-		}
 		in := float64(binary.BigEndian.Uint32(item[12:16])) / 45000
 		out := float64(binary.BigEndian.Uint32(item[16:20])) / 45000
-		// Still frames and interactive navigation need the complete disc reader.
-		if out <= in || item[29] != 0 {
+		if out <= in {
 			return nil, 0, invalid
 		}
+		// Rank unsupported titles too, so a short trailer cannot replace a complex main movie.
+		unsupported = unsupported || !ok || item[10]&0x10 != 0 || item[29] != 0
 		clips = append(clips, isoPlaylistClip{file: file, in: in, out: out})
 		duration += out - in
 		position += 2 + length
+	}
+	if unsupported {
+		return nil, duration, invalid
 	}
 	return clips, duration, nil
 }
@@ -307,6 +350,7 @@ func isoBluRayMain(files map[string]isoStreamFile) ([]isoPlaylistClip, error) {
 	sort.Strings(names)
 	var selected []isoPlaylistClip
 	var longest float64
+	var selectedErr error
 	for _, name := range names {
 		file := files[name]
 		data := make([]byte, file.size)
@@ -314,17 +358,28 @@ func isoBluRayMain(files map[string]isoStreamFile) ([]isoPlaylistClip, error) {
 			return nil, err
 		}
 		clips, duration, err := isoBluRayPlaylist(data, path.Dir(path.Dir(file.name)), files)
-		if err != nil {
-			return nil, err
+		// Discs also contain menu/still/PiP playlists. Only the main title must be readable.
+		if duration > longest || (duration == longest && selectedErr != nil && err == nil) {
+			selected, longest, selectedErr = clips, duration, err
 		}
-		if duration > longest {
-			selected, longest = clips, duration
-		}
+	}
+	if selectedErr != nil {
+		return nil, selectedErr
 	}
 	if len(selected) == 0 {
 		return nil, errors.New("蓝光镜像中没有可在线读取的正片播放列表")
 	}
 	return selected, nil
+}
+
+func isoBluRayNavigation(files map[string]isoStreamFile) bool {
+	for name := range files {
+		if strings.HasSuffix(name, "BDMV/INDEX.BDMV") ||
+			(strings.Contains(name, "BDMV/CLIPINF/") && strings.HasSuffix(name, ".CLPI")) {
+			return true
+		}
+	}
+	return false
 }
 
 // The virtual movie is reachable only through a random path on a temporary loopback listener.
@@ -392,7 +447,7 @@ func serveISOOnline(ctx context.Context, movie *isoJoinedReader, clips []isoPlay
 }
 
 func (a *App) prepareISOOnline(ctx context.Context, input string, info isoMediaInfo, job *featureTranscode) (*isoOnlineInput, error) {
-	if !strings.HasPrefix(input, "http") || info.Size <= 0 {
+	if info.Size <= 0 {
 		return nil, errISORangeUnavailable
 	}
 	a.features.cacheMu.Lock()
@@ -400,26 +455,71 @@ func (a *App) prepareISOOnline(ctx context.Context, input string, info isoMediaI
 	a.features.cacheMu.Unlock()
 	metadataCtx, cancel := playbackTaskTimeout(ctx, job.control, 30*time.Second)
 	defer cancel()
-	reader := newISORangeReader(metadataCtx, input, info.Size)
-	reader.control = job.control
-	files, err := isoUDFFiles(reader)
-	if err != nil {
-		return nil, err
+	var source io.ReaderAt
+	var remote *isoRangeReader
+	var local *isoLocalReader
+	if strings.HasPrefix(input, "http") {
+		remote = newISORangeReader(metadataCtx, input, info.Size)
+		remote.control = job.control
+		source = remote
+	} else {
+		file, err := os.Open(input)
+		if err != nil {
+			return nil, err
+		}
+		cached := newISORangeReader(metadataCtx, "", info.Size)
+		cached.local, cached.control = file, job.control
+		local = &isoLocalReader{file: file, cached: cached}
+		source = local
 	}
+	keepLocal := false
+	defer func() {
+		if local != nil && !keepLocal {
+			_ = local.file.Close()
+		}
+	}()
+	files, err := isoUDFFiles(source)
 	listing := make([]isoArchiveFile, 0, len(files))
 	for _, file := range files {
 		listing = append(listing, isoArchiveFile{Path: file.name, Size: file.size})
 	}
 	selected, bluray := isoMainFiles(listing)
 	var clips []isoPlaylistClip
-	if bluray {
+	if err == nil && bluray {
 		clips, err = isoBluRayMain(files)
+	}
+	if err == nil && len(selected) == 0 && len(clips) == 0 {
+		err = errors.New("光盘中没有找到正片视频")
+	}
+	var online *isoOnlineInput
+	native := false
+	if err != nil || (bluray && isoBluRayNavigation(files)) {
+		if errors.Is(err, errISORangeUnavailable) {
+			return nil, err
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		// A mature reader handles metadata partitions and complex primary playlists before
+		// considering a complete-image download. CLPI navigation also avoids timestamp gaps
+		// when an authored linear playlist has preroll or different stream start times.
+		nativeCtx, nativeCancel := playbackTaskTimeout(ctx, job.control, 60*time.Second)
+		defer nativeCancel()
+		if remote != nil {
+			remote.mu.Lock()
+			remote.ctx, remote.downloaded = nativeCtx, 0
+			remote.mu.Unlock()
+		} else {
+			local.cached.mu.Lock()
+			local.cached.ctx, local.cached.downloaded = nativeCtx, 0
+			local.cached.mu.Unlock()
+		}
+		online, err = prepareISOBluRay(ctx, nativeCtx, source, info.Size, job.control)
 		if err != nil {
 			return nil, err
 		}
-	}
-	if len(selected) == 0 && len(clips) == 0 {
-		return nil, errors.New("光盘中没有找到正片视频")
+		native = true
+		selected = nil
 	}
 	movie := &isoJoinedReader{}
 	for _, entry := range selected {
@@ -431,9 +531,42 @@ func (a *App) prepareISOOnline(ctx context.Context, input string, info isoMediaI
 		movie.size += file.size
 	}
 	// Directory parsing is bounded; subsequent movie reads may stream for the whole playback.
-	reader.mu.Lock()
-	reader.metadata = false
-	reader.ctx = ctx
-	reader.mu.Unlock()
-	return serveISOOnline(ctx, movie, clips)
+	if remote != nil {
+		remote.startStreaming(ctx)
+	} else {
+		local.cached.startStreaming(ctx)
+	}
+	if online == nil {
+		online, err = serveISOOnline(ctx, movie, clips)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if local != nil {
+		online.Mode = "local"
+		keepLocal = true
+		closeServer := online.close
+		closed := make(chan struct{})
+		var once sync.Once
+		online.close = func() {
+			once.Do(func() {
+				closeServer()
+				_ = local.file.Close()
+				close(closed)
+			})
+		}
+		go func() {
+			select {
+			case <-ctx.Done():
+				online.close()
+			case <-closed:
+			}
+		}()
+	} else {
+		online.Mode = "range"
+	}
+	if native {
+		online.Mode += "-bluray"
+	}
+	return online, nil
 }

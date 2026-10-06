@@ -540,7 +540,7 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 						input = online.URL
 						defer online.close()
 						a.features.cacheMu.Lock()
-						job.SourceMode = "range"
+						job.SourceMode = online.Mode
 						a.features.cacheMu.Unlock()
 					} else if ctx.Err() == nil {
 						a.features.cacheMu.Lock()
@@ -551,6 +551,9 @@ func (a *App) featurePlaybackAPI(w http.ResponseWriter, r *http.Request, user Us
 						}
 						if errors.Is(err, context.DeadlineExceeded) {
 							job.FallbackReason = "在线读取镜像目录超时"
+						}
+						if errors.Is(err, errISODiscReaderUnavailable) {
+							job.FallbackReason = "蓝光按需读盘组件未安装"
 						}
 						a.features.cacheMu.Unlock()
 						input, err = a.prepareISOPlayback(ctx, input, dir, isoInfo, job)

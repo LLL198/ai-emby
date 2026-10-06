@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -60,6 +61,46 @@ func TestISORangeReaderRejectsIgnoredOrWrongRanges(t *testing.T) {
 				t.Fatalf("unreliable range accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestISORangeReaderStreamsLargeBlocksWithoutReusingMetadata(t *testing.T) {
+	data := bytes.Repeat([]byte("stream-data"), (3*isoStreamBlock+4096)/len("stream-data")+1)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.ServeContent(w, r, "disc.iso", time.Time{}, bytes.NewReader(data))
+	}))
+	defer server.Close()
+	metadataCtx, cancel := context.WithCancel(context.Background())
+	reader := newISORangeReader(metadataCtx, server.URL, int64(len(data)))
+	if _, err := reader.ReadAt(make([]byte, 16), 0); err != nil {
+		t.Fatal(err)
+	}
+	reader.startStreaming(context.Background())
+	cancel()
+	buffer := make([]byte, 32<<10)
+	// A metadata-sized cache entry at zero used to cause a zero-copy loop after a block-size change.
+	for offset := int64(0); offset < 3*isoStreamBlock; offset += int64(len(buffer)) {
+		if n, err := reader.ReadAt(buffer, offset); err != nil || n != len(buffer) || !bytes.Equal(buffer, data[offset:offset+int64(n)]) {
+			t.Fatalf("movie read at %d: %d %v", offset, n, err)
+		}
+	}
+	if calls.Load() != 4 {
+		t.Fatalf("12 MiB should need three movie requests and one metadata request, got %d", calls.Load())
+	}
+	var cached int
+	for _, entry := range reader.blocks {
+		cached += len(entry.Value.(isoRangeCacheBlock).data)
+	}
+	if cached > isoRangeCacheBytes {
+		t.Fatalf("movie memory cache exceeded limit: %d", cached)
+	}
+	// Probe/seeking can revisit an evicted block or the short final block.
+	for _, offset := range []int64{0, int64(len(data) - len(buffer))} {
+		if n, err := reader.ReadAt(buffer, offset); err != nil || !bytes.Equal(buffer[:n], data[offset:offset+int64(n)]) {
+			t.Fatalf("seek at %d: %d %v", offset, n, err)
+		}
 	}
 }
 
@@ -145,5 +186,37 @@ func TestISOBluRayPlaylistOrderTimesAndUnsupportedNavigation(t *testing.T) {
 		if _, _, err := isoBluRayPlaylist(data, "BDMV", files); err == nil {
 			t.Fatal("unsupported playlist silently played as a different movie")
 		}
+	}
+}
+
+func TestISOBluRayMainIgnoresMenusAndKeepsLongestTitle(t *testing.T) {
+	main := isoTestPlaylist("00001", "00002")
+	menu := isoTestPlaylist("00001")
+	menu[81] = 1 // still_mode in the first play item
+	files := map[string]isoStreamFile{
+		"BDMV/STREAM/00001.M2TS": {name: "BDMV/STREAM/00001.m2ts", size: 1000},
+		"BDMV/STREAM/00002.M2TS": {name: "BDMV/STREAM/00002.m2ts", size: 1000},
+	}
+	add := func(name string, data []byte) {
+		files[name] = isoStreamFile{name: name, size: int64(len(data)), reader: bytes.NewReader(data)}
+	}
+	add("BDMV/PLAYLIST/00000.MPLS", []byte("broken menu"))
+	add("BDMV/PLAYLIST/00001.MPLS", menu)
+	add("BDMV/PLAYLIST/00002.MPLS", main)
+	clips, err := isoBluRayMain(files)
+	if err != nil || len(clips) != 2 {
+		t.Fatalf("an unrelated menu prevented main-title playback: %+v %v", clips, err)
+	}
+	// A complex main title must still fall back, instead of silently playing a shorter trailer.
+	binary.BigEndian.PutUint32(menu[68:], 630*45000)
+	add("BDMV/PLAYLIST/00001.MPLS", menu)
+	if clips, err := isoBluRayMain(files); err == nil || len(clips) != 0 {
+		t.Fatalf("a short trailer replaced the unsupported main title: %+v %v", clips, err)
+	}
+	// Alternate editions of the same duration can use a supported primary playlist.
+	binary.BigEndian.PutUint32(menu[68:], 612*45000)
+	add("BDMV/PLAYLIST/00001.MPLS", menu)
+	if clips, err := isoBluRayMain(files); err != nil || len(clips) != 2 {
+		t.Fatalf("supported equal-duration title was rejected: %+v %v", clips, err)
 	}
 }

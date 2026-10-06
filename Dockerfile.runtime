@@ -1,6 +1,15 @@
 ARG RUNTIME_BASE=postgres:17-bookworm
+FROM debian:bookworm AS disc-reader-build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc pkg-config libbluray-dev libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY frontend/.release/disc-reader/ /src/disc-reader/
+RUN cc -std=c11 -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2 -fstack-protector-strong \
+    -Wl,-z,relro,-z,now -o /ai-emby-disc-reader /src/disc-reader/reader.c $(pkg-config --cflags --libs libbluray libcurl)
+
 FROM ${RUNTIME_BASE}
 USER root
+RUN apt-get update && apt-get install -y --no-install-recommends libbluray2 libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
 RUN if ! command -v ffmpeg >/dev/null || ! command -v wget >/dev/null || ! command -v 7z >/dev/null; then \
       apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg p7zip-full \
       && rm -rf /var/lib/apt/lists/*; fi \
@@ -11,6 +20,7 @@ COPY bin/go-emby-scraper /usr/local/bin/ai-emby-worker
 COPY bin/scraper-gateway /usr/local/bin/ai-emby-gateway
 COPY frontend/ /app/frontend/
 COPY frontend/.release/ai-emby-cloud-engine /usr/local/bin/ai-emby-cloud-engine
+COPY --from=disc-reader-build /ai-emby-disc-reader /usr/local/bin/
 COPY frontend/.release/third_party/ /app/third_party/
 COPY VERSION /app/VERSION
 COPY runtime-provenance.json /app/runtime-provenance.json

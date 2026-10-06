@@ -64,6 +64,12 @@ jobs:
       - name: Publish image
         run: |
           docker build -t "ghcr.io/lll198/ai-emby:$VERSION" -t ghcr.io/lll198/ai-emby:latest "dist/$VERSION/bundle"
+          if [ -f "dist/$VERSION/bundle/frontend/.release/disc-reader/reader.c" ]; then
+            status=0
+            docker run --rm --entrypoint /usr/local/bin/ai-emby-disc-reader "ghcr.io/lll198/ai-emby:$VERSION" || status=$?
+            # Invalid arguments return 2 only after the dynamic runtime has loaded successfully.
+            [ "$status" -eq 2 ]
+          fi
           docker push "ghcr.io/lll198/ai-emby:$VERSION"
           docker push ghcr.io/lll198/ai-emby:latest
       - name: Publish release

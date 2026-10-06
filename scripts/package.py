@@ -50,6 +50,7 @@ def package_cloud_engine(output, stage):
         with bundle.extractfile(members[0]) as source, (distribution / "ai-emby-cloud-engine").open("wb") as target:
             shutil.copyfileobj(source, target)
     shutil.copytree(ROOT / "third_party", distribution / "third_party")
+    shutil.copytree(ROOT / "disc-reader", distribution / "disc-reader")
 
 
 def main():

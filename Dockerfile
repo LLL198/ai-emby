@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM postgres:17-bookworm AS runtime-base
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg p7zip-full \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget ffmpeg p7zip-full libbluray2 libcurl4 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app/data /app/backups /app/update-control /media /run/secrets
 
@@ -10,6 +10,13 @@ WORKDIR /out
 RUN wget -q --timeout=60 --tries=4 -O openlist.tar.gz https://github.com/OpenListTeam/OpenList/releases/download/v4.2.6/openlist-linux-amd64-lite.tar.gz \
     && echo 'a3bf640adae8b72b9b63deb76111eae21222f964c184193f80a18924b8037437  openlist.tar.gz' | sha256sum -c - \
     && tar -xzf openlist.tar.gz && mv openlist ai-emby-cloud-engine && rm openlist.tar.gz
+
+FROM runtime-base AS disc-reader-build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc pkg-config libbluray-dev libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY disc-reader/ /src/disc-reader/
+RUN cc -std=c11 -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2 -fstack-protector-strong \
+    -Wl,-z,relro,-z,now -o /ai-emby-disc-reader /src/disc-reader/reader.c $(pkg-config --cflags --libs libbluray libcurl)
 
 FROM golang:1.26-bookworm AS build
 ARG VERSION=development
@@ -30,6 +37,7 @@ FROM runtime-base
 COPY --from=build /out/ai-emby-worker /usr/local/bin/ai-emby-core
 COPY --from=build /out/ai-emby-worker /out/ai-emby-gateway /usr/local/bin/
 COPY --from=cloud-engine /out/ai-emby-cloud-engine /usr/local/bin/
+COPY --from=disc-reader-build /ai-emby-disc-reader /usr/local/bin/
 COPY third_party/ /app/third_party/
 COPY --from=build /out/VERSION /app/VERSION
 COPY frontend/ /app/frontend/

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -167,12 +168,47 @@ func TestISORealPlaybackFixtures(t *testing.T) {
 		noRange bool
 		large   bool
 		start   int
+		local   bool
+		menu    bool
+		native  bool
 	}{
-		{"renamed-mkv.iso", false, false, 0}, {"dvd.iso", false, false, 0}, {"video-disc.iso", false, false, 0}, {"dvd.iso", true, false, 0},
-		{"bluray.iso", false, false, 0}, {"video-disc.iso", false, true, 0}, {"bluray.iso", false, false, 5},
+		{name: "renamed-mkv.iso"}, {name: "dvd.iso"}, {name: "video-disc.iso"}, {name: "dvd.iso", noRange: true},
+		{name: "bluray.iso"}, {name: "video-disc.iso", large: true}, {name: "bluray.iso", start: 5},
+		{name: "bluray.iso", menu: true}, {name: "bluray.iso", local: true, menu: true},
+		{name: "bluray.iso", local: true, start: 5}, {name: "dvd.iso", local: true},
+		{name: "native-angles.iso", native: true, large: true},
+		{name: "native-angles.iso", native: true, start: 5},
+		{name: "native-angles.iso", native: true, local: true},
+		{name: "native-angles.iso", native: true, local: true, start: 5},
+		{name: "native-udf250.iso", native: true},
 	} {
 		name := tc.name
-		t.Run(name+"/range="+strconv.FormatBool(!tc.noRange)+"/large="+strconv.FormatBool(tc.large)+"/start="+strconv.Itoa(tc.start), func(t *testing.T) {
+		t.Run(name+"/range="+strconv.FormatBool(!tc.noRange)+"/large="+strconv.FormatBool(tc.large)+"/start="+strconv.Itoa(tc.start)+"/local="+strconv.FormatBool(tc.local)+"/menu="+strconv.FormatBool(tc.menu), func(t *testing.T) {
+			fixture := filepath.Join(root, name)
+			if strings.HasPrefix(name, "native-") {
+				nativeRoot := os.Getenv("ISO_NATIVE_FIXTURE_ROOT")
+				if nativeRoot == "" {
+					t.Skip("ISO_NATIVE_FIXTURE_ROOT required for authored native Blu-ray checks")
+				}
+				fixture = filepath.Join(nativeRoot, name)
+			}
+			if tc.menu {
+				data, err := os.ReadFile(fixture)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Add still navigation to the existing short playlist, retaining the complete native UDF image.
+				short := isoTestPlaylist("00001")
+				position := bytes.Index(data, short)
+				if position < 0 {
+					t.Fatal("Blu-ray fixture must contain the six-second 00001 menu playlist")
+				}
+				data[position+81] = 1
+				fixture = filepath.Join(t.TempDir(), "native-menu.iso")
+				if err := os.WriteFile(fixture, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			a, _, _, _ := cloudProtectionFixture(t)
 			a.features.ctx = context.Background()
 			a.features.transcodes = map[string]*featureTranscode{}
@@ -181,7 +217,6 @@ func TestISORealPlaybackFixtures(t *testing.T) {
 				t.Fatal(err)
 			}
 			var fullRequests atomic.Int32
-			fileServer := http.FileServer(http.Dir(root))
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if tc.large {
 					if r.Header.Get("Range") == "" {
@@ -189,14 +224,14 @@ func TestISORealPlaybackFixtures(t *testing.T) {
 						http.Error(w, "whole-image download forbidden", 500)
 						return
 					}
-					file, err := os.Open(filepath.Join(root, name))
+					file, err := os.Open(fixture)
 					if err != nil {
 						http.Error(w, "missing fixture", 500)
 						return
 					}
 					defer file.Close()
 					info, _ := file.Stat()
-					virtual := &isoJoinedReader{size: 2 << 30, files: []isoStreamFile{{size: info.Size(), reader: file}, {size: (2 << 30) - info.Size(), reader: isoZeroReader{}}}}
+					virtual := &isoJoinedReader{size: 64 << 30, files: []isoStreamFile{{size: info.Size(), reader: file}, {size: (64 << 30) - info.Size(), reader: isoZeroReader{}}}}
 					http.ServeContent(w, r, name, time.Time{}, io.NewSectionReader(virtual, 0, virtual.size))
 					return
 				}
@@ -206,11 +241,17 @@ func TestISORealPlaybackFixtures(t *testing.T) {
 				if tc.noRange && r.Header.Get("Range") != "bytes=0-65535" {
 					r.Header.Del("Range")
 				}
-				fileServer.ServeHTTP(w, r)
+				http.ServeFile(w, r, fixture)
 			}))
 			defer server.Close()
 			if _, err := a.db.Exec("UPDATE items SET url=? WHERE id='movie'", server.URL+"/"+name); err != nil {
 				t.Fatal(err)
+			}
+			if tc.local {
+				t.Setenv("MEDIA_ROOTS", filepath.Dir(fixture))
+				if _, err := a.db.Exec("UPDATE items SET path=?, url='' WHERE id='movie'", fixture); err != nil {
+					t.Fatal(err)
+				}
 			}
 			inspection := httptest.NewRecorder()
 			isoFeatureRequest(a, inspection, httptest.NewRequest("GET", "/features/playback-inspect?ID=movie&api_key=viewer-token", nil))
@@ -244,7 +285,14 @@ func TestISORealPlaybackFixtures(t *testing.T) {
 						t.Fatalf("positive video segments were dropped: duration %g", duration)
 					}
 					if name != "renamed-mkv.iso" && !tc.noRange {
-						if job.SourceMode != "range" || fullRequests.Load() != 0 {
+						mode := "range"
+						if tc.local {
+							mode = "local"
+						}
+						if tc.native {
+							mode += "-bluray"
+						}
+						if job.SourceMode != mode || fullRequests.Load() != 0 {
 							t.Fatalf("image was downloaded instead of read on demand: mode=%s full=%d", job.SourceMode, fullRequests.Load())
 						}
 						if _, err := os.Stat(filepath.Join(job.Directory, "source.iso")); !os.IsNotExist(err) {

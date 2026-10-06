@@ -107,7 +107,7 @@ async function featurePlayer(id, video, source) {
       if (status.State === "caching") {
         const percent = status.Total > 0 ? ` ${Math.min(100, Math.floor(status.Downloaded / status.Total * 100))}%` : "";
         showProgress("当前镜像需完整缓存后播放…" + percent + (status.FallbackReason ? ` · ${status.FallbackReason}` : ""));
-      } else if (status.SourceMode === "range" || status.State === "reading-disc")
+      } else if (["range", "local", "range-bluray", "local-bluray"].includes(status.SourceMode) || status.State === "reading-disc")
         showProgress("正在按需读取光盘正片，无需下载整张镜像…");
       else showProgress(status.State === "remuxing" ? "正在封装网页播放视频…" : "正在生成网页播放视频…");
     }
